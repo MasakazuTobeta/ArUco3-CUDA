@@ -45,6 +45,13 @@ docker compose -f docker/compose.yaml run --rm dgx-spark verify-environment.sh
 docker compose -f docker/compose.yaml run --rm dgx-spark smoke-test.sh
 ```
 
+build と test は container 内で行います。`portability` preset は `sm_87` と `sm_121` の両方を生成します。
+
+```bash
+docker compose -f docker/compose.yaml run --rm dgx-spark bash -c '
+  cmake --preset portability && cmake --build --preset portability && ctest --preset portability'
+```
+
 詳細は [Docker 環境設計](docs/design/docker-environment.md) を参照してください。
 
 ## 評価方針

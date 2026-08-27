@@ -109,9 +109,22 @@ docker compose -f docker/compose.yaml run --rm dgx-spark verify-environment.sh
 docker compose -f docker/compose.yaml run --rm dgx-spark smoke-test.sh
 docker compose -f docker/compose.yaml run --rm dgx-spark record-environment.sh /workspace/env.json
 docker compose -f docker/compose.yaml run --rm dgx-spark        # 対話 shell
+
+# project の build と test
+docker compose -f docker/compose.yaml run --rm dgx-spark bash -c '
+  cmake --preset portability && cmake --build --preset portability && ctest --preset portability'
 ```
 
-repository は `/workspace` へ bind mount します。build directory は named volume とし、host の作業 tree へ生成物を残しません。
+repository は `/workspace` へ bind mount します。build 出力は `build/` へ書き出し、`.gitignore` で除外します。named volume にしないのは、`compile_commands.json` を host 側の editor と language server から参照できるようにするためです。
+
+container は `docker/.env` の `ARUCO3_UID` と `ARUCO3_GID` で指定した uid と gid で実行します。既定の root 実行では、bind mount した repository へ root 所有の file が作られ、host 側から削除も編集もできなくなるためです。
+
+CUDA 対応 OpenCV を `/opt/opencv-cuda` へ install する場合のみ、その named volume へ書き込む権限が必要になります。この操作は `--user root` を明示して実行します。
+
+```bash
+docker compose -f docker/compose.yaml run --rm --user root dgx-spark \
+  build-opencv.sh --with-cuda --cuda-arch 12.1 --prefix /opt/opencv-cuda
+```
 
 ### 環境検査
 

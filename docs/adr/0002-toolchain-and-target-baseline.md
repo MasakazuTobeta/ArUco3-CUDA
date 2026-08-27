@@ -81,7 +81,7 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 
 - CUDA Toolkit の最低 version。Jetson Orin 実機の JetPack version を確認してから決める。開発機に存在する別 project の container image は JetPack 5.1.2 と CUDA 11.4 を示しており、この値が Jetson 側の実際の環境である可能性がある。CUDA 11.4 が対象になる場合、DGX Spark の CUDA 13.0 との差が大きく、使用できる CUDA 機能と CUB / Thrust の version が制約される。実機確認は実装計画の WP-0.7 で行う。
 - Jetson Orin 向けを cross-compile とするか実機 build とするか。
-- `clang-format` の style 設定を OpenCV 準拠にするか独自にするか。
+- `clang-format` の style 設定を OpenCV 準拠にするか独自にするか。暫定として、OpenCV へのコントリビュートを想定し Google style を基礎に indent 4、桁数 100 とした `.clang-format` を置いている。決定後に本 ADR を更新する。
 
 ## 関連
 

@@ -10,7 +10,8 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 
 ## 現状
 
-- repository には文書のみが存在し、build system、source、テスト、データセットはありません。
+- WP-0.0 と WP-0.1 が完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析の設定が動作します。
+- core は build 基盤の疎通確認に必要な最小構成のみです。検出器、adapter、benchmark、データセットはありません。
 - 開発機は DGX Spark GB10 です。実測値と build baseline の決定案は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) にまとめています。
 - Jetson Orin 実機はこの環境から参照できていません。JetPack version と power mode は未確認です。
 - 開発機に OpenCV、`clang-format`、`ninja` が install されていません。`compute-sanitizer` は使用できます。これらは host へ直接 install せず、開発 container 側で供給します。
@@ -53,9 +54,9 @@ flowchart TD
 
 ```
 ArUco3-CUDA/
-├── CMakeLists.txt
-├── CMakePresets.json
-├── cmake/                     build option、sanitizer target、architecture 検出
+├── CMakeLists.txt             作成済み
+├── CMakePresets.json          作成済み。profile ごとの architecture を切り替える
+├── cmake/                     作成済み。build option、警告、Compute Sanitizer target
 ├── docker/                    開発 container。profile ごとの image と環境検査 script
 ├── include/aruco3cuda/        公開 header。OpenCV へ依存しない
 │   └── opencv/                adapter の公開 header
@@ -89,7 +90,7 @@ ArUco3-CUDA/
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
 | WP-0.0 | 開発 container。CUDA Toolkit を host から mount する 2 profile、環境検査 script、環境情報記録 script、環境 smoke test | `docker/**`、[Docker 環境設計](design/docker-environment.md) | `dgx-spark` profile の image が build でき、`verify-environment.sh` と `smoke-test.sh` が合格する。`jetson-orin` profile は WP-0.7 で確認する | - | M |
-| WP-0.1 | CMake project、C++17、`sm_87` と `sm_121`、warning、`clang-format`、静的解析、`ctest` 骨格 | build 構成、CI 設定 | 空 library と smoke test が両 architecture 向けに build でき `ctest` が通る | WP-0.0 | M |
+| WP-0.1 | CMake project、C++17、`sm_87` と `sm_121`、warning、`clang-format`、静的解析、`ctest` 骨格 | `CMakeLists.txt`、`CMakePresets.json`、`cmake/**`、`.clang-format`、`.clang-tidy` | 空 library と smoke test が両 architecture 向けに build でき `ctest` が通る。達成済み | WP-0.0 | M |
 | WP-0.2 | OpenCV 4.14.0 の commit 固定 build と provenance 記録 | `docker/scripts/build-opencv.sh`、image 内 provenance JSON | 再現可能に build でき、version と commit が環境情報 JSON へ出力される | WP-0.0 | S |
 | WP-0.3 | CPU 基準 runner | 画像から結果 JSON を出力する実行 file | 同一入力に対し決定的な ID・四隅・rotation と環境情報を保存できる | WP-0.2 | M |
 | WP-0.4 | 合成 corpus 生成器 | `tools/corpusgen`、manifest | seed 固定で再生成でき、四隅の ground truth を持つ corpus が得られる | WP-0.2 | M |
@@ -98,6 +99,16 @@ ArUco3-CUDA/
 | WP-0.7 | Jetson Orin profile の実機検証 | `docker/.env` の既定値確定、[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の更新 | Jetson 実機で image が build でき、環境検査が合格し、CUDA Toolkit の最低 version が確定する | B2、WP-0.0 | M |
 
 G0 の完了条件: 同一入力に対する CPU 基準結果と環境情報を保存でき、CUDA 側の空実装が両 profile の container 内で build とテストを通ること。
+
+WP-0.1 の検証結果は次のとおりです。`libaruco3cuda.a` に `sm_87` と `sm_121` の両方の code が含まれることを `cuobjdump --list-elf` で確認しています。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| `sm_87` と `sm_121` の同時 build | 成功 |
+| `ctest` | 12 件全て合格 |
+| Compute Sanitizer 4 mode を含む `ctest` | 16 件全て合格 |
+| `format-check` | 差分なし |
+| `clang-tidy` | 指摘なし |
 
 #### Phase 1: ハイブリッド最小成立版
 
