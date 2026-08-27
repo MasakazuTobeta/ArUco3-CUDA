@@ -6,7 +6,8 @@ add_executable(aruco3cuda_unit_tests
   unit/test_device_probe.cpp
   unit/test_sha256.cpp
   unit/test_json_writer.cpp
-  unit/test_dictionary.cpp)
+  unit/test_dictionary.cpp
+  unit/test_statistics.cpp)
 
 target_link_libraries(aruco3cuda_unit_tests
   PRIVATE aruco3cuda::core aruco3cuda::util aruco3cuda::dictionary aruco3cuda::warnings GTest::gtest GTest::gtest_main)

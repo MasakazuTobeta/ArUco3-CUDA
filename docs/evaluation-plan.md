@@ -10,7 +10,9 @@ DGX Spark GB10、Jetson Orin、OpenCV ArUco3 CPU 実装、開発する CUDA 実�
 
 ## 現状
 
-評価用 code、データセット、基準値は未作成です。
+CPU 経路の測定 harness、合成 corpus 生成器、CPU 基準 runner は作成済みです。CUDA 経路の測定と実画像データセットは未作成です。
+
+分位点は nearest-rank 法で求めます。補間しないため、返る値は必ず実測値のいずれかになります。集計方法が実装依存になると環境をまたいだ比較が成立しないため、この方法を標準とします。
 
 ## 目標
 

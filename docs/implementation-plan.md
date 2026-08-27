@@ -10,7 +10,7 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 
 ## 現状
 
-- WP-0.0 から WP-0.5 までが完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner、合成 corpus 生成器、Dictionary 変換 tool が動作します。
+- WP-0.0 から WP-0.6 までが完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner、合成 corpus 生成器、Dictionary 変換 tool、benchmark harness が動作します。残るのは WP-0.7 の Jetson Orin 実機検証です。
 - core は build 基盤の疎通確認に必要な最小構成のみです。CUDA 検出器、adapter、benchmark harness、データセットはありません。
 - 開発機は DGX Spark GB10 です。実測値と build baseline の決定案は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) にまとめています。
 - Jetson Orin 実機はこの環境から参照できていません。JetPack version と power mode は未確認です。
@@ -71,7 +71,7 @@ ArUco3-CUDA/
 │   ├── corpusgen/             作成済み。ground truth 付き合成画像生成器
 │   └── report/                差異分類と集計 script
 ├── reference/                 作成済み。OpenCV CPU 基準 runner
-├── bench/                     測定 harness
+├── bench/                     作成済み。測定 harness と集計 script
 ├── test/
 │   ├── unit/                  型、設定検証、kernel 単体
 │   ├── conformance/           Dictionary 互換
@@ -97,7 +97,7 @@ ArUco3-CUDA/
 | WP-0.3 | CPU 基準 runner | `reference/**`、`aruco3cuda_reference_runner` | 同一入力に対し決定的な ID と四隅、および環境情報を保存できる。達成済み | WP-0.2 | M |
 | WP-0.4 | 合成 corpus 生成器 | `tools/corpusgen`、manifest | seed 固定で再生成でき、四隅の ground truth を持つ corpus が得られる。達成済み | WP-0.2 | M |
 | WP-0.5 | Dictionary 変換 tool と互換テスト | `tools/dictgen`、`src/dictionary`、生成 table | [Dictionary 方針](dictionaries.md) の検証 1 から 5 が自動テストで通る。達成済み | WP-0.2 | M |
-| WP-0.6 | benchmark harness 骨格 | 環境収集、CUDA event、JSONL 出力、集計 script | CPU 経路の p50・p95・p99 と環境情報を機械可読形式で保存できる | WP-0.3、WP-0.0 | M |
+| WP-0.6 | benchmark harness 骨格 | `bench/**`、`aggregate.py` | CPU 経路の p50・p95・p99 と環境情報を機械可読形式で保存できる。達成済み | WP-0.3、WP-0.0 | M |
 | WP-0.7 | Jetson Orin profile の実機検証 | `docker/.env` の既定値確定、[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の更新 | Jetson 実機で image が build でき、環境検査が合格し、CUDA Toolkit の最低 version が確定する | B2、WP-0.0 | M |
 
 G0 の完了条件: 同一入力に対する CPU 基準結果と環境情報を保存でき、CUDA 側の空実装が両 profile の container 内で build とテストを通ること。
@@ -135,6 +135,15 @@ WP-0.4 と WP-0.5 の検証結果は次のとおりです。
 | 最小 Hamming 距離 | 再計算値 12。公称値と一致 |
 | 生成物の再現性 | `dictgen --check` が既存 file と byte 単位で一致 |
 | `ctest` | 61 件全て合格。Compute Sanitizer を含めて 65 件 |
+
+WP-0.6 の実測結果は次のとおりです。DGX Spark、1280x720、マーカー 4 個、OpenCV thread 1 での測定です。
+
+| 条件 | fxfy | p50 | p95 | p99 | throughput |
+| --- | --- | --- | --- | --- | --- |
+| ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 2.200 ms | 2.215 ms | 2.221 ms | 454 frame/s |
+| ArUco3 無効 | 1.0000 | 7.070 ms | 7.130 ms | 7.393 ms | 140 frame/s |
+
+検出結果はどちらも 4 個で一致します。これは CPU 基準側の値であり、CUDA 経路との比較は Phase 1 以降に行います。
 
 ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく `S + L * tau_i` で決まります。`S` は `minSideLengthCanonicalImg`、`L` は画像の長辺です。1280x720、`S = 32`、`tau_i = 0.05` の場合は 96 pixel が下限であり、実測では 96 pixel は検出されず 128 pixel は検出されました。corpus の manifest は各マーカーの `side_ratio` を記録し、どの `tau_i` で検出対象になるかを後から判断できるようにしています。
 
