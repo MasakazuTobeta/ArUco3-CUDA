@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# 目的:
+#   DGX Spark と Jetson Orin の 2 profile を同じ構成で起動する。
+#
+# 使用方法:
+#   docker compose -f docker/compose.yaml build dgx-spark
+#   docker compose -f docker/compose.yaml run --rm dgx-spark verify-environment.sh
+#   docker compose -f docker/compose.yaml run --rm dgx-spark
+#
+# 備考:
+#   CUDA Toolkit は image へ含めず host から read-only で mount する。
+#   /usr/local/cuda は多段 symlink であることがあるため、実体の directory を
+#   ARUCO3_CUDA_HOST_PATH_* で指定する。
+name: aruco3-cuda
+
+x-common: &common
+  runtime: nvidia
+  working_dir: /workspace
+  environment:
+    NVIDIA_VISIBLE_DEVICES: all
+    NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    ARUCO3_VERIFY_ON_START: "${ARUCO3_VERIFY_ON_START:-0}"
+  # benchmark 時に測定条件を固定するため、既定の制限を外す。
+  ulimits:
+    memlock: -1
+    stack: 67108864
+
+services:
+  # DGX Spark GB10 (Blackwell, sm_121)。開発と解析の主環境。
+  dgx-spark:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ubuntu:24.04
+        ARUCO3_PROFILE: dgx-spark
+        ARUCO3_CUDA_ARCH: "121"
+        INSTALL_DEV_TOOLS: "1"
+    image: aruco3-cuda:dgx-spark
+    volumes:
+      - ${ARUCO3_CUDA_HOST_PATH_DGX:-/usr/local/cuda-13.0}:/usr/local/cuda:ro
+      - ..:/workspace
+      - dgx-build:/workspace/build
+      - dgx-opencv-cuda:/opt/opencv-cuda
+
+  # Jetson Orin (Ampere, sm_87)。実運用を想定した遅延・電力評価環境。
+  # base image と CUDA path は実機の JetPack へ合わせて上書きすること。
+  jetson-orin:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${ARUCO3_JETSON_BASE_IMAGE:-ubuntu:20.04}
+        ARUCO3_PROFILE: jetson-orin
+        ARUCO3_CUDA_ARCH: "87"
+        INSTALL_DEV_TOOLS: "0"
+    image: aruco3-cuda:jetson-orin
+    volumes:
+      - ${ARUCO3_CUDA_HOST_PATH_JETSON:-/usr/local/cuda-11.4}:/usr/local/cuda:ro
+      - ..:/workspace
+      - jetson-build:/workspace/build
+      - jetson-opencv-cuda:/opt/opencv-cuda
+
+volumes:
+  dgx-build:
+  jetson-build:
+  dgx-opencv-cuda:
+  jetson-opencv-cuda:

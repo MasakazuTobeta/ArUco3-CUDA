@@ -1,0 +1,21 @@
+# build 生成物
+/build/
+/out/
+**/build/
+compile_commands.json
+
+# container の環境依存設定
+docker/.env
+
+# 測定結果と大容量データ。manifest だけを commit する。
+/data/**
+!/data/manifest/
+!/data/manifest/**
+/results/
+*.mp4
+*.avi
+
+# editor
+.vscode/
+.idea/
+*.swp
