@@ -3,6 +3,7 @@
 #define ARUCO3CUDA_DEVICE_PROBE_HPP
 
 #include <cstddef>
+#include <string>
 
 #include "aruco3cuda/status.hpp"
 
@@ -15,6 +16,8 @@ namespace aruco3cuda {
 /// discrete GPU と大きく異なる。
 struct DeviceProbeResult {
     int device_index_ = -1;
+    /// device 名。nvidia-smi へ依存せず取得できる。
+    std::string name_;
     int compute_capability_major_ = 0;
     int compute_capability_minor_ = 0;
     int multi_processor_count_ = 0;

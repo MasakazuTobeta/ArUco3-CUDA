@@ -36,6 +36,7 @@ if(ARUCO3CUDA_BUILD_REFERENCE)
   message(STATUS "  OpenCV             : ${OpenCV_VERSION} (${OpenCV_DIR})")
   add_subdirectory(reference)
   add_subdirectory(tools)
+  add_subdirectory(bench)
 endif()
 
 if(ARUCO3CUDA_BUILD_TESTS)

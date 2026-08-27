@@ -67,6 +67,7 @@ Status probe_device(int device_index, DeviceProbeResult* out) {
 
     // 失敗時に out を変更しないため、全て取得できてから書き込む。
     out->device_index_ = device_index;
+    out->name_ = prop.name;
     out->compute_capability_major_ = prop.major;
     out->compute_capability_minor_ = prop.minor;
     out->multi_processor_count_ = prop.multiProcessorCount;

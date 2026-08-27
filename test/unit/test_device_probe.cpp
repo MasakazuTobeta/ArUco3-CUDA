@@ -65,6 +65,7 @@ TEST(DeviceProbeTest, probe_device_returns_properties_when_device_exists) {
     EXPECT_GE(result.compute_capability_major_, 5);
     EXPECT_GT(result.multi_processor_count_, 0);
     EXPECT_GT(result.l2_cache_bytes_, 0U);
+    EXPECT_FALSE(result.name_.empty());
 }
 
 // 正常系: 自己診断 kernel が期待どおりの計算結果を返す。

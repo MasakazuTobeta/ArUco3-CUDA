@@ -5,12 +5,14 @@
 add_executable(aruco3cuda_reference_tests
   test_reference_runner.cpp
   test_dictionary_conformance.cpp
-  test_corpus_generator.cpp)
+  test_corpus_generator.cpp
+  test_benchmark_harness.cpp)
 
 target_link_libraries(aruco3cuda_reference_tests
   PRIVATE
     aruco3cuda::reference
     aruco3cuda::corpusgen
+    aruco3cuda::bench
     aruco3cuda::dictionary
     aruco3cuda::warnings
     GTest::gtest
