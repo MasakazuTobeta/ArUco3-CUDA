@@ -18,7 +18,7 @@ target_include_directories(aruco3cuda_core
 
 # CUDA::cudart は include path も伝播する。cuda_check.cpp のように
 # host compiler で compile する翻訳単位でも CUDA runtime の header を使う。
-target_link_libraries(aruco3cuda_core PRIVATE aruco3cuda::warnings CUDA::cudart)
+target_link_libraries(aruco3cuda_core PRIVATE aruco3cuda::warnings aruco3cuda::coverage CUDA::cudart)
 
 set_target_properties(aruco3cuda_core PROPERTIES
   CUDA_SEPARABLE_COMPILATION OFF

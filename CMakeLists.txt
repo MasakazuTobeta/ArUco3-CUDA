@@ -45,6 +45,7 @@ if(ARUCO3CUDA_BUILD_TESTS)
 endif()
 
 aruco3cuda_add_format_targets()
+aruco3cuda_add_coverage_target()
 
 message(STATUS "aruco3cuda ${PROJECT_VERSION}")
 message(STATUS "  CUDA architectures : ${CMAKE_CUDA_ARCHITECTURES}")
@@ -52,3 +53,4 @@ message(STATUS "  build tests        : ${ARUCO3CUDA_BUILD_TESTS}")
 message(STATUS "  build reference    : ${ARUCO3CUDA_BUILD_REFERENCE}")
 message(STATUS "  warnings as errors : ${ARUCO3CUDA_WARNINGS_AS_ERRORS}")
 message(STATUS "  compute-sanitizer  : ${ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER}")
+message(STATUS "  coverage           : ${ARUCO3CUDA_ENABLE_COVERAGE}")

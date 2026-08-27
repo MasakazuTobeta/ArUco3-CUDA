@@ -15,6 +15,7 @@ target_link_libraries(aruco3cuda_reference_tests
     aruco3cuda::bench
     aruco3cuda::dictionary
     aruco3cuda::warnings
+    aruco3cuda::coverage
     GTest::gtest
     GTest::gtest_main
     ${OpenCV_LIBS})

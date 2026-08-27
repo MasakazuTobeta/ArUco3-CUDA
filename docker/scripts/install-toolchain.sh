@@ -55,6 +55,7 @@ if [ "${INSTALL_DEV_TOOLS:-0}" = "1" ]; then
     clang-format \
     clang-tidy \
     cppcheck \
+    gcovr \
     gdb \
     python3-matplotlib
 fi

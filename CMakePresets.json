@@ -5,6 +5,11 @@
     "minor": 24,
     "patch": 0
   },
+  "vendor": {
+    "aruco3cuda": {
+      "SPDX-License-Identifier": "Apache-2.0"
+    }
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -47,6 +52,16 @@
       "displayName": "Jetson Orin のみ (sm_87)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "87"
+      }
+    },
+    {
+      "name": "coverage",
+      "inherits": "base",
+      "displayName": "C0 / C1 カバレッジ計測。最適化を無効にする",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CUDA_ARCHITECTURES": "native",
+        "ARUCO3CUDA_ENABLE_COVERAGE": "ON"
       }
     },
     {
@@ -93,6 +108,10 @@
     {
       "name": "lint",
       "configurePreset": "lint"
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage"
     }
   ],
   "testPresets": [
@@ -149,6 +168,16 @@
     {
       "name": "lint",
       "configurePreset": "lint",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage",
       "output": {
         "outputOnFailure": true
       },

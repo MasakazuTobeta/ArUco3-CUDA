@@ -14,7 +14,7 @@ target_include_directories(aruco3cuda_dictionary
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
 
-target_link_libraries(aruco3cuda_dictionary PRIVATE aruco3cuda::warnings)
+target_link_libraries(aruco3cuda_dictionary PRIVATE aruco3cuda::warnings aruco3cuda::coverage)
 
 set_target_properties(aruco3cuda_dictionary PROPERTIES
   POSITION_INDEPENDENT_CODE ON

@@ -30,10 +30,15 @@ function(aruco3cuda_add_sanitizer_tests target)
     message(WARNING "compute-sanitizer が見つからないため sanitizer test を登録しない")
     return()
   endif()
+  # 意図的に CUDA API を失敗させる test は除外する。Compute Sanitizer は
+  # 意図の有無に関わらず全ての API エラーを報告するため、
+  # 意図した失敗が sanitizer の指摘として現れ、本物の問題を埋もれさせる。
+  # 対象は suite 名で識別する。該当が無い target では filter は何も除外しない。
+  set(kSanitizerGtestFilter "-*DeliberateError*.*")
   foreach(tool IN LISTS ARUCO3CUDA_SANITIZER_TOOLS)
     add_test(NAME "sanitizer.${tool}.${target}"
       COMMAND "${kComputeSanitizer}" --tool "${tool}" --error-exitcode 1
-              "$<TARGET_FILE:${target}>")
+              "$<TARGET_FILE:${target}>" "--gtest_filter=${kSanitizerGtestFilter}")
     # sanitizer 経由では実行時間が延びるため timeout を個別に設定する。
     set_tests_properties("sanitizer.${tool}.${target}" PROPERTIES TIMEOUT 600)
   endforeach()

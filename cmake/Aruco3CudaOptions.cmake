@@ -9,6 +9,7 @@ option(ARUCO3CUDA_BUILD_TESTS "自動テストを build する" ON)
 option(ARUCO3CUDA_BUILD_REFERENCE "OpenCV を用いた CPU 基準 runner を build する" ON)
 option(ARUCO3CUDA_WARNINGS_AS_ERRORS "警告を error として扱う" ON)
 option(ARUCO3CUDA_ENABLE_CLANG_TIDY "C++ source へ clang-tidy を適用する" OFF)
+option(ARUCO3CUDA_ENABLE_COVERAGE "C++ code の C0 / C1 カバレッジを測定する" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,11 +48,62 @@ target_compile_options(aruco3cuda_warnings INTERFACE
   "$<$<COMPILE_LANGUAGE:CXX>:${kCxxWarnings}>"
   "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${kCudaHostWarningsJoined}>")
 
+# カバレッジ計測。CONTRIBUTING.md は C0 と C1 の 100% を目標と定める。
+#
+# 計測対象は host compiler が compile する C++ に限る。gcov は CUDA device code の
+# 実行経路を計測できないため、device code は規約の定めどおり入力分割と境界値の
+# test で経路を確認する。
+if(ARUCO3CUDA_ENABLE_COVERAGE)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "カバレッジ計測は GCC または Clang でのみ対応する")
+  endif()
+  add_library(aruco3cuda_coverage INTERFACE)
+  add_library(aruco3cuda::coverage ALIAS aruco3cuda_coverage)
+  # 最適化を無効にしないと分岐が消え、C1 が実態と合わなくなる。
+  target_compile_options(aruco3cuda_coverage INTERFACE
+    "$<$<COMPILE_LANGUAGE:CXX>:--coverage;-O0;-g;-fno-inline>")
+  target_link_options(aruco3cuda_coverage INTERFACE --coverage)
+else()
+  # option が無効でも target 名を解決できるようにし、各 target の記述を分岐させない。
+  add_library(aruco3cuda_coverage INTERFACE)
+  add_library(aruco3cuda::coverage ALIAS aruco3cuda_coverage)
+endif()
+
 if(ARUCO3CUDA_ENABLE_CLANG_TIDY)
   find_program(kClangTidy NAMES clang-tidy REQUIRED)
   # clang-tidy は .cu を解釈できないため C++ にのみ適用する。
   set(CMAKE_CXX_CLANG_TIDY "${kClangTidy}")
 endif()
+
+# カバレッジ報告の target。計測が無効な場合は作らない。
+function(aruco3cuda_add_coverage_target)
+  if(NOT ARUCO3CUDA_ENABLE_COVERAGE)
+    return()
+  endif()
+  find_program(kGcovr NAMES gcovr)
+  if(NOT kGcovr)
+    message(WARNING "gcovr が見つからないため coverage-report target を作らない")
+    return()
+  endif()
+  # 生成物と test 自身は計測対象から外す。test の網羅率は指標にならない。
+  add_custom_target(coverage-report
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/coverage"
+    COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
+    COMMAND "${kGcovr}"
+            --root "${PROJECT_SOURCE_DIR}"
+            --filter "${PROJECT_SOURCE_DIR}/src/"
+            --filter "${PROJECT_SOURCE_DIR}/reference/"
+            --filter "${PROJECT_SOURCE_DIR}/tools/"
+            --filter "${PROJECT_SOURCE_DIR}/bench/"
+            --exclude ".*/generated/.*"
+            --exclude ".*/test/.*"
+            --decisions
+            --print-summary
+            --html-details "${CMAKE_BINARY_DIR}/coverage/index.html"
+            --json-summary "${CMAKE_BINARY_DIR}/coverage/summary.json"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    COMMENT "ctest 実行後に C0 / C1 カバレッジを集計する")
+endfunction()
 
 # format 用の target。CI と手元で同じ判定を使う。
 function(aruco3cuda_add_format_targets)

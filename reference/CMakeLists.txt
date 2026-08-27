@@ -8,10 +8,10 @@ add_library(aruco3cuda::reference ALIAS aruco3cuda_reference)
 target_include_directories(aruco3cuda_reference PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aruco3cuda_reference
   PUBLIC aruco3cuda::util
-  PRIVATE aruco3cuda::warnings ${OpenCV_LIBS})
+  PRIVATE aruco3cuda::warnings aruco3cuda::coverage ${OpenCV_LIBS})
 target_include_directories(aruco3cuda_reference SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 add_executable(aruco3cuda_reference_runner main.cpp)
 target_link_libraries(aruco3cuda_reference_runner
-  PRIVATE aruco3cuda::reference aruco3cuda::warnings)
+  PRIVATE aruco3cuda::reference aruco3cuda::warnings aruco3cuda::coverage)
 
