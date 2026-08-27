@@ -6,6 +6,7 @@
 include_guard(GLOBAL)
 
 option(ARUCO3CUDA_BUILD_TESTS "自動テストを build する" ON)
+option(ARUCO3CUDA_BUILD_REFERENCE "OpenCV を用いた CPU 基準 runner を build する" ON)
 option(ARUCO3CUDA_WARNINGS_AS_ERRORS "警告を error として扱う" ON)
 option(ARUCO3CUDA_ENABLE_CLANG_TIDY "C++ source へ clang-tidy を適用する" OFF)
 

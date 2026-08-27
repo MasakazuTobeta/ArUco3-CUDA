@@ -10,8 +10,8 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 
 ## 現状
 
-- WP-0.0 と WP-0.1 が完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析の設定が動作します。
-- core は build 基盤の疎通確認に必要な最小構成のみです。検出器、adapter、benchmark、データセットはありません。
+- WP-0.0、WP-0.1、WP-0.2、WP-0.3 が完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner が動作します。
+- core は build 基盤の疎通確認に必要な最小構成のみです。CUDA 検出器、adapter、benchmark harness、データセットはありません。
 - 開発機は DGX Spark GB10 です。実測値と build baseline の決定案は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) にまとめています。
 - Jetson Orin 実機はこの環境から参照できていません。JetPack version と power mode は未確認です。
 - 開発機に OpenCV、`clang-format`、`ninja` が install されていません。`compute-sanitizer` は使用できます。これらは host へ直接 install せず、開発 container 側で供給します。
@@ -61,14 +61,15 @@ ArUco3-CUDA/
 ├── include/aruco3cuda/        公開 header。OpenCV へ依存しない
 │   └── opencv/                adapter の公開 header
 ├── src/
-│   ├── core/                  kernel と host 制御。段階ごとに file を分ける
+│   ├── core/                  作成済み。kernel と host 制御。段階ごとに file を分ける
+│   ├── util/                  作成済み。CUDA にも OpenCV にも依存しない共通処理
 │   ├── dictionary/            packed table と loader
 │   └── adapter/opencv/        cv::Mat / cv::cuda::GpuMat 変換
 ├── tools/
 │   ├── dictgen/               OpenCV から packed codeword を生成する build 時 tool
 │   ├── corpusgen/             ground truth 付き合成画像生成器
 │   └── report/                差異分類と集計 script
-├── reference/                 OpenCV CPU 基準 runner
+├── reference/                 作成済み。OpenCV CPU 基準 runner
 ├── bench/                     測定 harness
 ├── test/
 │   ├── unit/                  型、設定検証、kernel 単体
@@ -92,7 +93,7 @@ ArUco3-CUDA/
 | WP-0.0 | 開発 container。CUDA Toolkit の供給を pinned と mounted から選べる 2 profile、環境検査 script、環境情報記録 script、環境 smoke test | `docker/**`、[Docker 環境設計](design/docker-environment.md) | `dgx-spark` profile の image が build でき、`verify-environment.sh` と `smoke-test.sh` が合格する。`jetson-orin` profile は WP-0.7 で確認する | - | M |
 | WP-0.1 | CMake project、C++17、`sm_87` と `sm_121`、warning、`clang-format`、静的解析、`ctest` 骨格 | `CMakeLists.txt`、`CMakePresets.json`、`cmake/**`、`.clang-format`、`.clang-tidy` | 空 library と smoke test が両 architecture 向けに build でき `ctest` が通る。達成済み | WP-0.0 | M |
 | WP-0.2 | OpenCV 4.14.0 の commit 固定 build と provenance 記録 | `docker/scripts/build-opencv.sh`、image 内 provenance JSON | 再現可能に build でき、version と commit が環境情報 JSON へ出力される | WP-0.0 | S |
-| WP-0.3 | CPU 基準 runner | 画像から結果 JSON を出力する実行 file | 同一入力に対し決定的な ID・四隅・rotation と環境情報を保存できる | WP-0.2 | M |
+| WP-0.3 | CPU 基準 runner | `reference/**`、`aruco3cuda_reference_runner` | 同一入力に対し決定的な ID と四隅、および環境情報を保存できる。達成済み | WP-0.2 | M |
 | WP-0.4 | 合成 corpus 生成器 | `tools/corpusgen`、manifest | seed 固定で再生成でき、四隅の ground truth を持つ corpus が得られる | WP-0.2 | M |
 | WP-0.5 | Dictionary 変換 tool と互換テスト | `tools/dictgen`、packed table、provenance 記録 | [Dictionary 方針](dictionaries.md) の検証 1 から 5 が自動テストで通る | WP-0.2 | M |
 | WP-0.6 | benchmark harness 骨格 | 環境収集、CUDA event、JSONL 出力、集計 script | CPU 経路の p50・p95・p99 と環境情報を機械可読形式で保存できる | WP-0.3、WP-0.0 | M |
@@ -109,6 +110,18 @@ WP-0.1 の検証結果は次のとおりです。`libaruco3cuda.a` に `sm_87` �
 | Compute Sanitizer 4 mode を含む `ctest` | 16 件全て合格 |
 | `format-check` | 差分なし |
 | `clang-tidy` | 指摘なし |
+
+WP-0.3 の検証結果は次のとおりです。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| 合成マーカーの検出 | ID と四隅が描画位置と 1 pixel 以内で一致 |
+| 決定性 | `--omit-timing` 指定時、同一入力から byte 単位で同じ JSON |
+| ArUco3 の縮小率 | 1280x720、`S=32`、`tau_i=0.05` で `fxfy=0.3333`、segmentation 427x240 |
+| ArUco3 の効果 | 同一画像・同一検出結果で 5.917 ms から 1.112 ms |
+| `ctest` | 35 件全て合格。Compute Sanitizer を含めて 39 件 |
+
+`rotation` は OpenCV の `detectMarkers` が独立した値として返さないため、出力へ含めていません。marker rotation は四隅の並び順として表現されるため、比較は四隅の順序で行います。
 
 #### Phase 1: ハイブリッド最小成立版
 

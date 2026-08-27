@@ -33,7 +33,9 @@ CUDA 実装は存在しません。本書は設計案です。
 9. ArUco3 有効時、corner refinement は subpixel 方式へ強制される。四隅は pyramid level を 1 段ずつ 2 倍しながら各 level で subpixel 補正され、window は最大辺が 1080 を超える場合 5、それ以外は 3 となる。
 10. `useAruco3Detection` が true で `S == 0` かつ `tau_i == 0.0` の組み合わせは OpenCV 側で拒否される。
 
-上記のうち縮小率と segmentation 画像 size は、container 環境の smoke test で実測確認しています。1280x720、`S = 32`、`tau_i = 0.05` の場合、`fxfy = 0.3333` となり segmentation 画像は 427x240 になります。
+上記のうち縮小率と segmentation 画像 size は、CPU 基準 runner の自動テストで実測確認しています。1280x720、`S = 32`、`tau_i = 0.05` の場合、`fxfy = 0.3333` となり segmentation 画像は 427x240 になります。
+
+同一画像に対する CPU 基準実装の検出時間は、`tau_i = 0.05` で 1.112 ms、`tau_i = 0`（縮小なし）で 5.917 ms でした。検出された ID は両者で一致します。これは ArUco3 検出戦略が CPU 側でも有効に働くことを示すと同時に、`tau_i` の既定値 0.0 のままでは効果が得られないことを示します。
 
 上記は互換性の基準であり、ground truth ではありません。`tau_i` の既定値は 0.0 であり、この場合 `fxfy = 1` となって縮小は発生しません。ArUco3 の速度効果を評価するには `tau_i` を明示的に設定する必要があります。
 

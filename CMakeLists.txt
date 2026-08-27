@@ -30,6 +30,13 @@ include(Aruco3CudaSanitizer)
 
 add_subdirectory(src)
 
+if(ARUCO3CUDA_BUILD_REFERENCE)
+  # CPU 基準実装の OpenCV。test 側からも同じ設定を参照するため top level で解決する。
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs objdetect)
+  message(STATUS "  OpenCV             : ${OpenCV_VERSION} (${OpenCV_DIR})")
+  add_subdirectory(reference)
+endif()
+
 if(ARUCO3CUDA_BUILD_TESTS)
   enable_testing()
   add_subdirectory(test)
@@ -40,5 +47,6 @@ aruco3cuda_add_format_targets()
 message(STATUS "aruco3cuda ${PROJECT_VERSION}")
 message(STATUS "  CUDA architectures : ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  build tests        : ${ARUCO3CUDA_BUILD_TESTS}")
+message(STATUS "  build reference    : ${ARUCO3CUDA_BUILD_REFERENCE}")
 message(STATUS "  warnings as errors : ${ARUCO3CUDA_WARNINGS_AS_ERRORS}")
 message(STATUS "  compute-sanitizer  : ${ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER}")
