@@ -69,7 +69,8 @@
 - CPU 基準実装と ID、回転、四隅座標、未検出結果を比較する。
 - 画像寸法、stride、ROI、マーカーサイズ、Dictionary、歪み、照明、ぼけ、遮蔽の代表条件を含める。
 - Compute Sanitizer を使用するテスト経路を設ける。
-- C0 および C1 カバレッジ 100% を目標とし、未達の場合は対象外理由を記録する。CUDA device code は host coverage と別に、入力分割と境界値で実行経路を確認する。
+- C0 および C1 カバレッジ 100% を目標とし、未達の場合は対象外理由を記録する。CUDA device code は host coverage と別に、入力分割と境界値で実行経路を確認する。測定は `cmake --preset coverage` の後 `cmake --build build/coverage --target coverage-report` で行い、現状と未達理由は [実装計画](docs/implementation-plan.md) に記録する。
+- 意図的に CUDA API を失敗させる test は suite 名へ `DeliberateError` を含め、Compute Sanitizer の実行から除外できるようにする。
 - 性能テストを正確性テストの代用にしない。
 
 ## Benchmark Rules

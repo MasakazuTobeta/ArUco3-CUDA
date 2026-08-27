@@ -175,4 +175,54 @@ TEST(DictionaryTest, rejects_invalid_arguments) {
               aruco3cuda::Status::kInvalidArgument);
 }
 
+// 境界値: marker_size の有効範囲は全関数で一致する。
+// pack_marker_code だけを検査すると、他の関数の範囲外検査漏れに気付けない。
+TEST(DictionaryTest, marker_size_bounds_are_consistent_across_functions) {
+    std::uint8_t bits[kMaxBits] = {};
+    aruco3cuda::MarkerCode code = 0U;
+    const int invalid_sizes[] = {-1, 0, 8, 64};
+    for (const int size : invalid_sizes) {
+        EXPECT_EQ(aruco3cuda::pack_marker_code(bits, size, &code),
+                  aruco3cuda::Status::kInvalidArgument)
+                << "marker_size=" << size;
+        EXPECT_EQ(aruco3cuda::unpack_marker_code(0U, size, bits),
+                  aruco3cuda::Status::kInvalidArgument)
+                << "marker_size=" << size;
+        EXPECT_EQ(aruco3cuda::rotate_marker_code(0U, size, &code),
+                  aruco3cuda::Status::kInvalidArgument)
+                << "marker_size=" << size;
+    }
+    // 有効範囲の両端は受理される。
+    for (const int size : {1, 7}) {
+        EXPECT_EQ(aruco3cuda::pack_marker_code(bits, size, &code), aruco3cuda::Status::kOk)
+                << "marker_size=" << size;
+        EXPECT_EQ(aruco3cuda::unpack_marker_code(0U, size, bits), aruco3cuda::Status::kOk)
+                << "marker_size=" << size;
+        EXPECT_EQ(aruco3cuda::rotate_marker_code(0U, size, &code), aruco3cuda::Status::kOk)
+                << "marker_size=" << size;
+    }
+}
+
+// 境界値: match_dictionary は marker_size が範囲外の table を拒否する。
+TEST(DictionaryTest, match_rejects_table_with_invalid_marker_size) {
+    const aruco3cuda::MarkerCode codes[4] = {0U, 0U, 0U, 0U};
+    aruco3cuda::DictionaryMatch match;
+    for (const int size : {0, 8}) {
+        aruco3cuda::DictionaryTable table;
+        table.name_ = "invalid";
+        table.marker_size_ = size;
+        table.max_correction_bits_ = 1;
+        table.code_count_ = 1;
+        table.codes_ = codes;
+        EXPECT_EQ(aruco3cuda::match_dictionary(table, 0U, 0, &match),
+                  aruco3cuda::Status::kInvalidArgument)
+                << "marker_size=" << size;
+        int distance = 0;
+        table.code_count_ = 2;
+        EXPECT_EQ(aruco3cuda::minimum_hamming_distance(table, &distance),
+                  aruco3cuda::Status::kInvalidArgument)
+                << "marker_size=" << size;
+    }
+}
+
 }  // namespace

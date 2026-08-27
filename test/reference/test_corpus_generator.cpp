@@ -216,6 +216,98 @@ TEST_F(CorpusGeneratorTest, generates_scene_without_markers) {
     EXPECT_TRUE(result.detections_.empty());
 }
 
+// 正常系: 評価計画が挙げる劣化条件それぞれで生成でき、ground truth を保つ。
+// 歪み、照明、ぼけ、遮蔽は代表条件として個別に確認する必要がある。
+TEST_F(CorpusGeneratorTest, generates_each_degradation_condition) {
+    struct Condition {
+        const char* name;
+        double rotation_deg;
+        double perspective;
+        double blur_sigma_px;
+        double noise_sigma_levels;
+        double illumination;
+        double occlusion;
+    };
+    const Condition conditions[] = {
+            {"rotation", 37.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+            {"perspective", 0.0, 0.6, 0.0, 0.0, 0.0, 0.0},
+            {"blur", 0.0, 0.0, 2.0, 0.0, 0.0, 0.0},
+            {"noise", 0.0, 0.0, 0.0, 12.0, 0.0, 0.0},
+            {"illumination", 0.0, 0.0, 0.0, 0.0, 0.8, 0.0},
+            {"occlusion", 0.0, 0.0, 0.0, 0.0, 0.0, 0.25},
+            {"combined", 21.0, 0.4, 1.0, 6.0, 0.5, 0.1},
+    };
+    for (const Condition& condition : conditions) {
+        SceneSpec spec = clean_spec(condition.name);
+        spec.marker_count_ = 2;
+        spec.marker_side_px_ = 160.0;
+        spec.rotation_deg_ = condition.rotation_deg;
+        spec.perspective_strength_ = condition.perspective;
+        spec.blur_sigma_px_ = condition.blur_sigma_px;
+        spec.noise_sigma_levels_ = condition.noise_sigma_levels;
+        spec.illumination_strength_ = condition.illumination;
+        spec.occlusion_ratio_ = condition.occlusion;
+
+        GeneratedScene scene;
+        std::string error;
+        ASSERT_TRUE(aruco3cuda::corpusgen::generate_scene(this->config_, spec, 0, &scene, &error))
+                << condition.name << ": " << error;
+        EXPECT_EQ(scene.markers_.size(), 2U) << condition.name;
+        EXPECT_FALSE(scene.sha256_.empty()) << condition.name;
+        // 劣化を加えても ground truth は生成条件から定まり、変化しない。
+        for (const auto& marker : scene.markers_) {
+            EXPECT_GT(marker.side_ratio_, 0.0) << condition.name;
+        }
+    }
+}
+
+// 正常系: 同じ劣化条件は同じ seed から同じ画像を再生成する。
+// noise と歪みが乱数を消費するため、決定性は劣化条件でこそ確認する意味がある。
+TEST_F(CorpusGeneratorTest, degraded_scene_is_reproducible) {
+    SceneSpec spec = clean_spec("degraded_repro");
+    spec.rotation_deg_ = 17.0;
+    spec.perspective_strength_ = 0.5;
+    spec.blur_sigma_px_ = 1.5;
+    spec.noise_sigma_levels_ = 8.0;
+    spec.illumination_strength_ = 0.6;
+
+    GeneratedScene first;
+    GeneratedScene second;
+    std::string error;
+    ASSERT_TRUE(aruco3cuda::corpusgen::generate_scene(this->config_, spec, 3, &first, &error))
+            << error;
+    ASSERT_TRUE(aruco3cuda::corpusgen::generate_scene(this->config_, spec, 3, &second, &error))
+            << error;
+    EXPECT_EQ(first.sha256_, second.sha256_);
+}
+
+// 異常系: 設定値が範囲外なら生成しない。
+TEST_F(CorpusGeneratorTest, rejects_out_of_range_settings) {
+    GeneratedScene scene;
+    std::string error;
+
+    CorpusConfig small_canonical = this->config_;
+    small_canonical.canonical_marker_px_ = 4;
+    EXPECT_FALSE(aruco3cuda::corpusgen::generate_scene(small_canonical, clean_spec("a"), 0, &scene,
+                                                       &error));
+    EXPECT_NE(error.find("canonical_marker_px"), std::string::npos) << error;
+
+    SceneSpec too_much_blur = clean_spec("b");
+    too_much_blur.blur_sigma_px_ = 1e9;
+    EXPECT_FALSE(
+            aruco3cuda::corpusgen::generate_scene(this->config_, too_much_blur, 0, &scene, &error));
+    EXPECT_NE(error.find("blur_sigma_px"), std::string::npos) << error;
+
+    SceneSpec oversized_marker = clean_spec("c");
+    oversized_marker.marker_side_px_ = 100000.0;
+    EXPECT_FALSE(aruco3cuda::corpusgen::generate_scene(this->config_, oversized_marker, 0, &scene,
+                                                       &error));
+
+    SceneSpec unnamed = clean_spec("d");
+    unnamed.name_.clear();
+    EXPECT_FALSE(aruco3cuda::corpusgen::generate_scene(this->config_, unnamed, 0, &scene, &error));
+}
+
 // 異常系: 不正な spec と出力先を拒否する。
 TEST_F(CorpusGeneratorTest, rejects_invalid_input) {
     GeneratedScene scene;

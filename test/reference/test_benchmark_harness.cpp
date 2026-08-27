@@ -160,14 +160,84 @@ TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
 }
 
 // 正常系: 経路と memory 種別の識別子が評価計画の表記と一致する。
+// 集計 script が識別子で経路を区別するため、表記のずれは比較を壊す。
 TEST(BenchmarkRouteTest, identifiers_match_evaluation_plan) {
+    using aruco3cuda::bench::MemoryMode;
     EXPECT_STREQ(aruco3cuda::bench::to_string(Route::kCpu), "CPU");
     EXPECT_STREQ(aruco3cuda::bench::to_string(Route::kCudaEndToEnd), "CUDA-E2E");
     EXPECT_STREQ(aruco3cuda::bench::to_string(Route::kCudaResident), "CUDA-Resident");
     EXPECT_STREQ(aruco3cuda::bench::to_string(Route::kHybrid), "Hybrid");
-    EXPECT_STREQ(aruco3cuda::bench::to_string(aruco3cuda::bench::MemoryMode::kHostPinned),
-                 "M-Pinned");
-    EXPECT_STREQ(aruco3cuda::bench::to_string(aruco3cuda::bench::MemoryMode::kDevice), "M-Device");
+    EXPECT_STREQ(aruco3cuda::bench::to_string(MemoryMode::kNotApplicable), "N/A");
+    EXPECT_STREQ(aruco3cuda::bench::to_string(MemoryMode::kHostPageable), "M-Pageable");
+    EXPECT_STREQ(aruco3cuda::bench::to_string(MemoryMode::kHostPinned), "M-Pinned");
+    EXPECT_STREQ(aruco3cuda::bench::to_string(MemoryMode::kManaged), "M-Managed");
+    EXPECT_STREQ(aruco3cuda::bench::to_string(MemoryMode::kDevice), "M-Device");
+}
+
+// 異常系: 列挙に無い値でも nullptr を返さない。
+TEST(BenchmarkRouteTest, unknown_enum_values_are_named) {
+    EXPECT_STREQ(aruco3cuda::bench::to_string(static_cast<Route>(999)), "Unknown");
+    EXPECT_STREQ(aruco3cuda::bench::to_string(static_cast<aruco3cuda::bench::MemoryMode>(999)),
+                 "Unknown");
+}
+
+// 正常系: kernel 時間がある場合は JSON へ統計を出力する。
+// CUDA 経路が入るまで実測では通らない経路のため、record を直接組み立てて確認する。
+TEST(BenchmarkOutputTest, kernel_statistics_are_written_when_available) {
+    const aruco3cuda::bench::BenchmarkConfig config;
+    aruco3cuda::bench::MeasurementRecord record;
+    record.image_path_ = "/tmp/x.png";
+    record.kernel_time_available_ = true;
+    record.kernel_ms_.p50_ = 1.5;
+    record.kernel_ms_.p95_ = 2.5;
+    record.kernel_ms_.p99_ = 3.5;
+    record.end_to_end_ms_.count_ = 1;
+
+    std::ostringstream out;
+    aruco3cuda::bench::write_measurement_line(out, config, record);
+    const std::string json = out.str();
+    EXPECT_EQ(json.find("\"kernel\":null"), std::string::npos) << json;
+    EXPECT_NE(json.find("1.5000"), std::string::npos) << json;
+    EXPECT_NE(json.find("3.5000"), std::string::npos) << json;
+}
+
+// 境界値: throughput が未測定なら null を出力する。0 で埋めない。
+TEST(BenchmarkOutputTest, unavailable_throughput_is_null) {
+    const aruco3cuda::bench::BenchmarkConfig config;
+    aruco3cuda::bench::MeasurementRecord record;
+    record.throughput_available_ = false;
+    std::ostringstream out;
+    aruco3cuda::bench::write_measurement_line(out, config, record);
+    EXPECT_NE(out.str().find("\"throughput_fps\":null"), std::string::npos) << out.str();
+}
+
+// 境界値: clock を取得できない環境では null を出力する。
+// 0 を書くと「clock が 0」と誤読されるため、未取得と 0 を区別する。
+TEST(BenchmarkOutputTest, unavailable_clock_is_null) {
+    aruco3cuda::bench::EnvironmentRecord environment;
+    environment.hostname_ = "test-host";
+    environment.gpu_clock_available_ = false;
+    environment.gpu_current_clock_mhz_ = 0;
+
+    std::ostringstream out;
+    aruco3cuda::bench::write_environment_line(out, environment);
+    const std::string json = out.str();
+    EXPECT_NE(json.find("\"gpu_max_clock_mhz\":null"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"gpu_current_clock_mhz\":null"), std::string::npos) << json;
+}
+
+// 正常系: clock を取得できる環境では数値を出力する。
+TEST(BenchmarkOutputTest, available_clock_is_written) {
+    aruco3cuda::bench::EnvironmentRecord environment;
+    environment.gpu_clock_available_ = true;
+    environment.gpu_max_clock_mhz_ = 1300;
+    environment.gpu_current_clock_mhz_ = 306;
+
+    std::ostringstream out;
+    aruco3cuda::bench::write_environment_line(out, environment);
+    const std::string json = out.str();
+    EXPECT_NE(json.find("\"gpu_max_clock_mhz\":1300"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"gpu_current_clock_mhz\":306"), std::string::npos) << json;
 }
 
 }  // namespace

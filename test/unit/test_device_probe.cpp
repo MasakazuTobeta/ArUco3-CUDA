@@ -9,6 +9,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cuda_runtime_api.h>
+
 #include "aruco3cuda/status.hpp"
 
 namespace {
@@ -24,6 +26,16 @@ int available_device_count() {
 // 異常系: nullptr を拒否する。
 TEST(DeviceProbeTest, device_count_rejects_null_output) {
     EXPECT_EQ(aruco3cuda::device_count(nullptr), aruco3cuda::Status::kInvalidArgument);
+}
+
+// 正常系: device 数を取得でき、非負値を書き込む。
+// helper が失敗を握り潰すため、この test が無いと device_count が常に失敗しても
+// 他の test が skip されるだけで気付けない。
+TEST(DeviceProbeTest, device_count_succeeds_and_writes_non_negative) {
+    int count = -1;
+    const aruco3cuda::Status status = aruco3cuda::device_count(&count);
+    ASSERT_EQ(status, aruco3cuda::Status::kOk) << aruco3cuda::last_cuda_error_message();
+    EXPECT_GE(count, 0);
 }
 
 // 異常系: nullptr を拒否する。

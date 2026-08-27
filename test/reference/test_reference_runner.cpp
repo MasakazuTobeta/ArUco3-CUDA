@@ -12,6 +12,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/objdetect/aruco_detector.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -168,6 +169,74 @@ TEST_F(ReferenceRunnerTest, rejects_null_outputs) {
     std::string error;
     EXPECT_FALSE(aruco3cuda::reference::detect_image("/tmp/x.png", config, nullptr, &error));
     EXPECT_FALSE(aruco3cuda::reference::detect_image("/tmp/x.png", config, &result, nullptr));
+}
+
+// 正常系: 環境情報を収集でき、記録すべき項目が埋まる。
+// 空や誤値のまま結果へ記録されると、測定条件を後から再現できない。
+TEST(ReferenceEnvironmentTest, collects_opencv_version_and_thread_count) {
+    aruco3cuda::reference::ReferenceConfig config;
+    config.num_threads_ = 1;
+    const aruco3cuda::reference::ReferenceEnvironment environment =
+            aruco3cuda::reference::collect_environment(config);
+    EXPECT_FALSE(environment.opencv_version_.empty());
+    // 再現性のため thread 数を固定する。指定した値が実際に反映される必要がある。
+    EXPECT_EQ(environment.opencv_threads_, 1);
+}
+
+// 正常系: thread 数に 0 を指定すると OpenCV の既定に従う。
+TEST(ReferenceEnvironmentTest, thread_count_zero_uses_opencv_default) {
+    aruco3cuda::reference::ReferenceConfig config;
+    config.num_threads_ = 0;
+    const aruco3cuda::reference::ReferenceEnvironment environment =
+            aruco3cuda::reference::collect_environment(config);
+    EXPECT_GT(environment.opencv_threads_, 0);
+}
+
+// 異常系: 設定値が範囲外なら検出前に false を返す。
+// 範囲外の値を OpenCV へ渡すと cv::Exception が契約を破って抜ける。
+TEST(ReferenceConfigTest, rejects_out_of_range_values) {
+    std::string error;
+    aruco3cuda::reference::ReferenceConfig valid;
+    EXPECT_TRUE(aruco3cuda::reference::validate_config(valid, &error)) << error;
+
+    aruco3cuda::reference::ReferenceConfig small_window = valid;
+    small_window.adaptive_thresh_win_size_min_px_ = 2;
+    EXPECT_FALSE(aruco3cuda::reference::validate_config(small_window, &error));
+    EXPECT_NE(error.find("adaptive_thresh_win_size_min"), std::string::npos) << error;
+
+    aruco3cuda::reference::ReferenceConfig inverted = valid;
+    inverted.adaptive_thresh_win_size_max_px_ = 3;
+    inverted.adaptive_thresh_win_size_min_px_ = 21;
+    EXPECT_FALSE(aruco3cuda::reference::validate_config(inverted, &error));
+
+    aruco3cuda::reference::ReferenceConfig bad_rate = valid;
+    bad_rate.error_correction_rate_ = 1.5;
+    EXPECT_FALSE(aruco3cuda::reference::validate_config(bad_rate, &error));
+    EXPECT_NE(error.find("error_correction_rate"), std::string::npos) << error;
+
+    // NaN は比較が全て false になるため、範囲検査で弾けている必要がある。
+    aruco3cuda::reference::ReferenceConfig nan_rate = valid;
+    nan_rate.min_otsu_std_dev_ = std::nan("");
+    EXPECT_FALSE(aruco3cuda::reference::validate_config(nan_rate, &error));
+
+    aruco3cuda::reference::ReferenceConfig zero_aruco3 = valid;
+    zero_aruco3.use_aruco3_detection_ = true;
+    zero_aruco3.min_side_length_canonical_img_px_ = 0;
+    zero_aruco3.min_marker_length_ratio_original_img_ = 0.0F;
+    EXPECT_FALSE(aruco3cuda::reference::validate_config(zero_aruco3, &error));
+
+    EXPECT_FALSE(aruco3cuda::reference::validate_config(valid, nullptr));
+}
+
+// 異常系: 設定値が範囲外の場合、detect_image は例外ではなく false で失敗する。
+TEST_F(ReferenceRunnerTest, detect_rejects_invalid_config_without_exception) {
+    const std::string path = this->make_image("aruco3cuda_ref_badcfg.png");
+    ReferenceConfig config;
+    config.marker_border_bits_ = 0;
+    ReferenceResult result;
+    std::string error;
+    EXPECT_FALSE(aruco3cuda::reference::detect_image(path, config, &result, &error));
+    EXPECT_NE(error.find("marker_border_bits"), std::string::npos) << error;
 }
 
 // 正常系: Dictionary 名の解決。

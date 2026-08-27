@@ -90,4 +90,30 @@ TEST(JsonWriterTest, output_is_deterministic) {
     EXPECT_EQ(build(), build());
 }
 
+// 正常系: 各 value_* を直接呼び出せる。member_* 経由でしか通らない経路を残さない。
+TEST(JsonWriterTest, value_functions_can_be_called_directly) {
+    std::ostringstream out;
+    JsonWriter writer(out, 0);
+    writer.begin_array();
+    writer.value_string("文字列");
+    writer.value_int(-7);
+    writer.value_bool(true);
+    writer.value_bool(false);
+    writer.value_null();
+    writer.value_double(0.5, 2);
+    writer.end_array();
+    EXPECT_EQ(out.str(), "[\"文字列\",-7,true,false,null,0.50]");
+}
+
+// 境界値: 桁数が buffer へ収まらない場合は値を切り詰めず null にする。
+// 切り詰めた数値を書くと、実際と異なる値を記録することになる。
+TEST(JsonWriterTest, writes_null_when_precision_does_not_fit) {
+    std::ostringstream out;
+    JsonWriter writer(out, 0);
+    writer.begin_array();
+    writer.value_double(1.0, 200);
+    writer.end_array();
+    EXPECT_EQ(out.str(), "[null]");
+}
+
 }  // namespace

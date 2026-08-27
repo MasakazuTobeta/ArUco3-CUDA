@@ -244,12 +244,40 @@ critical path は WP-0.0 から WP-0.1、WP-1.1、WP-1.3、WP-1.4、WP-1.5 を�
 | conformance | Dictionary の ID 数、markerSize、4 回転 codeword、訂正境界 | 全 commit |
 | differential | CPU 基準結果との ID・rotation・四隅の比較 | 全 commit |
 | robustness | 0 マーカー、上限超過、非連続 pitch、ROI、極小画像、null pointer、memory 空間の不一致 | 全 commit |
+| cli | CLI の引数解析。正常系、異常系、境界値を実行 file の起動で検証 | 全 commit |
 | sanitizer | Compute Sanitizer の 4 mode | 日次または PR |
+| coverage | C0 と C1 の測定と未達理由の確認 | Phase 完了時 |
 | benchmark | カーネル時間と end-to-end 時間、latency 分布 | 変更時と Phase 完了時 |
+
+Compute Sanitizer の実行では、意図的に CUDA API を失敗させる test を suite 名で除外します。Compute Sanitizer は意図の有無に関わらず全ての API エラーを報告するため、除外しないと意図した失敗が指摘として現れ、本物の問題を埋もれさせます。
 
 差分テストは CPU 基準結果を互換性の基準として扱い、ground truth は合成 corpus の生成時情報を使用します。両者が食い違う場合は、差異を分類したうえで CPU 基準側の挙動として記録します。
 
 CUDA device code は host coverage と別に、入力分割と境界値で実行経路を確認します。対象は、overflow 経路、`minOtsuStdDev` 未満の候補、border 誤り上限、回転 4 種、pyramid の最上位と最下位 level です。
+
+### カバレッジの現状と未達理由
+
+`coverage` preset で C0 と C1 を測定します。`cmake --build build/coverage --target coverage-report` が `ctest` を実行してから `gcovr` で集計します。
+
+| 指標 | 現状 | 目標 |
+| --- | --- | --- |
+| C0 (line) | 89.9% (1718 / 1912) | 100% |
+| C1 (decision) | 82.7% (464 / 561) | 100% |
+| function | 99.0% (104 / 105) | 100% |
+
+規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 194 行の内訳は次のとおりです。
+
+| 分類 | 内容 | 扱い |
+| --- | --- | --- |
+| 外部資源の獲得失敗 | `popen` の失敗、`ofstream` の書き込み失敗、`cudaMalloc` の失敗 | 対象外。故障注入の仕組みが無いと再現できない。仕組みの導入は Phase 4 で検討する |
+| OpenCV 内部の失敗 | `cv::imwrite` の失敗、`getPerspectiveTransform` の異常入力 | 対象外。OpenCV 側の内部状態に依存し、外から誘発できない |
+| CUDA API の失敗経路 | `cudaGetDeviceProperties` や `cudaMemcpy` の失敗 | 対象外。`check_cuda` の記録経路自体は `test_cuda_check.cpp` で検証済み |
+| 到達不能な防御的分岐 | `percentile_nearest_rank` の順位下限、列挙に無い値の既定処理 | 対象外。仕様上到達しないが、将来の変更に対する防御として残す |
+| CUDA device code | `fill_squares_kernel`、`invert_kernel` | gcov は device code の実行経路を計測できない。規約の定めどおり入力分割と境界値で確認する。自己診断の要素数を block size の倍数にしないことで、範囲外判定の分岐も実行される |
+
+`main.cpp` の CLI 層は `test/cli/` の ctest から実行 file を起動して測定に含めています。未到達分は上記の外部資源の失敗経路が中心です。
+
+CUDA 経路の実装が入る Phase 1 以降、この表を更新します。
 
 ### 評価計画へ反映した変更
 
