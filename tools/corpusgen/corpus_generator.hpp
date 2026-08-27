@@ -79,10 +79,14 @@ struct CorpusConfig {
 /// 範囲外の値は OpenCV の assert を踏むか、巨大な memory 確保を招く。
 /// generate_scene は最初にこの検証を行う。
 ///
-/// @param config corpus 全体の設定。
-/// @param spec 対象 scene の条件。
+/// @param config corpus 全体の設定。参照するだけで保持しない。
+/// @param spec 対象 scene の条件。参照するだけで保持しない。
 /// @param out_error 失敗時に「項目名=値」を含む理由を格納する。nullptr は不可。
+///                  領域の所有権は呼出側にある。
 /// @return 全ての項目が有効なら true。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。OpenCV も CUDA も呼ばない。
 ///
 /// 入力例: canonical_marker_px_ = 0 の config
 /// 出力例: false、out_error に "canonical_marker_px=0" を含む文字列
@@ -105,12 +109,27 @@ double minimum_detectable_side_px(int min_side_length_canonical_img_px, int long
 
 /// preset 名から scene spec の一覧を作る。
 ///
-/// @param preset "smoke"、"basic"、"full" のいずれか。
-/// @param out_specs 成功時に spec 一覧を格納する。
+/// @param preset "smoke"、"basic"、"full" のいずれか。参照するだけで保持しない。
+/// @param out_specs 成功時に spec 一覧を格納する。既存の内容は置き換える。
+///                  領域の所有権は呼出側にある。nullptr は不可。
 /// @return 既知の preset なら true。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: "smoke"
+/// 出力例: true。out_specs に 3 件の SceneSpec が入る
 bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs);
 
 /// 対応する preset 名の一覧を返す。
+///
+/// @return preset 名の一覧。
+///
+/// 所有権: 戻り値は値であり、呼出側が所有する。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: 引数なし
+/// 出力例: {"smoke", "basic", "full"}
 std::vector<std::string> known_presets();
 
 /// 1 枚の画像を生成して保存する。

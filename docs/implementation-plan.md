@@ -245,9 +245,14 @@ critical path は WP-0.0 から WP-0.1、WP-1.1、WP-1.3、WP-1.4、WP-1.5 を�
 | differential | CPU 基準結果との ID・rotation・四隅の比較 | 全 commit |
 | robustness | 0 マーカー、上限超過、非連続 pitch、ROI、極小画像、null pointer、memory 空間の不一致 | 全 commit |
 | cli | CLI の引数解析。正常系、異常系、境界値を実行 file の起動で検証 | 全 commit |
+| doc | 公開 API の Doxygen 要件の充足を機械検査 | 全 commit |
 | sanitizer | Compute Sanitizer の 4 mode | 日次または PR |
 | coverage | C0 と C1 の測定と未達理由の確認 | Phase 完了時 |
 | benchmark | カーネル時間と end-to-end 時間、latency 分布 | 変更時と Phase 完了時 |
+
+`tools/check_doxygen.py` が公開ヘッダの宣言を列挙し、規約が求める 7 要素 (目的、引数、戻り値、所有権、同期動作、入力例、出力例) の欠落を検出します。`ctest` から実行するため、宣言を追加したときに記載漏れへ気付けます。
+
+所有権と同期動作が class 全体で共通する場合は、class の Doxygen へ「全ての public member 関数に適用される」と明記することで member 側の記載に代えます。同一の記述を member ごとに複写すると、規約が避けよと定める「処理の言い換え」に近い冗長さを生み、可読性を損なうためです。検査もこの扱いに従います。
 
 Compute Sanitizer の実行では、意図的に CUDA API を失敗させる test を suite 名で除外します。Compute Sanitizer は意図の有無に関わらず全ての API エラーを報告するため、除外しないと意図した失敗が指摘として現れ、本物の問題を埋もれさせます。
 

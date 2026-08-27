@@ -22,7 +22,10 @@ enum class Status : int {
 /// Status を識別子文字列へ変換する。log と test の判定に使用する。
 ///
 /// @param status 変換対象。未知の値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。呼出側は解放しない。
+/// @return 静的記憶域を持つ文字列。
+///
+/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
+/// 同期動作: host 専用であり同期点を持たない。再入可能である。
 ///
 /// 入力例: Status::kCudaError
 /// 出力例: "kCudaError"
@@ -33,7 +36,14 @@ const char* to_string(Status status);
 /// CUDA API 名、device、処理段階、CUDA 側の error 文字列を含む。
 /// thread ごとに独立して保持する。まだ記録が無い場合は空文字列を返す。
 ///
-/// @return 静的記憶域を持つ文字列。次の CUDA エラー記録まで有効。
+/// @return thread_local な記憶域を指す文字列。次の CUDA エラー記録まで有効。
+///
+/// 所有権: 戻り値は library 側の記憶域を指す。呼出側は解放しない。
+///         内容は同じ thread で次に CUDA エラーが記録されると上書きされる。
+/// 同期動作: host 専用であり同期点を持たない。thread ごとに独立する。
+///
+/// 入力例: cudaMalloc の失敗を check_cuda が記録した直後に呼ぶ
+/// 出力例: "api=cudaMalloc stage=run_device_self_test device=0 stream=(nil) error=..."
 const char* last_cuda_error_message();
 
 }  // namespace aruco3cuda

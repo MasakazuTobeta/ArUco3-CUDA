@@ -59,7 +59,8 @@
 ## Comment Rules
 
 - program file 内の説明コメントと Doxygen は原則として日本語で記述する。
-- public class と関数には、目的、引数、戻り値、所有権、同期動作、入力例、出力例を記載する。
+- public class と関数には、目的、引数、戻り値、所有権、同期動作、入力例、出力例を記載する。`tools/check_doxygen.py` が欠落を検出する。`ctest` からも実行される。
+- 所有権と同期動作が class 全体で共通する場合は、class の Doxygen へ「全ての public member 関数に適用される」と明記してよい。同一の記述を member ごとに複写しない。
 - コメントは処理の言い換えではなく、設計理由、前提、失敗時の扱い、性能上の意図を説明する。
 - CUDA カーネルでは、thread / block とデータの対応、競合回避、境界条件を説明する。
 

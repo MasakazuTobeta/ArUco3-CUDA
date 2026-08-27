@@ -38,8 +38,9 @@ enum class MemoryMode : int {
 /// Route を評価計画の表記へ変換する。結果 JSONL の識別子に使用する。
 ///
 /// @param route 変換対象。列挙に無い値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。呼出側は解放しない。
+/// @return 静的記憶域を持つ文字列。
 ///
+/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
 /// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: Route::kCudaEndToEnd
@@ -49,8 +50,9 @@ const char* to_string(Route route);
 /// MemoryMode を評価計画の表記へ変換する。
 ///
 /// @param mode 変換対象。列挙に無い値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。呼出側は解放しない。
+/// @return 静的記憶域を持つ文字列。
 ///
+/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
 /// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: MemoryMode::kHostPinned

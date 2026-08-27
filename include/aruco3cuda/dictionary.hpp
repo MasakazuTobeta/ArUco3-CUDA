@@ -32,7 +32,15 @@ struct DictionaryTable {
     /// rotation は反時計回りに 90 度ずつ進む。
     const MarkerCode* codes_ = nullptr;
 
-    /// 収録 bit 数。marker_size_ * marker_size_ に等しい。
+    /// 収録 bit 数を返す。
+    ///
+    /// @return marker_size_ * marker_size_。marker_size_ が 0 なら 0。
+    ///
+    /// 所有権: 資源を保持しない。
+    /// 同期動作: host と device のいずれからも呼べる純粋な計算であり同期点を持たない。
+    ///
+    /// 入力例: marker_size_ = 6 の table
+    /// 出力例: 36
     int bit_count() const { return this->marker_size_ * this->marker_size_; }
 };
 
@@ -44,13 +52,23 @@ struct DictionaryMatch {
 };
 
 /// 収録されている定義済み Dictionary の数を返す。
+///
+/// @return 収録数。0 にはならない。
+///
+/// 所有権: 資源を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: 引数なし
+/// 出力例: 1
 std::size_t builtin_dictionary_count();
 
 /// index 番目の定義済み Dictionary を返す。
 ///
 /// @param index 0 以上 builtin_dictionary_count() 未満。範囲外では nullptr を返す。
-/// @return 静的記憶域を持つ table への pointer。呼出側は解放しない。
+/// @return 静的記憶域を持つ table への pointer。範囲外では nullptr。
 ///
+/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
+///         table が指す codes_ も同じく静的記憶域である。
 /// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: 0
@@ -61,8 +79,9 @@ const DictionaryTable* builtin_dictionary_at(std::size_t index);
 ///
 /// @param name 探す名前。nullptr を渡してよく、その場合は nullptr を返す。
 /// @return 静的記憶域を持つ table への pointer。見つからない場合は nullptr。
-///         呼出側は解放しない。
 ///
+/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
+///         引数の name は複製も保持もしない。
 /// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: "DICT_ARUCO_MIP_36h12"
@@ -78,7 +97,12 @@ const DictionaryTable* find_builtin_dictionary(const char* name);
 /// @param candidate 候補の bit 列。table の bit_count() を超える bit は 0 とする。
 /// @param max_correction_errors 許容する最大の Hamming 距離。
 /// @param out 照合結果を格納する。一致しなかった場合は id_ に -1 を入れる。
+///            領域の所有権は呼出側にある。
 /// @return 照合を実行できた場合は kOk。引数が不正な場合は kInvalidArgument。
+///
+/// 所有権: table が指す codes_ は参照するだけで保持しない。
+/// 同期動作: host 専用であり同期点を持たない。CUDA 実装では同じ規則を
+///           device 側の関数として再実装する。
 ///
 /// 備考:
 ///   一致しなかったことは失敗ではないため戻り値では区別しない。
@@ -98,16 +122,29 @@ Status match_dictionary(const DictionaryTable& table, MarkerCode candidate,
 /// O(n^2) となるため、test での使用を想定する。
 ///
 /// @param table 対象 Dictionary。
-/// @param out_distance 成功時に最小距離を格納する。
+/// @param out_distance 成功時に最小距離を格納する。領域の所有権は呼出側にある。
 /// @return kOk または kInvalidArgument。
+///
+/// 所有権: table が指す codes_ は参照するだけで保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: DICT_ARUCO_MIP_36h12 の table
+/// 出力例: *out_distance = 12
 Status minimum_hamming_distance(const DictionaryTable& table, int* out_distance);
 
 /// bit 配列から MarkerCode を組み立てる。
 ///
-/// @param bits 各要素が 0 または 1。長さは marker_size * marker_size。
-/// @param marker_size 1 辺の bit 数。
-/// @param out 成功時に packed 値を格納する。
-/// @return kOk または kInvalidArgument。
+/// @param bits 各要素が 0 または 1。長さは marker_size * marker_size 以上。
+///             領域の所有権は呼出側にあり、この関数は複製も保持もしない。
+/// @param marker_size 1 辺の bit 数。1 以上 7 以下。
+/// @param out 成功時に packed 値を格納する。領域の所有権は呼出側にある。
+/// @return kOk。bits か out が nullptr、または marker_size が範囲外なら kInvalidArgument。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: bits = {1, 0, 1, 0}、marker_size = 2
+/// 出力例: *out = 0b0101
 Status pack_marker_code(const std::uint8_t* bits, int marker_size, MarkerCode* out);
 
 /// MarkerCode を bit 配列へ展開する。pack_marker_code の逆変換。
@@ -118,6 +155,7 @@ Status pack_marker_code(const std::uint8_t* bits, int marker_size, MarkerCode* o
 ///                 領域の確保と解放は呼出側の責務である。各要素へ 0 または 1 を書く。
 /// @return kOk。out_bits が nullptr、または marker_size が範囲外なら kInvalidArgument。
 ///
+/// 所有権: 引数の領域を保持しない。
 /// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: code = 0b101、marker_size = 2
@@ -127,9 +165,15 @@ Status unpack_marker_code(MarkerCode code, int marker_size, std::uint8_t* out_bi
 /// bit 配列を反時計回りに 90 度回転した MarkerCode を返す。
 ///
 /// @param code 元の値。
-/// @param marker_size 1 辺の bit 数。
-/// @param out 成功時に回転後の値を格納する。
-/// @return kOk または kInvalidArgument。
+/// @param marker_size 1 辺の bit 数。1 以上 7 以下。
+/// @param out 成功時に回転後の値を格納する。領域の所有権は呼出側にある。
+/// @return kOk。out が nullptr、または marker_size が範囲外なら kInvalidArgument。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: 2x2 の {1, 0, 0, 0}、marker_size = 2
+/// 出力例: 反時計回りに 90 度回した {0, 0, 1, 0}
 Status rotate_marker_code(MarkerCode code, int marker_size, MarkerCode* out);
 
 }  // namespace aruco3cuda

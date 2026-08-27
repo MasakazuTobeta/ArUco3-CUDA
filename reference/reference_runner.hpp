@@ -85,9 +85,13 @@ struct ReferenceEnvironment {
 /// bool と out_error で失敗を通知する契約を破って呼出側へ抜ける。
 /// detect_image は最初にこの検証を行う。
 ///
-/// @param config 検証対象。
+/// @param config 検証対象。参照するだけで保持しない。
 /// @param out_error 失敗時に「項目名=値」を含む理由を格納する。nullptr は不可。
+///                  領域の所有権は呼出側にある。
 /// @return 全ての項目が有効なら true。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。OpenCV も CUDA も呼ばない。
 ///
 /// 入力例: adaptive_thresh_win_size_min_ = 2 の config
 /// 出力例: false、out_error に "adaptive_thresh_win_size_min=2" を含む文字列
@@ -95,11 +99,25 @@ bool validate_config(const ReferenceConfig& config, std::string* out_error);
 
 /// 名前から OpenCV の定義済み Dictionary を解決できるか確認する。
 ///
-/// @param name 例: "DICT_ARUCO_MIP_36h12"
+/// @param name 探す名前。参照するだけで保持しない。
 /// @return 解決できる場合は true。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: "DICT_ARUCO_MIP_36h12"
+/// 出力例: true
 bool is_known_dictionary(const std::string& name);
 
 /// 対応している Dictionary 名の一覧を返す。
+///
+/// @return 名前を昇順で並べた一覧。
+///
+/// 所有権: 戻り値は値であり、呼出側が所有する。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: 引数なし
+/// 出力例: {"DICT_4X4_100", "DICT_4X4_1000", ..., "DICT_ARUCO_MIP_36h12"}
 std::vector<std::string> known_dictionary_names();
 
 /// 画像 1 枚を検出する。
@@ -117,6 +135,19 @@ bool detect_image(const std::string& image_path, const ReferenceConfig& config,
                   ReferenceResult* out_result, std::string* out_error);
 
 /// 実行環境の情報を収集する。
+///
+/// @param config 検出設定。OpenCV の thread 数の設定にのみ使用する。
+/// @return 収集した環境情報。取得できなかった項目は空文字列のままとする。
+///
+/// 所有権: 戻り値は値であり、内部の資源を参照しない。引数は保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 副作用: config.num_threads_ が 1 以上なら cv::setNumThreads() を呼び、
+///         以降の OpenCV 処理の thread 数を変更する。測定条件を固定するための
+///         意図的な副作用である。0 を指定した場合は変更しない。
+///
+/// 入力例: num_threads_ = 1 の ReferenceConfig
+/// 出力例: opencv_version_ = "4.14.0"、opencv_threads_ = 1
 ReferenceEnvironment collect_environment(const ReferenceConfig& config);
 
 /// 結果を JSON として書き出す。

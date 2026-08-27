@@ -147,6 +147,16 @@ add_test(NAME cli.bench.measure
           --output "${CMAKE_CURRENT_BINARY_DIR}/cli-bench.jsonl")
 set_tests_properties(cli.bench.measure PROPERTIES FIXTURES_REQUIRED cli_corpus TIMEOUT 300)
 
+# 公開 API の Doxygen 要件を継続的に検査する。
+# 宣言を追加したときに記載漏れへ気付けるようにする。
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME doc.doxygen_completeness
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check_doxygen.py"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(doc.doxygen_completeness PROPERTIES TIMEOUT 120)
+endif()
+
 # 集計 script も CLI の一部として検査する。
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)

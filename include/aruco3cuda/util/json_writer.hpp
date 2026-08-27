@@ -17,10 +17,13 @@ namespace aruco3cuda::util {
 /// 所有権:
 ///   出力先 ostream は非所有の参照として保持する。解放は行わない。
 ///   呼出側は writer より長く ostream を生存させる必要がある。
+///   引数として受け取る文字列は複製して出力し、保持しない。
+///   **この所有権は以下の全ての public member 関数に適用される。**
 ///
 /// 同期動作:
 ///   host 専用であり同期点を持たない。内部に書式状態を持つため、
 ///   1 つの instance を複数 thread から同時に使用してはならない。
+///   **この同期動作は以下の全ての public member 関数に適用される。**
 ///
 /// 制約:
 ///   非有限値 (NaN、無限大) は JSON で表現できないため null として出力する。
@@ -36,7 +39,10 @@ namespace aruco3cuda::util {
 class JsonWriter {
 public:
     /// @param out 出力先。writer の生存期間中に有効である必要がある。所有権は移らない。
-    /// @param indent_width 入れ子 1 段あたりの空白数。0 で改字と字下げを行わず 1 行出力になる。
+    /// @param indent_width 入れ子 1 段あたりの空白数。0 で改行と字下げを行わず 1 行出力になる。
+    ///
+    /// 入力例: JsonWriter(out, 0) と JsonWriter(out, 2) で同じ呼び出し列を実行する
+    /// 出力例: 前者は {"a":1}、後者は改行と 2 空白の字下げを伴う複数行
     explicit JsonWriter(std::ostream& out, int indent_width = 2);
 
     /// object を開始する。直前が key でなければ区切りと字下げを自動で入れる。
