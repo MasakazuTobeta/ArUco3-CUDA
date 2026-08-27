@@ -10,6 +10,7 @@ add_library(aruco3cuda_core
   preprocess.cu
   threshold.cu
   labeling.cu
+  quad_extract.cu
   cuda_check.cpp
   device_probe.cu)
 
