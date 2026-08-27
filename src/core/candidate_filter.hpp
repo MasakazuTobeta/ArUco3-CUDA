@@ -60,6 +60,12 @@ struct CandidateFilterBuffers {
     std::int32_t* perimeter_ = nullptr;
     /// 辺ごとの裏付け画素数。添字は (corner * capacity_) + label。
     std::int32_t* edge_support_ = nullptr;
+    /// 書き込みを始める位置。要素数 1。
+    ///
+    /// 二値化 window ごとに候補を求めて 1 つの配列へ連ねるため、直前まで
+    /// の件数を device 側で保持する。host へ戻して足すと window ごとに
+    /// 同期が要る。
+    std::int32_t* base_ = nullptr;
     ScanBuffers scan_;
     int capacity_ = 0;
 };
@@ -123,6 +129,9 @@ Status reserve_candidates(const DetectorConfig& config, int width_px, int height
 /// @param config 検出設定。
 /// @param buffers reserve_candidates が返した作業領域。nullptr は不可。
 /// @param candidates reserve_candidates が返した出力領域。nullptr は不可。
+/// @param append true なら既に入っている候補の後ろへ書き足す。false なら
+///               先頭から書き直す。二値化 window ごとに呼ぶ場合、最初の
+///               window だけ false にする。
 /// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
 /// @return kOk、または kInvalidArgument、kCudaError。
 ///         上限超過は非同期のため、ここでは判定しない。
@@ -135,7 +144,7 @@ Status reserve_candidates(const DetectorConfig& config, int width_px, int height
 Status build_candidates_async(const LabelBuffers& labels, const LabelStatisticsBuffers& stats,
                               const QuadBuffers& quads, const DetectorConfig& config,
                               CandidateFilterBuffers* buffers, DeviceCandidates* candidates,
-                              cudaStream_t stream);
+                              bool append, cudaStream_t stream);
 
 /// 候補数を host へ読み出し、打ち切りの有無を返す。
 ///

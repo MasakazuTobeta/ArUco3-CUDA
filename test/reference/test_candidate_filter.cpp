@@ -108,7 +108,8 @@ public:
             aruco3cuda::detail::build_label_stats_async(labels, &stats, nullptr) != Status::kOk ||
             aruco3cuda::detail::build_quads_async(labels, stats, &quads, nullptr) != Status::kOk ||
             aruco3cuda::detail::build_candidates_async(labels, stats, quads, config, &filter,
-                                                       &candidates, nullptr) != Status::kOk) {
+                                                       &candidates, false,
+                                                       nullptr) != Status::kOk) {
             return Status::kCudaError;
         }
         const Status status =
@@ -389,10 +390,10 @@ TEST(CandidateFilterTest, rejects_invalid_arguments) {
     aruco3cuda::detail::LabelStatisticsBuffers stats;
     aruco3cuda::detail::QuadBuffers quads;
     EXPECT_EQ(aruco3cuda::detail::build_candidates_async(labels, stats, quads, config, nullptr,
-                                                         &candidates, nullptr),
+                                                         &candidates, false, nullptr),
               Status::kInvalidArgument);
     EXPECT_EQ(aruco3cuda::detail::build_candidates_async(labels, stats, quads, config, &buffers,
-                                                         &candidates, nullptr),
+                                                         &candidates, false, nullptr),
               Status::kInvalidArgument);
     EXPECT_EQ(aruco3cuda::detail::read_candidate_count(candidates, nullptr, nullptr),
               Status::kInvalidArgument);

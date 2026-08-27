@@ -214,11 +214,19 @@ __global__ void evaluate_kernel(const std::int32_t* corner_x, const std::int32_t
     offsets[label] = 1;
 }
 
+/// 書き込みを始める位置を決める。append なら現在の件数、そうでなければ 0。
+__global__ void capture_base_kernel(const std::int32_t* count, std::int32_t* base, bool append) {
+    if (threadIdx.x != 0U || blockIdx.x != 0U) {
+        return;
+    }
+    *base = append ? *count : 0;
+}
+
 /// 合格した label を詰めて並べる。
 __global__ void compact_kernel(const std::int32_t* corner_x, const std::int32_t* corner_y,
                                const std::int32_t* accepted, const std::int32_t* offsets,
-                               const std::int32_t* perimeter, int label_capacity,
-                               DeviceCandidates candidates, int capacity) {
+                               const std::int32_t* perimeter, const std::int32_t* base,
+                               int label_capacity, DeviceCandidates candidates, int capacity) {
     const int label = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (label >= label_capacity) {
         return;
@@ -226,7 +234,7 @@ __global__ void compact_kernel(const std::int32_t* corner_x, const std::int32_t*
     if (accepted[label] == 0) {
         return;
     }
-    const std::int32_t destination = offsets[label];
+    const std::int32_t destination = *base + offsets[label];
     if (destination >= capacity) {
         // 上限を超えた分は書かない。打ち切りは accepted_total_ から分かる。
         return;
@@ -242,14 +250,17 @@ __global__ void compact_kernel(const std::int32_t* corner_x, const std::int32_t*
 }
 
 /// 詰めた候補数と、篩を通った総数を書き出す。
-__global__ void store_count_kernel(const std::int32_t* total, std::int32_t* count,
-                                   std::int32_t* accepted_total, int capacity) {
+__global__ void store_count_kernel(const std::int32_t* total, const std::int32_t* base,
+                                   std::int32_t* count, std::int32_t* accepted_total, int capacity,
+                                   bool append) {
     if (threadIdx.x != 0U || blockIdx.x != 0U) {
         return;
     }
-    const std::int32_t value = *total;
+    const std::int32_t previous = append ? *accepted_total : 0;
+    const std::int32_t value = previous + *total;
     *accepted_total = value;
-    *count = (value < capacity) ? value : capacity;
+    const std::int32_t written = *base + *total;
+    *count = (written < capacity) ? written : capacity;
 }
 
 /// int32 配列の byte 数を求める。桁溢れなら 0 を返す。
@@ -272,8 +283,9 @@ std::size_t candidate_workspace_bytes(const DetectorConfig& config, int width_px
     if (candidates > std::numeric_limits<std::size_t>::max() / kQuadCornerCount) {
         return 0U;
     }
-    const std::size_t label_arrays =
-            (array_bytes_i32(labels) * 4U) + array_bytes_i32(labels * kQuadCornerCount);
+    const std::size_t label_arrays = (array_bytes_i32(labels) * 4U) +
+                                     array_bytes_i32(labels * kQuadCornerCount) +
+                                     array_bytes_i32(1U);
     const std::size_t scan_bytes = align_up(scan_workspace_bytes(label_capacity), kPlaneAlignment);
     const std::size_t corner_arrays = array_bytes_i32(candidates * kQuadCornerCount) * 2U;
     const std::size_t candidate_arrays = array_bytes_i32(candidates) * 2U;
@@ -323,6 +335,14 @@ Status reserve_candidates(const DetectorConfig& config, int width_px, int height
         }
         buffers.edge_support_ = static_cast<std::int32_t*>(pointer);
     }
+    {
+        void* pointer = nullptr;
+        const Status status = workspace.allocate(sizeof(std::int32_t), kPlaneAlignment, &pointer);
+        if (status != Status::kOk) {
+            return status;
+        }
+        buffers.base_ = static_cast<std::int32_t*>(pointer);
+    }
     Status status = reserve_scan(label_capacity, workspace, &buffers.scan_);
     if (status != Status::kOk) {
         return status;
@@ -362,10 +382,11 @@ Status reserve_candidates(const DetectorConfig& config, int width_px, int height
 Status build_candidates_async(const LabelBuffers& labels, const LabelStatisticsBuffers& stats,
                               const QuadBuffers& quads, const DetectorConfig& config,
                               CandidateFilterBuffers* buffers, DeviceCandidates* candidates,
-                              cudaStream_t stream) {
+                              bool append, cudaStream_t stream) {
     if (buffers == nullptr || candidates == nullptr || buffers->accepted_ == nullptr ||
-        buffers->edge_support_ == nullptr || candidates->corner_x_ == nullptr ||
-        labels.labels_ == nullptr || stats.pixel_count_ == nullptr || quads.corner_x_ == nullptr) {
+        buffers->edge_support_ == nullptr || buffers->base_ == nullptr ||
+        candidates->corner_x_ == nullptr || labels.labels_ == nullptr ||
+        stats.pixel_count_ == nullptr || quads.corner_x_ == nullptr) {
         return Status::kInvalidArgument;
     }
     if (buffers->capacity_ != quads.capacity_ || quads.capacity_ != stats.capacity_) {
@@ -425,15 +446,22 @@ Status build_candidates_async(const LabelBuffers& labels, const LabelStatisticsB
     if (status != Status::kOk) {
         return status;
     }
+    capture_base_kernel<<<1U, 1U, 0, stream>>>(candidates->count_, buffers->base_, append);
+    status = check_kernel_launch("candidate.capture_base_kernel", -1, false, stream);
+    if (status != Status::kOk) {
+        return status;
+    }
     compact_kernel<<<linear_grid, linear_block, 0, stream>>>(
             quads.corner_x_, quads.corner_y_, buffers->accepted_, buffers->offsets_,
-            buffers->perimeter_, label_capacity, *candidates, candidates->capacity_);
+            buffers->perimeter_, buffers->base_, label_capacity, *candidates,
+            candidates->capacity_);
     status = check_kernel_launch("candidate.compact_kernel", -1, false, stream);
     if (status != Status::kOk) {
         return status;
     }
-    store_count_kernel<<<1U, 1U, 0, stream>>>(buffers->scan_.total_, candidates->count_,
-                                              candidates->accepted_total_, candidates->capacity_);
+    store_count_kernel<<<1U, 1U, 0, stream>>>(buffers->scan_.total_, buffers->base_,
+                                              candidates->count_, candidates->accepted_total_,
+                                              candidates->capacity_, append);
     return check_kernel_launch("candidate.store_count_kernel", -1, false, stream);
 }
 
