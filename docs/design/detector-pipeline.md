@@ -49,6 +49,21 @@ side_px >= S + max(W, H) * tau_i
 
 ## 目標
 
+### 前処理と OpenCV の一致度
+
+WP-1.3 で S1 と S2 を実装し、OpenCV との差を実測しました。
+
+| 段階 | OpenCV の対応処理 | 差 |
+| --- | --- | --- |
+| S1 pyramid | `buildPyramid` (`pyrDown`) | 全 level で完全一致 |
+| S2 segmentation | `resize` の `INTER_LINEAR` | 最大 1 階調。不一致率は縮小率により 0 から 0.372 |
+
+pyramid は `[1,4,6,4,1]` の整数演算であり、境界を `BORDER_REFLECT_101`、丸めを `(sum + 128) >> 8` とすることで完全に再現できます。四隅の subpixel 補正は pyramid 上で行われるため、ここが一致することは精度の前提になります。
+
+segmentation は完全一致にできません。OpenCV の 8-bit `INTER_LINEAR` は `INTER_LINEAR_EXACT` と同じ結果を返し、その実体は `softdouble` による軟件浮動小数点と `ufixedpoint16` で構成された bit exact 経路です。平台間で同じ結果を得ることを目的とした設計であり、kernel 内で再現するにはこの 2 つの数値型を移植する必要があります。前処理段階の代償として見合わないため、1 階調の差を受け入れます。
+
+この差が下流の適応的二値化で画素の白黒を入れ替える割合は、25% の画素へ無作為に 1 階調を加えた場合で 0.45% でした。Phase 2 の差異分類では、この分を候補抽出の設計差と区別して扱います。将来ビット単位の一致が必要になった場合は、係数表を host 側で OpenCV と同じ手順で計算して転送し、kernel は整数演算だけを行う構成が候補になります。
+
 ### 段階分解
 
 ```mermaid

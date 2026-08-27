@@ -77,6 +77,11 @@ struct DetectorConfig {
     /// workspace を事前確保する基準の解像度。これを超える入力は再確保になる。
     int max_width_px_ = 3840;
     int max_height_px_ = 2160;
+    /// 2 次元 kernel の block 1 辺の thread 数。
+    ///
+    /// 機種固有の最適化を source の固定値にせず設定から上書きできるようにする。
+    /// 既定は多くの機種で無難な 16 とし、機種別の値は測定で決める。
+    int cuda_block_dim_ = 16;
 
     /// 設定が有効な範囲にあり、相互に矛盾しないことを確認する。
     ///

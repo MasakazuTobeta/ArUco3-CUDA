@@ -77,6 +77,7 @@ Status DetectorConfig::validate(std::string* out_message) const {
             {"max_markers", this->max_markers_, 1, 1 << 22},
             {"max_width_px", this->max_width_px_, 1, 65536},
             {"max_height_px", this->max_height_px_, 1, 65536},
+            {"cuda_block_dim", this->cuda_block_dim_, 4, 32},
     };
     for (const IntRange& range : int_ranges) {
         if (range.value < range.minimum || range.value > range.maximum) {
@@ -146,6 +147,14 @@ Status DetectorConfig::validate(std::string* out_message) const {
                              "min_marker_length_ratio_original_img が共に 0");
         return Status::kInvalidConfig;
     }
+    // block 1 辺の thread 数は 2 の冪でなければ warp の割り当てが崩れる。
+    if ((this->cuda_block_dim_ & (this->cuda_block_dim_ - 1)) != 0) {
+        set_conflict_message(out_message,
+                             "cuda_block_dim=" + std::to_string(this->cuda_block_dim_) +
+                                     " は 2 の冪である必要がある");
+        return Status::kInvalidConfig;
+    }
+
     // 検出数は候補数を超えられない。逆転していると上限の意味が失われる。
     if (this->max_markers_ > this->max_candidates_) {
         set_conflict_message(out_message,
