@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# 暫定設定。ADR-0002 の未確定事項「clang-format の style 設定を OpenCV 準拠に
+# するか独自にするか」は未決であり、現時点では OpenCV へのコントリビュートを
+# 想定して OpenCV に近い指定としている。決定後に ADR へ記録する。
+---
+Language: Cpp
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 8
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+DerivePointerAlignment: false
+PointerAlignment: Left
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+SpaceAfterCStyleCast: false
+Standard: c++17

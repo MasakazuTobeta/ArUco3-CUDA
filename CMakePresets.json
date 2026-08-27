@@ -1,0 +1,78 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ARUCO3CUDA_BUILD_TESTS": "ON",
+        "ARUCO3CUDA_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "portability",
+      "inherits": "base",
+      "displayName": "両 architecture 向け (sm_87 と sm_121)",
+      "cacheVariables": { "CMAKE_CUDA_ARCHITECTURES": "87;121" }
+    },
+    {
+      "name": "dgx-spark",
+      "inherits": "base",
+      "displayName": "DGX Spark GB10 のみ (sm_121)",
+      "cacheVariables": { "CMAKE_CUDA_ARCHITECTURES": "121" }
+    },
+    {
+      "name": "jetson-orin",
+      "inherits": "base",
+      "displayName": "Jetson Orin のみ (sm_87)",
+      "cacheVariables": { "CMAKE_CUDA_ARCHITECTURES": "87" }
+    },
+    {
+      "name": "sanitizer",
+      "inherits": "base",
+      "displayName": "Compute Sanitizer 有効。実行時間が延びる",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CUDA_ARCHITECTURES": "121",
+        "ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "lint",
+      "inherits": "dgx-spark",
+      "displayName": "clang-tidy を有効にした構成",
+      "cacheVariables": { "ARUCO3CUDA_ENABLE_CLANG_TIDY": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "portability", "configurePreset": "portability" },
+    { "name": "dgx-spark", "configurePreset": "dgx-spark" },
+    { "name": "jetson-orin", "configurePreset": "jetson-orin" },
+    { "name": "sanitizer", "configurePreset": "sanitizer" },
+    { "name": "lint", "configurePreset": "lint" }
+  ],
+  "testPresets": [
+    {
+      "name": "dgx-spark",
+      "configurePreset": "dgx-spark",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "portability",
+      "configurePreset": "portability",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "sanitizer",
+      "configurePreset": "sanitizer",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}

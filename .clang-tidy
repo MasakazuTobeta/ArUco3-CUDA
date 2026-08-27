@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# 暫定設定。CONTRIBUTING.md の命名規則と RAII 方針を検査対象へ含める。
+# CUDA の .cu は clang-tidy が解釈できないため C++ にのみ適用する。
+#
+# performance-enum-size を無効にしている理由:
+#   Status の基底型 int は公開 ABI の一部である。将来 C API を追加する場合や
+#   host と device をまたぐ受け渡しで表現を安定させるため、size 削減より
+#   型の固定を優先する。
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-owning-memory,
+  cppcoreguidelines-no-malloc,
+  cppcoreguidelines-pro-type-cstyle-cast,
+  misc-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-using,
+  performance-*,
+  readability-identifier-naming,
+  -misc-non-private-member-variables-in-classes,
+  -bugprone-easily-swappable-parameters,
+  -performance-enum-size
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/(include|src)/aruco3cuda/.*'
+CheckOptions:
+  # CUDA runtime の型は driver_types.h 等の内部 header が提供するが、
+  # 直接 include すべきではない。cuda_runtime_api.h を入口として扱う。
+  - key: misc-include-cleaner.IgnoreHeaders
+    value: '.*cuda_runtime.*;.*driver_types.*;.*vector_types.*;.*crt/.*;.*cuda_device_runtime_api.*'
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: _
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalConstantPrefix
+    value: k
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: CamelCase
