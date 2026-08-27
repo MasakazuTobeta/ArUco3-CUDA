@@ -33,8 +33,13 @@ function(aruco3cuda_add_sanitizer_tests target)
   # 意図的に CUDA API を失敗させる test は除外する。Compute Sanitizer は
   # 意図の有無に関わらず全ての API エラーを報告するため、
   # 意図した失敗が sanitizer の指摘として現れ、本物の問題を埋もれさせる。
+  #
+  # 時間を測る test も除外する。暖機と繰り返しで同じ経路を何百回も通るため、
+  # sanitizer の下では実行時間が現実的でなくなる。同じ経路の正しさは
+  # 対応する検証用の test が確かめており、繰り返しても新しい経路は通らない。
+  #
   # 対象は suite 名で識別する。該当が無い target では filter は何も除外しない。
-  set(kSanitizerGtestFilter "-*DeliberateError*.*")
+  set(kSanitizerGtestFilter "-*DeliberateError*.*:*Timing*.*")
   foreach(tool IN LISTS ARUCO3CUDA_SANITIZER_TOOLS)
     add_test(NAME "sanitizer.${tool}.${target}"
       COMMAND "${kComputeSanitizer}" --tool "${tool}" --error-exitcode 1

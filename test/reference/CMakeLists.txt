@@ -13,6 +13,7 @@ add_executable(aruco3cuda_reference_tests
   test_quad_extract.cpp
   test_candidate_filter.cpp
   test_candidate_group.cpp
+  test_candidate_comparison.cpp
   test_hybrid_detector.cpp
   test_report_diff.cpp)
 
