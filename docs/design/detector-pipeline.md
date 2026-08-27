@@ -10,7 +10,7 @@ detector core の段階分解、各段階の GPU 適性評価、四角形候補�
 
 ## 現状
 
-CUDA 実装は存在しません。本書は設計案です。
+S1 pyramid、S2 segmentation、S3 適応的二値化を CUDA で実装済みです。S4 以降は案 C のハイブリッド経路として CPU で実装しており、GPU 化は Phase 2 以降です。
 
 互換対象である OpenCV 4.x の ArUco3 検出戦略については、Apache-2.0 の公開 header と source から次の観測仕様を確認しています。取得元と hash は [Code Provenance 記録](../code-provenance.md) を参照してください。
 
@@ -68,6 +68,18 @@ segmentation は完全一致にできません。OpenCV の 8-bit `INTER_LINEAR`
 Phase 2 の差異分類では、この分を候補抽出の設計差と区別して扱います。将来ビット単位の一致が必要になった場合は、係数表を host 側で OpenCV と同じ手順で計算して転送し、kernel は整数演算だけを行う構成が候補になります。
 
 S3 は OpenCV と完全に一致します。平均は `boxFilter` を正規化ありで適用したものであり、境界は `BORDER_REPLICATE`、丸めは最近接偶数、判定は「画素 - 平均 <= -floor(定数)」で 255 とします。window の偶数は奇数へ切り上げます。行方向と列方向へ分けて合計するため、中間で丸めが入らず 2 次元の総和と同じ値になります。
+
+### 案 C ハイブリッド経路と OpenCV の一致度
+
+WP-1.5 で案 C を実装し、CPU 基準との差を実測しました。合成 12 場面 (マーカー数、辺長、面内回転、射影歪み、ぼけ、noise、照度勾配、解像度 640x480 から 1920x1080) と設定 3 通り (ArUco3 有効、OpenCV 既定、OpenCV 既定 + subpixel 補正) の計 36 比較で、未検出 0、過検出 0、四隅の最大差 0.0000 pixel です。マーカーを黒枠が囲む入れ子の場面でも一致します。DGX Spark と Jetson AGX Orin で同じ結果を得ました。
+
+S2 に最大 1 階調の差があるにもかかわらず四隅まで一致するのは、二値化の反転が輪郭の頂点へ届いていないためです。将来の corpus で差が現れる可能性は残るため、テストは実測値そのものではなく 0.5 pixel の上限で判定します。
+
+一致には S6 の近接統合を OpenCV と同じ規則にする必要がありました。S3 は window を 3 通り試すため、同じマーカーから少しずつ異なる候補が得られます。OpenCV は候補を周長の降順へ並べ、四隅の平均距離が `perimeter * minMarkerDistanceRate` 未満のものを 1 グループとし、グループ内で**最大周長**の候補を代表に選びます。代表を選ばずに最初に見つかった候補を残すと、最小 window 由来の小さい候補が残り、四隅が内側へ寄ります。1280x720 で辺 160 pixel のマーカーの場合、この差は原寸換算で 7.9 pixel でした。縮小率 1/3 の segmentation 上では 2.6 pixel であり、S2 の 1 階調差では説明できない大きさです。
+
+代表以外の候補のうち代表から `minGroupDistance * moduleSize` より離れているものは捨てずに保持し、代表の識別が失敗した場合の代替として使います。あわせて候補の包含関係を木として持ち、内側の候補から識別して、マーカーが確定したらその外側 (親) を識別対象から外します。マーカーの黒枠は外周と内周の両方が候補になるため、この打ち切りが無いと同じマーカーを二重に数えます。
+
+`useAruco3Detection` が有効な場合、OpenCV は corner refinement の指定を `CORNER_REFINE_SUBPIX` へ上書きします。縮小画像で得た四隅を原寸へ戻す手段が subpixel 補正しか無いためです。本 project も同じ上書きを行います。
 
 ### 段階分解
 
@@ -182,6 +194,7 @@ flowchart TD
 - 二値化に integral image と sliding window のどちらが対象機で有利か。
 - `detectInvertedMarker` 相当の白マーカー検出を初期 scope に含めるか。
 - Dictionary を constant memory へ置く上限 size と、超過時の配置。
+- S6 の近接統合を GPU 側へどう移すか。CPU 版は WP-1.5 で OpenCV と同じ規則を実装したが、周長の降順並べ替えと group 単位の代表選択は逐次性が高い。
 - S9 の重複整理を CPU 基準と同じ grouping 規則で実装するか、GPU 向けに再定義するか。
 
 ## 関連

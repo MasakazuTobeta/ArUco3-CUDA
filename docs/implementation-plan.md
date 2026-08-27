@@ -192,6 +192,12 @@ ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく 
 
 #### Phase 1: ハイブリッド最小成立版
 
+WP-1.5 の案 C ハイブリッド経路は、GPU で pyramid・segmentation・適応的二値化を行い、二値化画像と pyramid を host へ戻して、候補抽出から decode までを CPU で行います。合成 12 場面 x 設定 3 通り (ArUco3 有効、OpenCV 既定、OpenCV 既定 + subpixel 補正) の計 36 比較で、CPU 基準との差は未検出 0、過検出 0、四隅の最大差 0.0000 pixel でした。DGX Spark と Jetson AGX Orin の双方で同じ結果です。
+
+四隅が一致するには、近接候補の grouping を OpenCV と同じにする必要がありました。適応的二値化は window を 3 通り試すため、同じマーカーから少しずつ違う候補が得られます。OpenCV は識別の前に候補を周長の降順へ並べ、近接するものを 1 グループにまとめ、グループ内で最大周長の候補を代表に選びます。当初はこの grouping を省き識別後に ID と位置で重複を落としていましたが、最小 window 由来の小さい候補が残るため四隅が内側へ寄り、原寸へ戻した時点で 7.9 pixel の差になりました。OpenCV と同じ grouping、包含関係の木、親候補の識別打ち切りまで実装した結果、差は 0 になりました。この作業は当初 WP-2.5 に置いていたものを前倒ししたものです。
+
+あわせて、OpenCV が `useAruco3Detection` 有効時に補正方法の指定を `CORNER_REFINE_SUBPIX` へ上書きすることを実装へ反映し、ArUco3 無効時の subpixel 補正 (window をセル 1 辺から決める経路) も実装しました。
+
 WP-1.1 では [公開 API 草案](design/public-api.md) の未確定事項を 3 件解決しました。公開 aggregate の field にも末尾 `_` を付けること、検証は `Status` を返し理由を任意の out 引数で受け取ること、画像の失敗に `kInvalidImage` を割り当てることです。
 
 WP-1.4 の適応的二値化は OpenCV の `adaptiveThreshold` と完全に一致しました。3 通りの window と 3 種類の画像寸法、5 種類の定数のいずれでも不一致は 0 です。行方向と列方向へ分けて合計するため中間で丸めが入らず、2 次元の総和と同じ値になります。
@@ -210,7 +216,7 @@ WP-1.2 の workspace は bump pointer 方式の arena です。段階ごとの b
 | WP-1.2 | workspace 所有と再確保統計 | `include/aruco3cuda/workspace.hpp`、`src/core/workspace.cpp` | フレームごとの確保が発生しないことをテストで確認できる。達成済み | WP-1.1 | M |
 | WP-1.3 | S1 pyramid と S2 segmentation の kernel | `src/core/preprocess.{hpp,cu}` | OpenCV の縮小結果との差が定めた許容内に収まる。達成済み | WP-1.2 | M |
 | WP-1.4 | S3 適応的二値化 kernel | `src/core/threshold.{hpp,cu}` | 3 通りの window size で CPU 基準の二値化と一致率が許容内。完全一致を達成 | WP-1.3 | M |
-| WP-1.5 | 案 C ハイブリッド経路 | 二値化画像を host へ戻し CPU で候補抽出と decode | 合成画像の基本条件で ID と四隅を取得できる | WP-1.4、WP-0.3 | M |
+| WP-1.5 | 案 C ハイブリッド経路 | `hybrid/hybrid_detector.{hpp,cpp}` | 合成画像の基本条件で ID と四隅を取得できる。36 比較で四隅の差 0.0000 pixel を達成 | WP-1.4、WP-0.3 | M |
 | WP-1.6 | 差分レポート tool | `tools/report` | 差異を未検出・過検出・ID 不一致・rotation 不一致・四隅ずれへ分類できる | WP-1.5 | S |
 
 G1 の完了条件: 合成画像の基本条件で ID と四隅を取得でき、CPU 基準結果との差異が分類できること。
@@ -223,7 +229,7 @@ G1 の完了条件: 合成画像の基本条件で ID と四隅を取得でき�
 | WP-2.2 | label 統計の集計 | `src/core` | bbox、pixel 数、重心が CPU 集計と一致する | WP-2.1 | S |
 | WP-2.3 | S5 極点探索による四隅推定 | `src/core` | 合成マーカーで四隅を許容誤差内に推定できる | WP-2.2 | L |
 | WP-2.4 | S6 フィルタと compaction と overflow | `src/core` | 上限超過時に `kCandidateOverflow` を返し結果を打ち切ることをテストで確認できる | WP-2.3 | M |
-| WP-2.5 | 近接候補の統合 | `src/core` | CPU 基準の grouping との差異を分類できる | WP-2.4 | M |
+| WP-2.5 | 近接候補の統合 | `src/core` | CPU 基準の grouping との差異を分類できる。CPU 版は WP-1.5 で実装済みのため、残りは GPU 側への移設 | WP-2.4 | S |
 | WP-2.6 | 案 A と案 C の比較 spike | 比較レポート、ADR | 差異と速度の両面から主案を決定し ADR へ記録する | WP-2.5、WP-1.6 | M |
 
 G2 の完了条件: 候補抽出まで GPU 常駐で完結し、CPU 基準との差異を分類でき、案の選択が ADR に記録されていること。
@@ -305,11 +311,11 @@ CUDA device code は host coverage と別に、入力分割と境界値で実行
 
 | 指標 | 現状 | 目標 |
 | --- | --- | --- |
-| C0 (line) | 89.7% (1801 / 2007) | 100% |
-| C1 (decision) | 81.9% (497 / 607) | 100% |
-| function | 99.1% (109 / 110) | 100% |
+| C0 (line) | 89.8% (2515 / 2802) | 100% |
+| C1 (decision) | 81.8% (737 / 901) | 100% |
+| function | 99.4% (155 / 156) | 100% |
 
-規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 206 行の内訳は次のとおりです。
+規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 287 行の内訳は次のとおりです。
 
 | 分類 | 内容 | 扱い |
 | --- | --- | --- |
@@ -318,6 +324,8 @@ CUDA device code は host coverage と別に、入力分割と境界値で実行
 | CUDA API の失敗経路 | `cudaGetDeviceProperties` や `cudaMemcpy` の失敗 | 対象外。`check_cuda` の記録経路自体は `test_cuda_check.cpp` で検証済み |
 | 到達不能な防御的分岐 | `percentile_nearest_rank` の順位下限、列挙に無い値の既定処理 | 対象外。仕様上到達しないが、将来の変更に対する防御として残す |
 | CUDA device code | `fill_squares_kernel`、`invert_kernel` | gcov は device code の実行経路を計測できない。規約の定めどおり入力分割と境界値で確認する。自己診断の要素数を block size の倍数にしないことで、範囲外判定の分岐も実行される |
+| 候補 grouping の代替経路 | `close_contours_` を使う再識別 | 対象外。代表候補の識別が失敗し、かつ同一 group に離れた候補が残る場面を合成で作れていない。実機 corpus の導入時に再評価する |
+| 同一 ID の並び替え | 検出結果の整列で ID が等しい場合の比較 | 対象外。合成 corpus は 1 場面に同じ ID を置かない |
 
 `main.cpp` の CLI 層は `test/cli/` の ctest から実行 file を起動して測定に含めています。未到達分は上記の外部資源の失敗経路が中心です。
 

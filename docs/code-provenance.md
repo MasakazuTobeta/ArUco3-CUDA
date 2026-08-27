@@ -10,7 +10,7 @@
 
 ## 現状
 
-CUDA 実装は未着手です。現時点の記録は、設計のための API 調査のみです。
+Phase 1 まで実装済みです。GPU 側の前処理と二値化、および案 C のハイブリッド経路 (候補抽出と decode を CPU で行う経路) が記録の対象に含まれます。
 
 ## 記録
 
@@ -74,6 +74,39 @@ image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を 
 | Patent review | 未実施 |
 
 生成物には取得元 OpenCV version と再生成手順を header comment として記録しています。公式 ArUco の GPLv3 配布物からは抽出していません。生成物が OpenCV と整合することは `aruco3cuda_dictgen --check` と `test/reference/test_dictionary_conformance.cpp` で継続的に検証します。
+
+### PR-004: 案 C ハイブリッド経路の CPU 側段階
+
+| 項目 | 内容 |
+| --- | --- |
+| Implementation | `hybrid/hybrid_detector.cpp` |
+| Basis | OpenCV `objdetect` の ArUco 検出器。互換性の検証に必要な範囲で振る舞いを再実装した |
+| Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
+| License | Apache-2.0 |
+| Reused expression | 振る舞いの再実装。判定式、閾値の適用順序、候補の並び替え規則は OpenCV と同一にした。識別子、コメント、関数分割は本 project の規約に従って独自に書いた |
+| Patent review | 未実施 |
+
+対応関係は次のとおりです。左が本 project、右が OpenCV の関数です。
+
+| 本 project | OpenCV |
+| --- | --- |
+| `find_quad_candidates` | `_findMarkerContours` |
+| `reorder_corners` | `_reorderCandidatesCorners` |
+| `quad_perimeter`、`average_quad_distance` | `MarkerCandidateTree` の周長計算、`getAverageDistance` |
+| `average_module_size` | `getAverageModuleSize` |
+| `quad_inside_quad` | `checkMarker1InMarker2` |
+| `filter_too_close_candidates` | `ArucoDetectorImpl::filterTooCloseCandidates` |
+| `find_optimal_level` | `_findOptPyrImageForCanonicalImg` |
+| `extract_cell_pixel_ratio` | `_extractCellPixelRatio` |
+| `count_border_errors` | `_getBorderErrors` |
+| `run_cpu_stages` の depth 走査 | `ArucoDetectorImpl::identifyCandidates` |
+| `run_cpu_stages` の四隅復元 | `findCornerInPyrImage`、`performCornerSubpixRefinement` |
+
+出力の同一性を要求する以上、判定式と適用順序は一致させる以外にありません。一方で、同一にしたのは観測可能な振る舞いであり、source code の表現は複製していません。参照した file と取得時 hash は PR-000 と同じです。
+
+OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対応しますが、本 project は現時点でどちらも実装していません。`filter_too_close_candidates` は `detectInvertedMarker` が偽の場合の分岐のみを持ちます。
+
+公式 ArUco の GPLv3 source code は参照していません。
 
 ## 目標
 
