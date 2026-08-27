@@ -6,15 +6,27 @@
 
 ## 対象範囲
 
-遅延と throughput の測定、統計の算出、環境情報の収集、JSONL 出力を対象とします。CUDA 経路の実装は Phase 1 以降で追加します。可視化は `aggregate.py` の責務とします。
+遅延と throughput の測定、統計の算出、環境情報の収集、JSONL 出力を対象とします。完全 GPU 経路の実装は Phase 3 以降で追加します。可視化は `aggregate.py` の責務とします。
 
 ## 現状
 
-- 実装があるのは `CPU` 経路のみです。
-- `CUDA-E2E`、`CUDA-Resident`、`Hybrid` は識別子だけ定義し、指定すると未実装として失敗します。
-- kernel 時間は CPU 経路に存在しないため未測定として記録します。
+- 実装があるのは `CPU` 経路と `Hybrid` 経路です。
+- `CUDA-E2E` と `CUDA-Resident` は識別子だけ定義し、指定すると未実装として失敗します。GPU decode (Phase 3) の完了後に追加します。
+- memory 種別は `M-Device` と `M-Pageable` を実装しています。`M-Pinned` と `M-Managed` は WP-4.2 です。
+- kernel 時間 (CUDA event) はどの経路でも未測定です。段階時間 (`stages`) は wall-clock であり、host 同期を含みます。両者を区別するため、段階時間で `kernel` を埋めることはしません。
+- 測定した結果は [benchmark 報告](../docs/benchmark-report.md) にあります。
 
 ## 実装上の判断
+
+### 測定区間に画像の読み込みを含めない
+
+`CPU` 経路は読み込み済みの画像に対して検出だけを繰り返します。1 反復ごとに `cv::imread` と `sha256_file` を呼ぶと、合成 corpus の 1280x720 PNG では測定区間の 58% から 85% が PNG の復号になります。実時間処理では PNG を復号しないため、検出時間の比較として成立しません。
+
+この変更で `p50` の値は従来より小さくなります。`schema_version` を 3 へ上げ、version 2 以前の結果と混ぜて集計できないようにしています。
+
+### hybrid の memory 種別で測定区間を変える
+
+`M-Device` は画像が既に device にある想定で転送を測定区間の外へ置きます。camera から GPU へ直接入る構成の上限にあたります。`M-Pageable` は host の画像を毎 frame 転送し、転送を測定区間へ含めます。`CPU` 経路と同じく host の画像から始める場合の値です。
 
 ### 未実装の経路を CPU で代替しない
 

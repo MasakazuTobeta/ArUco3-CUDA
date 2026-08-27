@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "benchmark_harness.hpp"
 
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+
+#include "aruco3cuda/config.hpp"
+#include "aruco3cuda/status.hpp"
+#include "device_image.hpp"
+#include "hybrid_detector.hpp"
+
 #include <sched.h>  // sched_setaffinity は POSIX 拡張であり標準 header に無い
 #include <sys/personality.h>  // ASLR の状態確認。標準 header には無い
 #include <stdio.h>  // popen と pclose は POSIX であり <cstdio> の std 名前空間に無い
@@ -268,6 +276,13 @@ std::string read_os_pretty_name() {
     return std::string();
 }
 
+/// 結果 JSONL の schema 版。key を追加または改名したら上げる。
+///
+/// 3 での変更: measurement 行へ stages を追加した。あわせて CPU 経路の
+/// 測定区間から画像の読み込みと checksum を外した。version 2 以前の
+/// 結果と混ぜると、同じ key が違う区間を指すことになる。
+constexpr int kSchemaVersion = 3;
+
 void write_statistics(JsonWriter& writer, const std::string& name,
                       const SampleStatistics& stats) {
     writer.key(name);
@@ -390,19 +405,77 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     return environment;
 }
 
-bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
-                   MeasurementRecord* out_record, std::string* out_error) {
-    if (out_record == nullptr || out_error == nullptr) {
+namespace {
+
+/// 測定の段階。step へ渡し、どの段階の反復かを伝える。
+///
+/// 経路側が段階ごとの内訳を記録する場合、どの反復を数えるかで分布が変わる。
+/// warm-up と throughput を混ぜると、遅延の分位点と直接比べられなくなる。
+enum class Phase : int {
+    kWarmup,
+    kLatency,
+    kThroughput,
+};
+
+/// 1 frame 分の処理を反復し、遅延と throughput を測る。
+///
+/// 経路ごとに違うのは 1 frame の中身だけである。warm-up の分離、分位点の
+/// 求め方、throughput の測り方は評価計画が定めた共通の手順であり、経路を
+/// 増やすたびに書き写すと手順がずれる。
+///
+/// step は Phase を受け取り 1 frame を処理し、失敗時に out_error を埋めて
+/// false を返すこと。
+template <typename Step>
+bool measure_iterations(const BenchmarkConfig& config, Step step, MeasurementRecord* record,
+                        std::string* out_error) {
+    // warm-up。cache と分岐予測を定常状態へ寄せるため、測定区間から分離する。
+    for (int i = 0; i < config.warmup_iterations_; ++i) {
+        if (!step(Phase::kWarmup)) {
+            return false;
+        }
+    }
+
+    // 単一フレーム遅延。1 回ずつ独立に測る。
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(config.latency_iterations_));
+    for (int i = 0; i < config.latency_iterations_; ++i) {
+        const auto start = std::chrono::steady_clock::now();
+        if (!step(Phase::kLatency)) {
+            return false;
+        }
+        const auto finish = std::chrono::steady_clock::now();
+        samples.push_back(std::chrono::duration<double, std::milli>(finish - start).count());
+    }
+    if (!aruco3cuda::util::compute_statistics(samples, &record->end_to_end_ms_)) {
+        *out_error = "統計を計算できない";
         return false;
     }
-    if (config.route_ != Route::kCpu) {
-        // 未実装の経路を CPU で代替すると、測定結果が経路名と食い違う。
-        *out_error = std::string("経路 ") + to_string(config.route_) +
-                     " は未実装。現在測定できるのは CPU 経路のみ";
-        return false;
+    if (config.save_all_samples_) {
+        record->end_to_end_samples_ms_ = samples;
     }
-    // 測定条件を境界で検証する。負値は反復 loop を素通りし、
-    // 標本 0 件のまま「測定した」ことになってしまう。
+
+    // throughput。連続処理の総時間から frame/s を求める。遅延とは別に測る。
+    if (config.throughput_frames_ > 0) {
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < config.throughput_frames_; ++i) {
+            if (!step(Phase::kThroughput)) {
+                return false;
+            }
+        }
+        const auto finish = std::chrono::steady_clock::now();
+        const double elapsed_s = std::chrono::duration<double>(finish - start).count();
+        if (elapsed_s > 0.0) {
+            record->throughput_available_ = true;
+            record->throughput_fps_ = static_cast<double>(config.throughput_frames_) / elapsed_s;
+        }
+    }
+    return true;
+}
+
+/// 測定条件の境界を検証する。
+///
+/// 負値は反復 loop を素通りし、標本 0 件のまま「測定した」ことになってしまう。
+bool validate_iteration_counts(const BenchmarkConfig& config, std::string* out_error) {
     if (config.latency_iterations_ <= 0) {
         *out_error = "latency_iterations は 1 以上である必要がある: " +
                      std::to_string(config.latency_iterations_);
@@ -418,68 +491,199 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
                      std::to_string(config.throughput_frames_);
         return false;
     }
+    return true;
+}
 
-    aruco3cuda::reference::ReferenceResult first;
-    if (!aruco3cuda::reference::detect_image(image_path, config.detector_, &first, out_error)) {
+/// CPU 基準経路を測定する。
+///
+/// 画像の読み込みと checksum は初期化側へ寄せ、測定区間は検出だけにする。
+/// 読み込みを含めると、合成 corpus の 1280x720 PNG では測定区間の 6 割から
+/// 8 割が PNG の復号になり、検出時間の比較にならない。
+bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
+                 MeasurementRecord* record, std::string* out_error) {
+    aruco3cuda::reference::ReferenceDetector detector;
+    if (!detector.initialize(image_path, config.detector_, out_error)) {
+        return false;
+    }
+    const aruco3cuda::reference::ReferenceResult& metadata = detector.metadata();
+    record->image_path_ = image_path;
+    record->image_sha256_ = metadata.image_sha256_;
+    record->width_px_ = metadata.width_px_;
+    record->height_px_ = metadata.height_px_;
+    record->fxfy_effective_ = metadata.fxfy_effective_;
+
+    aruco3cuda::reference::ReferenceResult result;
+    if (!detector.detect(&result, out_error)) {
+        return false;
+    }
+    record->detection_count_ = result.detections_.size();
+
+    return measure_iterations(
+            config, [&](Phase) { return detector.detect(&result, out_error); }, record,
+            out_error);
+}
+
+/// hybrid 経路を測定する。
+///
+/// memory 種別で測定区間が変わる。kDevice は画像が既に device にある想定で
+/// 転送を測定区間の外へ置き、kHostPageable は host 入力を毎 frame 転送する。
+/// 前者は camera から GPU へ直接入る構成の上限、後者は CPU 経路と同じく
+/// host の画像から始める場合の値である。
+bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config,
+                    MeasurementRecord* record, std::string* out_error) {
+    if (config.memory_mode_ != MemoryMode::kDevice &&
+        config.memory_mode_ != MemoryMode::kHostPageable) {
+        *out_error = std::string("hybrid 経路が対応する memory 種別は M-Device と M-Pageable。"
+                                 "指定された種別: ") +
+                     to_string(config.memory_mode_);
+        return false;
+    }
+
+    // 画像の読み込みと checksum は測定区間の外で 1 度だけ行う。
+    aruco3cuda::reference::ReferenceDetector loader;
+    if (!loader.initialize(image_path, config.detector_, out_error)) {
+        return false;
+    }
+    const aruco3cuda::reference::ReferenceResult& metadata = loader.metadata();
+    const cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
+    if (image.empty()) {
+        *out_error = "画像を読み込めない: " + image_path;
+        return false;
+    }
+
+    record->image_path_ = image_path;
+    record->image_sha256_ = metadata.image_sha256_;
+    record->width_px_ = image.cols;
+    record->height_px_ = image.rows;
+    record->fxfy_effective_ = metadata.fxfy_effective_;
+
+    aruco3cuda::hybrid::DeviceImage device;
+    std::string message;
+    if (device.reserve(image.cols, image.rows, &message) != aruco3cuda::Status::kOk) {
+        *out_error = message;
+        return false;
+    }
+    const auto upload = [&]() {
+        return device.upload(image.data, image.cols, image.rows,
+                             static_cast<std::size_t>(image.step), &message) ==
+               aruco3cuda::Status::kOk;
+    };
+    if (!upload()) {
+        *out_error = message;
+        return false;
+    }
+
+    aruco3cuda::hybrid::HybridDetector detector;
+    if (detector.initialize(config.cuda_detector_, config.detector_.dictionary_name_, image.cols,
+                            image.rows, &message) != aruco3cuda::Status::kOk) {
+        *out_error = "hybrid 検出器を初期化できない: " + message;
+        return false;
+    }
+
+    const bool upload_inside = config.memory_mode_ == MemoryMode::kHostPageable;
+    aruco3cuda::hybrid::HybridResult result;
+    std::vector<double> gpu_samples;
+    std::vector<double> cpu_samples;
+    gpu_samples.reserve(static_cast<std::size_t>(config.latency_iterations_));
+    cpu_samples.reserve(static_cast<std::size_t>(config.latency_iterations_));
+
+    const auto step = [&](Phase phase) {
+        if (upload_inside && !upload()) {
+            *out_error = message;
+            return false;
+        }
+        const aruco3cuda::Status status = detector.detect(device.view(), &result, &message);
+        if (status != aruco3cuda::Status::kOk) {
+            *out_error = "hybrid 検出に失敗した: " + message;
+            return false;
+        }
+        // 段階の内訳は遅延測定の反復だけから求める。warm-up と throughput を
+        // 混ぜると、end_to_end の分位点と直接比べられる保証が無くなる。
+        if (phase == Phase::kLatency) {
+            gpu_samples.push_back(result.gpu_ms_);
+            cpu_samples.push_back(result.cpu_ms_);
+        }
+        return true;
+    };
+
+    if (!step(Phase::kWarmup)) {
+        return false;
+    }
+    record->detection_count_ = result.detections_.size();
+
+    if (!measure_iterations(config, step, record, out_error)) {
+        return false;
+    }
+    record->stage_times_available_ =
+            aruco3cuda::util::compute_statistics(gpu_samples, &record->gpu_stage_ms_) &&
+            aruco3cuda::util::compute_statistics(cpu_samples, &record->cpu_stage_ms_);
+    return true;
+}
+
+}  // namespace
+
+aruco3cuda::DetectorConfig cuda_config_from_reference(
+        const aruco3cuda::reference::ReferenceConfig& config) {
+    aruco3cuda::DetectorConfig result;
+    result.adaptive_thresh_win_size_min_px_ = config.adaptive_thresh_win_size_min_px_;
+    result.adaptive_thresh_win_size_max_px_ = config.adaptive_thresh_win_size_max_px_;
+    result.adaptive_thresh_win_size_step_px_ = config.adaptive_thresh_win_size_step_px_;
+    result.adaptive_thresh_constant_ = config.adaptive_thresh_constant_;
+    result.min_marker_perimeter_rate_ = config.min_marker_perimeter_rate_;
+    result.max_marker_perimeter_rate_ = config.max_marker_perimeter_rate_;
+    result.polygonal_approx_accuracy_rate_ = config.polygonal_approx_accuracy_rate_;
+    result.min_corner_distance_rate_ = config.min_corner_distance_rate_;
+    result.min_distance_to_border_px_ = config.min_distance_to_border_px_;
+    result.min_marker_distance_rate_ = config.min_marker_distance_rate_;
+    result.marker_border_bits_ = config.marker_border_bits_;
+    result.perspective_remove_pixel_per_cell_ = config.perspective_remove_pixel_per_cell_;
+    result.perspective_remove_ignored_margin_per_cell_ =
+            config.perspective_remove_ignored_margin_per_cell_;
+    result.max_erroneous_bits_in_border_rate_ = config.max_erroneous_bits_in_border_rate_;
+    result.min_otsu_std_dev_ = config.min_otsu_std_dev_;
+    result.error_correction_rate_ = config.error_correction_rate_;
+    result.use_aruco3_detection_ = config.use_aruco3_detection_;
+    result.min_side_length_canonical_img_px_ = config.min_side_length_canonical_img_px_;
+    result.min_marker_length_ratio_original_img_ = config.min_marker_length_ratio_original_img_;
+    result.corner_refine_method_ = config.use_corner_subpix_refinement_
+                                           ? aruco3cuda::CornerRefineMethod::kSubpix
+                                           : aruco3cuda::CornerRefineMethod::kNone;
+    result.corner_refinement_win_size_px_ = config.corner_refinement_win_size_px_;
+    result.relative_corner_refinement_win_size_ = config.relative_corner_refinement_win_size_;
+    result.corner_refinement_max_iterations_ = config.corner_refinement_max_iterations_;
+    result.corner_refinement_min_accuracy_px_ = config.corner_refinement_min_accuracy_px_;
+    return result;
+}
+
+bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
+                   MeasurementRecord* out_record, std::string* out_error) {
+    if (out_record == nullptr || out_error == nullptr) {
+        return false;
+    }
+    if (!validate_iteration_counts(config, out_error)) {
         return false;
     }
 
     MeasurementRecord record;
-    record.image_path_ = image_path;
-    record.image_sha256_ = first.image_sha256_;
-    record.width_px_ = first.width_px_;
-    record.height_px_ = first.height_px_;
-    record.detection_count_ = first.detections_.size();
-    record.fxfy_effective_ = first.fxfy_effective_;
-
-    // warm-up。cache と分岐予測を定常状態へ寄せるため、測定区間から分離する。
-    for (int i = 0; i < config.warmup_iterations_; ++i) {
-        aruco3cuda::reference::ReferenceResult warmup;
-        if (!aruco3cuda::reference::detect_image(image_path, config.detector_, &warmup,
-                                                 out_error)) {
+    bool ok = false;
+    switch (config.route_) {
+        case Route::kCpu:
+            ok = measure_cpu(image_path, config, &record, out_error);
+            break;
+        case Route::kHybrid:
+            ok = measure_hybrid(image_path, config, &record, out_error);
+            break;
+        case Route::kCudaEndToEnd:
+        case Route::kCudaResident:
+        default:
+            // 未実装の経路を CPU で代替すると、測定結果が経路名と食い違う。
+            *out_error = std::string("経路 ") + to_string(config.route_) +
+                         " は未実装。現在測定できるのは CPU 経路と Hybrid 経路";
             return false;
-        }
     }
-
-    // 単一フレーム遅延。1 回ずつ独立に測る。
-    std::vector<double> samples;
-    samples.reserve(static_cast<std::size_t>(config.latency_iterations_));
-    for (int i = 0; i < config.latency_iterations_; ++i) {
-        aruco3cuda::reference::ReferenceResult iteration;
-        const auto start = std::chrono::steady_clock::now();
-        if (!aruco3cuda::reference::detect_image(image_path, config.detector_, &iteration,
-                                                 out_error)) {
-            return false;
-        }
-        const auto finish = std::chrono::steady_clock::now();
-        samples.push_back(std::chrono::duration<double, std::milli>(finish - start).count());
-    }
-    if (!aruco3cuda::util::compute_statistics(samples, &record.end_to_end_ms_)) {
-        *out_error = "統計を計算できない";
+    if (!ok) {
         return false;
     }
-    if (config.save_all_samples_) {
-        record.end_to_end_samples_ms_ = samples;
-    }
-
-    // throughput。連続処理の総時間から frame/s を求める。遅延とは別に測る。
-    if (config.throughput_frames_ > 0) {
-        const auto start = std::chrono::steady_clock::now();
-        for (int i = 0; i < config.throughput_frames_; ++i) {
-            aruco3cuda::reference::ReferenceResult iteration;
-            if (!aruco3cuda::reference::detect_image(image_path, config.detector_, &iteration,
-                                                     out_error)) {
-                return false;
-            }
-        }
-        const auto finish = std::chrono::steady_clock::now();
-        const double elapsed_s = std::chrono::duration<double>(finish - start).count();
-        if (elapsed_s > 0.0) {
-            record.throughput_available_ = true;
-            record.throughput_fps_ = static_cast<double>(config.throughput_frames_) / elapsed_s;
-        }
-    }
-
     *out_record = record;
     return true;
 }
@@ -490,7 +694,7 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     writer.member_string("type", "environment");
     // version 2: cpu_topology、cpu_affinity、address_randomization、
     // gpu clock、platform 情報を追加した。測定条件の再現に必要なため。
-    writer.member_int("schema_version", 2);
+    writer.member_int("schema_version", kSchemaVersion);
     writer.member_string("hostname", environment.hostname_);
     writer.member_string("os", environment.os_);
     writer.member_string("kernel", environment.kernel_);
@@ -534,7 +738,7 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
     JsonWriter writer(out, 0);
     writer.begin_object();
     writer.member_string("type", "measurement");
-    writer.member_int("schema_version", 2);
+    writer.member_int("schema_version", kSchemaVersion);
     writer.member_string("route", to_string(config.route_));
     writer.member_string("memory_mode", to_string(config.memory_mode_));
     writer.member_string("image_path", record.image_path_);
@@ -570,6 +774,17 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
         writer.end_object();
     } else {
         // CPU 経路には kernel 時間が存在しない。0 で埋めず未測定を明示する。
+        writer.value_null();
+    }
+
+    // 段階時間。CPU 経路には存在しないため未測定を明示する。
+    writer.key("stages");
+    if (record.stage_times_available_) {
+        writer.begin_object();
+        write_statistics(writer, "gpu", record.gpu_stage_ms_);
+        write_statistics(writer, "cpu", record.cpu_stage_ms_);
+        writer.end_object();
+    } else {
         writer.value_null();
     }
 

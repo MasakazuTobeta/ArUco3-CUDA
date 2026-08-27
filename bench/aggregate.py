@@ -15,6 +15,18 @@ import json
 import sys
 from collections import defaultdict
 
+# 読める schema 版。version が違う結果を黙って混ぜると、同じ key が違う
+# 測定区間を指すことになる。version 3 で CPU 経路の測定区間から画像の
+# 読み込みと checksum を外したため、2 以前の値とは比較できない。
+SUPPORTED_SCHEMA_VERSIONS = {3}
+
+
+def short_name(path):
+    """表示用に画像 path の file 名だけを取り出す。"""
+    if not path:
+        return "(不明)"
+    return path.rsplit("/", 1)[-1]
+
 
 def machine_label(environment):
     """測定結果を機体で区別するための短い名前。
@@ -54,6 +66,12 @@ def load_records(paths):
                     record = json.loads(line)
                 except json.JSONDecodeError as error:
                     raise SystemExit(f"{path}:{line_number}: JSON として読めない: {error}")
+                version = record.get("schema_version")
+                if version not in SUPPORTED_SCHEMA_VERSIONS:
+                    raise SystemExit(
+                        f"{path}:{line_number}: schema_version {version} は読めない。"
+                        f"対応するのは {sorted(SUPPORTED_SCHEMA_VERSIONS)}。"
+                        "測定し直すか、古い結果は別に集計すること")
                 kind = record.get("type")
                 if kind == "environment":
                     record["_source"] = path
@@ -116,6 +134,8 @@ def measurement_rows(measurements):
                 "p95_ms": end_to_end.get("p95_ms"),
                 "p99_ms": end_to_end.get("p99_ms"),
                 "kernel_p50_ms": (kernel or {}).get("p50_ms") if kernel else None,
+                "gpu_stage_p50_ms": ((record.get("stages") or {}).get("gpu") or {}).get("p50_ms"),
+                "cpu_stage_p50_ms": ((record.get("stages") or {}).get("cpu") or {}).get("p50_ms"),
                 "fps": record.get("throughput_fps"),
                 "image": record.get("image_path"),
             }
@@ -126,7 +146,7 @@ def measurement_rows(measurements):
 def print_table(rows):
     header = [
         "machine", "route", "memory", "resolution", "markers", "fxfy",
-        "p50_ms", "p95_ms", "p99_ms", "kernel_p50", "fps",
+        "p50_ms", "p95_ms", "p99_ms", "gpu_p50", "cpu_p50", "fps",
     ]
     widths = {name: len(name) for name in header}
     formatted = []
@@ -141,7 +161,8 @@ def print_table(rows):
             "p50_ms": f"{row['p50_ms']:.3f}" if row["p50_ms"] is not None else "-",
             "p95_ms": f"{row['p95_ms']:.3f}" if row["p95_ms"] is not None else "-",
             "p99_ms": f"{row['p99_ms']:.3f}" if row["p99_ms"] is not None else "-",
-            "kernel_p50": f"{row['kernel_p50_ms']:.3f}" if row["kernel_p50_ms"] is not None else "-",
+            "gpu_p50": f"{row['gpu_stage_p50_ms']:.3f}" if row["gpu_stage_p50_ms"] is not None else "-",
+            "cpu_p50": f"{row['cpu_stage_p50_ms']:.3f}" if row["cpu_stage_p50_ms"] is not None else "-",
             "fps": f"{row['fps']:.1f}" if row["fps"] is not None else "-",
         }
         for name in header:
@@ -175,12 +196,23 @@ def print_crossover(rows):
         cpu = next((row for (route, _), row in routes.items() if route == "CPU"), None)
         if cpu is None or not cpu["p50_ms"]:
             continue
-        print(f"{key[0]} {key[2]} markers={key[3]} fxfy={key[4]}")
+        print(f"{key[0]} {short_name(key[1])} {key[2]} markers={key[3]} fxfy={key[4]}")
         for (route, memory), row in sorted(routes.items()):
             if not row["p50_ms"]:
                 continue
             ratio = row["p50_ms"] / cpu["p50_ms"]
-            verdict = "CPU が速い" if ratio > 1.0 else ("同等" if abs(ratio - 1.0) < 0.05 else "こちらが速い")
+            if row is cpu:
+                print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  (基準)")
+                continue
+            # 5% 以内は測定のばらつきに埋もれるため、速い遅いを主張しない。
+            # 判定の順序を誤ると、1.00 を僅かに超えただけで「CPU が速い」に
+            # なり、同等の帯が片側にしか効かなくなる。
+            if abs(ratio - 1.0) < 0.05:
+                verdict = "同等"
+            elif ratio > 1.0:
+                verdict = "CPU が速い"
+            else:
+                verdict = "こちらが速い"
             print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  比={ratio:.3f}  {verdict}")
 
 
@@ -192,8 +224,11 @@ def print_run_variance(rows):
     """
     grouped = defaultdict(list)
     for row in rows:
-        key = (row["machine"], row["route"], row["memory_mode"], row["resolution"],
-               row["markers"], row["fxfy"], row["aruco3"])
+        # 画像を key へ含める。同じ解像度でマーカー数も同じ別の画像があると、
+        # 含めない場合に別条件の値が 1 つの group へ入り、実行間ばらつきを
+        # 実際より大きく見せる。
+        key = (row["machine"], row["route"], row["memory_mode"], row["image"],
+               row["resolution"], row["markers"], row["fxfy"], row["aruco3"])
         if row["p50_ms"] is not None:
             grouped[key].append(row["p50_ms"])
 
@@ -206,7 +241,8 @@ def print_run_variance(rows):
         values = sorted(values)
         middle = values[len(values) // 2]
         spread = (values[-1] - values[0]) / middle * 100.0 if middle else 0.0
-        print(f"{key[0]} {key[1]} {key[3]} markers={key[4]} fxfy={key[5]} aruco3={key[6]}")
+        print(f"{key[0]} {key[1]} {key[2]} {short_name(key[3])} {key[4]} "
+              f"markers={key[5]} fxfy={key[6]} aruco3={key[7]}")
         print(f"  n={len(values)} 中央 {middle:.3f} ms  範囲 {values[0]:.3f} - {values[-1]:.3f} ms"
               f"  幅 {spread:.1f}%")
 

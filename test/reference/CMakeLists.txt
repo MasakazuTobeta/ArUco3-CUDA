@@ -15,6 +15,7 @@ add_executable(aruco3cuda_reference_tests
   test_candidate_group.cpp
   test_candidate_comparison.cpp
   test_hybrid_detector.cpp
+  test_device_image.cpp
   test_report_diff.cpp)
 
 target_link_libraries(aruco3cuda_reference_tests
@@ -37,9 +38,12 @@ target_include_directories(aruco3cuda_reference_tests PRIVATE ${PROJECT_SOURCE_D
 target_link_libraries(aruco3cuda_reference_tests PRIVATE CUDA::cudart)
 target_include_directories(aruco3cuda_reference_tests SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 
+# 時間を測る test は反復が多く、ctest を並列実行すると GPU の取り合いで
+# 実行時間が伸びる。値そのものは単独実行でしか意味を持たないが、正しさの
+# 検査は並列でも成立させたいため timeout を広く取る。
 gtest_discover_tests(aruco3cuda_reference_tests
   DISCOVERY_TIMEOUT 60
-  PROPERTIES TIMEOUT 300)
+  PROPERTIES TIMEOUT 900)
 
 # ハイブリッド経路は GPU kernel を実行するため、Compute Sanitizer の対象へ
 # 含める。unit test だけでは前処理と二値化の kernel が検査されない。

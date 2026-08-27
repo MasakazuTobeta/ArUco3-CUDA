@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "aruco3cuda/config.hpp"
 #include "aruco3cuda/util/statistics.hpp"
 #include "reference_runner.hpp"
 
@@ -14,8 +15,10 @@ namespace aruco3cuda::bench {
 
 /// 評価計画が定める比較経路。
 ///
-/// 現時点で実装があるのは kCpu のみである。CUDA 経路は Phase 1 以降で追加するが、
-/// 結果 schema を後から変えずに済むよう識別子を先に定義しておく。
+/// 実装があるのは kCpu と kHybrid である。kCudaEndToEnd と kCudaResident は
+/// GPU decode (Phase 3) の完了後に追加する。未実装の経路を指定した場合は
+/// CPU へ読み替えず失敗させる。読み替えると、記録された route と実際に
+/// 測った処理が食い違う。
 enum class Route : int {
     kCpu = 0,        ///< OpenCV ArUco3。cv::Mat 入力から結果取得まで
     kCudaEndToEnd,   ///< host 入力 CUDA。upload、検出、download、同期を含む
@@ -29,9 +32,11 @@ enum class Route : int {
 /// discrete GPU と大きく異なる。経路と独立した測定軸として記録する。
 enum class MemoryMode : int {
     kNotApplicable = 0, ///< CPU 経路
+    /// host の通常 memory。測定区間に device への転送を含む。
     kHostPageable,
     kHostPinned,
     kManaged,
+    /// device 常駐。転送は測定区間の外で 1 度だけ行う。
     kDevice,
 };
 
@@ -81,7 +86,30 @@ struct BenchmarkConfig {
     std::vector<int> cpu_affinity_;
 
     aruco3cuda::reference::ReferenceConfig detector_;
+
+    /// CUDA 経路の検出設定。CPU 経路では使用しない。
+    ///
+    /// detector_ と別に持つのは、CUDA 側に CPU 基準へ存在しない項目
+    /// (候補の上限、四角形らしさの下限、block 寸法) があるためである。
+    /// 共通の項目は cuda_config_from_reference() で detector_ から写す。
+    aruco3cuda::DetectorConfig cuda_detector_;
 };
+
+/// CPU 基準の設定から CUDA 経路の設定へ、共通項目を写す。
+///
+/// 両経路で条件を揃えるために使う。既定構築のままにすると
+/// use_aruco3_detection_ や縮小率が食い違い、別の条件を比べることになる。
+///
+/// @param config CPU 基準の設定。
+/// @return 共通項目を写した CUDA 経路の設定。他の項目は既定値。
+///
+/// 所有権: 引数を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: use_aruco3_detection_ = true、min_side_length_canonical_img_px_ = 32
+/// 出力例: 同じ値が入った DetectorConfig
+aruco3cuda::DetectorConfig cuda_config_from_reference(
+        const aruco3cuda::reference::ReferenceConfig& config);
 
 /// 1 つの入力に対する測定結果。
 struct MeasurementRecord {
@@ -96,9 +124,22 @@ struct MeasurementRecord {
 
     /// 入力準備から host 結果取得までの wall-clock。単位は ms。
     aruco3cuda::util::SampleStatistics end_to_end_ms_;
-    /// CUDA event で測定する検出処理時間。CPU 経路では未測定とする。
+    /// CUDA event で測定する検出処理時間。現時点ではどの経路でも未測定とする。
+    ///
+    /// wall-clock との分離は評価計画の要求であり、WP-4.1 で実装する。
+    /// ここを段階時間で埋めると、記録された値が CUDA event 由来かどうかを
+    /// 後から区別できなくなるため、埋めない。
     bool kernel_time_available_ = false;
     aruco3cuda::util::SampleStatistics kernel_ms_;
+
+    /// 経路内の段階ごとの wall-clock。CPU 経路では未測定とする。
+    ///
+    /// hybrid では GPU 側 (前処理、二値化、host への転送) と CPU 側
+    /// (候補抽出から decode まで) を分けて記録する。両者の和は
+    /// end_to_end_ms_ より小さい。差は入力の転送と呼び出しの費用である。
+    bool stage_times_available_ = false;
+    aruco3cuda::util::SampleStatistics gpu_stage_ms_;
+    aruco3cuda::util::SampleStatistics cpu_stage_ms_;
 
     /// 連続処理時の frame/s。throughput_frames_ が 0 の場合は未測定。
     bool throughput_available_ = false;
@@ -194,7 +235,7 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
 /// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: collect_environment() の戻り値
-/// 出力例: {"type":"environment","schema_version":1,...}
+/// 出力例: {"type":"environment","schema_version":3,...}
 void write_environment_line(std::ostream& out, const EnvironmentRecord& environment);
 
 /// 測定結果を JSONL の 1 行として書き出す。

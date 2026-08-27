@@ -20,13 +20,17 @@ namespace {
 
 using aruco3cuda::bench::BenchmarkConfig;
 using aruco3cuda::bench::Route;
+using aruco3cuda::bench::MemoryMode;
 
 void print_usage(std::ostream& out) {
     out << "使用方法: aruco3cuda_bench [option]... --input <画像>...\n"
         << "\n"
         << "  --input <path>                 入力画像。複数回指定できる\n"
         << "  --output <path>                結果 JSONL の出力先。既定は標準出力\n"
-        << "  --route <name>                 CPU のみ実装済み。既定 CPU\n"
+        << "  --route <name>                 CPU または Hybrid。既定 CPU\n"
+        << "  --memory-mode <name>           N/A、M-Pageable、M-Device。既定は経路に応じて選ぶ\n"
+        << "                                 Hybrid では M-Device が転送を測定区間の外へ、\n"
+        << "                                 M-Pageable が毎 frame の転送を測定区間へ含める\n"
         << "  --warmup <n>                   準備実行の回数。既定 20\n"
         << "  --latency-iterations <n>       遅延測定の回数。既定 200\n"
         << "  --throughput-frames <n>        throughput 測定のフレーム数。0 で無効。既定 100\n"
@@ -56,6 +60,31 @@ bool parse_route(const std::string& name, Route* out) {
     }
     if (name == "Hybrid") {
         *out = Route::kHybrid;
+        return true;
+    }
+    return false;
+}
+
+/// 名前から memory 種別を求める。
+bool parse_memory_mode(const std::string& name, MemoryMode* out) {
+    if (name == "N/A") {
+        *out = MemoryMode::kNotApplicable;
+        return true;
+    }
+    if (name == "M-Pageable") {
+        *out = MemoryMode::kHostPageable;
+        return true;
+    }
+    if (name == "M-Pinned") {
+        *out = MemoryMode::kHostPinned;
+        return true;
+    }
+    if (name == "M-Managed") {
+        *out = MemoryMode::kManaged;
+        return true;
+    }
+    if (name == "M-Device") {
+        *out = MemoryMode::kDevice;
         return true;
     }
     return false;
@@ -105,6 +134,9 @@ bool check_range(const std::string& option, int value, int minimum, int maximum)
 
 int main(int argc, char** argv) {
     BenchmarkConfig config;
+    // memory 種別を指定しなかった場合の既定は経路で決める。CPU 経路に
+    // memory 種別は無く、hybrid は device 常駐入力を上限として測る。
+    bool memory_mode_given = false;
     std::vector<std::string> inputs;
     std::string output_path;
 
@@ -133,6 +165,12 @@ int main(int argc, char** argv) {
                     std::cerr << "未知の経路: " << value << '\n';
                     return EXIT_FAILURE;
                 }
+            } else if (option == "--memory-mode") {
+                if (!parse_memory_mode(value, &config.memory_mode_)) {
+                    std::cerr << "未知の memory 種別: " << value << '\n';
+                    return EXIT_FAILURE;
+                }
+                memory_mode_given = true;
             } else if (option == "--warmup") {
                 const int parsed = std::stoi(value);
                 if (!check_range(option, parsed, 0, 100000)) {
@@ -199,6 +237,15 @@ int main(int argc, char** argv) {
         std::cerr << "--input が指定されていない\n";
         print_usage(std::cerr);
         return EXIT_FAILURE;
+    }
+
+    // CUDA 経路の設定を CPU 基準の設定から写す。既定構築のままにすると
+    // 縮小率や ArUco3 の有無が食い違い、別の条件を比べることになる。
+    config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
+    if (!memory_mode_given) {
+        config.memory_mode_ = (config.route_ == aruco3cuda::bench::Route::kCpu)
+                                      ? aruco3cuda::bench::MemoryMode::kNotApplicable
+                                      : aruco3cuda::bench::MemoryMode::kDevice;
     }
 
     std::ofstream file_output;

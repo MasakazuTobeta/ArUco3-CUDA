@@ -7,14 +7,20 @@
 //   - 未実装の経路を無言で CPU へ読み替えないこと
 //   - 統計の整合性 (min <= p50 <= p95 <= p99 <= max)
 #include "benchmark_harness.hpp"
+#include "reference_runner.hpp"
 
 #include <gtest/gtest.h>
+
+#include <cuda_runtime_api.h>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/objdetect/aruco_detector.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <ratio>
 #include <sstream>
 #include <string>
 
@@ -22,6 +28,11 @@
 #include <vector>
 
 namespace {
+
+bool has_cuda_device() {
+    int count = 0;
+    return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
+}
 
 using aruco3cuda::bench::BenchmarkConfig;
 using aruco3cuda::bench::MeasurementRecord;
@@ -81,7 +92,7 @@ TEST_F(BenchmarkHarnessTest, measures_cpu_route) {
 
 // 異常系: 未実装の経路を無言で CPU へ読み替えない。
 TEST_F(BenchmarkHarnessTest, refuses_unimplemented_routes) {
-    const std::vector<Route> routes = {Route::kCudaEndToEnd, Route::kCudaResident, Route::kHybrid};
+    const std::vector<Route> routes = {Route::kCudaEndToEnd, Route::kCudaResident};
     for (const Route route : routes) {
         BenchmarkConfig config = this->config_;
         config.route_ = route;
@@ -91,6 +102,105 @@ TEST_F(BenchmarkHarnessTest, refuses_unimplemented_routes) {
                 << aruco3cuda::bench::to_string(route);
         EXPECT_NE(error.find("未実装"), std::string::npos);
     }
+}
+
+// 正常系: hybrid 経路を測定でき、段階時間が記録される。
+TEST_F(BenchmarkHarnessTest, measures_hybrid_route) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    BenchmarkConfig config = this->config_;
+    config.route_ = Route::kHybrid;
+    config.memory_mode_ = aruco3cuda::bench::MemoryMode::kDevice;
+    config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
+    MeasurementRecord record;
+    std::string error;
+    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, config, &record, &error))
+            << error;
+    EXPECT_GT(record.end_to_end_ms_.p50_, 0.0);
+    ASSERT_TRUE(record.stage_times_available_);
+    EXPECT_GT(record.gpu_stage_ms_.p50_, 0.0);
+    EXPECT_GT(record.cpu_stage_ms_.p50_, 0.0);
+    EXPECT_EQ(record.gpu_stage_ms_.count_, record.cpu_stage_ms_.count_);
+    // 段階の標本数は遅延測定の反復数と一致する。warm-up と throughput の分が
+    // 混ざっていれば、end_to_end の分位点と直接は比べられない。
+    EXPECT_EQ(record.gpu_stage_ms_.count_, static_cast<std::size_t>(config.latency_iterations_));
+    // 段階の中央値の和と end-to-end の中央値は比べない。中央値の和は和の
+    // 中央値と一致せず、段階が互いに逆方向へ振れると大小が入れ替わる。
+    // kernel 時間は CUDA event 由来のみとする。段階時間で埋めない。
+    EXPECT_FALSE(record.kernel_time_available_);
+}
+
+// 正常系: host 入力の memory 種別でも測定でき、検出結果は同じになる。
+//
+// 転送を測定区間へ含めた分だけ時間は長くなるはずだが、その大小をここで
+// 主張しない。640x480 の転送は数十 us であり、ctest を並列実行したときの
+// 測定ばらつきに埋もれる。時間の比較は benchmark の仕事であり、test の
+// 仕事は両方の経路が成立することの確認である。
+TEST_F(BenchmarkHarnessTest, hybrid_supports_both_memory_modes) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    BenchmarkConfig config = this->config_;
+    config.route_ = Route::kHybrid;
+    config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
+
+    MeasurementRecord resident;
+    MeasurementRecord pageable;
+    std::string error;
+    config.memory_mode_ = aruco3cuda::bench::MemoryMode::kDevice;
+    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, config, &resident, &error))
+            << error;
+    config.memory_mode_ = aruco3cuda::bench::MemoryMode::kHostPageable;
+    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, config, &pageable, &error))
+            << error;
+
+    // 入力の置き場所を変えても検出結果は変わらない。
+    EXPECT_EQ(pageable.detection_count_, resident.detection_count_);
+    EXPECT_EQ(pageable.image_sha256_, resident.image_sha256_);
+    EXPECT_TRUE(pageable.stage_times_available_);
+    EXPECT_GT(pageable.end_to_end_ms_.p50_, 0.0);
+}
+
+// 異常系: hybrid が対応しない memory 種別は拒否する。
+TEST_F(BenchmarkHarnessTest, hybrid_rejects_unsupported_memory_mode) {
+    BenchmarkConfig config = this->config_;
+    config.route_ = Route::kHybrid;
+    config.memory_mode_ = aruco3cuda::bench::MemoryMode::kHostPinned;
+    MeasurementRecord record;
+    std::string error;
+    EXPECT_FALSE(aruco3cuda::bench::measure_image(this->image_path_, config, &record, &error));
+    EXPECT_NE(error.find("memory 種別"), std::string::npos);
+}
+
+// 正常系: CPU 経路の測定区間に画像の読み込みが入らない。
+//
+// 読み込みを含めると、合成 corpus の 1280x720 PNG では測定区間の 6 割以上が
+// PNG の復号になる。検出時間の比較にならないため、区間から外している。
+// 同じ画像を detect_image で回した場合との差でそれを確かめる。
+TEST_F(BenchmarkHarnessTest, cpu_route_excludes_image_loading) {
+    MeasurementRecord record;
+    std::string error;
+    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, this->config_, &record, &error))
+            << error;
+
+    // 読み込みを含む経路を同じ回数だけ回し、中央値を比べる。
+    std::vector<double> with_loading;
+    with_loading.reserve(static_cast<std::size_t>(this->config_.latency_iterations_));
+    for (int i = 0; i < this->config_.latency_iterations_; ++i) {
+        aruco3cuda::reference::ReferenceResult result;
+        const auto start = std::chrono::steady_clock::now();
+        ASSERT_TRUE(aruco3cuda::reference::detect_image(this->image_path_, this->config_.detector_,
+                                                        &result, &error))
+                << error;
+        const auto finish = std::chrono::steady_clock::now();
+        with_loading.push_back(std::chrono::duration<double, std::milli>(finish - start).count());
+    }
+    std::sort(with_loading.begin(), with_loading.end());
+    const double loading_median = with_loading[with_loading.size() / 2];
+    std::printf("[bench] 検出のみ %.3f ms / 読み込み込み %.3f ms\n", record.end_to_end_ms_.p50_,
+                loading_median);
+    EXPECT_LT(record.end_to_end_ms_.p50_, loading_median);
 }
 
 // 異常系: 不正な入力と引数を拒否する。

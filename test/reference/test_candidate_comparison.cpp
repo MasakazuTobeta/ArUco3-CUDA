@@ -10,6 +10,8 @@
 
 #include <cuda_runtime_api.h>
 
+#include <unistd.h>
+
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 
@@ -387,7 +389,9 @@ private:
 cv::Mat make_scene(const aruco3cuda::corpusgen::SceneSpec& spec,
                    aruco3cuda::corpusgen::GeneratedScene* out) {
     aruco3cuda::corpusgen::CorpusConfig config;
-    config.output_dir_ = "/tmp/aruco3cuda_compare_test";
+    // 出力先を process ごとに分ける。この file の 2 つの test は同じ場面を
+    // 生成するため、ctest の並列実行では書き込みと読み出しが競合する。
+    config.output_dir_ = std::string("/tmp/aruco3cuda_compare_test_") + std::to_string(::getpid());
     config.seed_ = 20260827U;
     std::string error;
     EXPECT_TRUE(aruco3cuda::corpusgen::generate_scene(config, spec, 0, out, &error)) << error;
@@ -583,6 +587,9 @@ TEST(CandidateTimingTest, plan_a_versus_plan_c) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";
     }
+    std::printf(
+            "\n[注意] 以下の時間は単独実行かつ core 固定でのみ意味を持つ。"
+            "ctest の並列実行では GPU と CPU の取り合いで値が伸びる。\n");
     std::vector<std::vector<SceneOutcome>> outcomes;
     const auto totals = run_all(true, &outcomes);
     EXPECT_EQ(totals.second, totals.first);
