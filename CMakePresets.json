@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -17,62 +21,140 @@
       "name": "portability",
       "inherits": "base",
       "displayName": "両 architecture 向け (sm_87 と sm_121)",
-      "cacheVariables": { "CMAKE_CUDA_ARCHITECTURES": "87;121" }
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "87;121"
+      }
     },
     {
       "name": "dgx-spark",
       "inherits": "base",
       "displayName": "DGX Spark GB10 のみ (sm_121)",
-      "cacheVariables": { "CMAKE_CUDA_ARCHITECTURES": "121" }
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "121"
+      }
+    },
+    {
+      "name": "native",
+      "inherits": "base",
+      "displayName": "実行機の architecture のみ (自動判定)",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "native"
+      }
     },
     {
       "name": "jetson-orin",
       "inherits": "base",
       "displayName": "Jetson Orin のみ (sm_87)",
-      "cacheVariables": { "CMAKE_CUDA_ARCHITECTURES": "87" }
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "87"
+      }
     },
     {
       "name": "sanitizer",
       "inherits": "base",
-      "displayName": "Compute Sanitizer 有効。実行時間が延びる",
+      "displayName": "Compute Sanitizer 有効。実行機の architecture を自動判定する",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_CUDA_ARCHITECTURES": "121",
+        "CMAKE_CUDA_ARCHITECTURES": "native",
         "ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER": "ON"
       }
     },
     {
       "name": "lint",
-      "inherits": "dgx-spark",
+      "inherits": "base",
       "displayName": "clang-tidy を有効にした構成",
-      "cacheVariables": { "ARUCO3CUDA_ENABLE_CLANG_TIDY": "ON" }
+      "cacheVariables": {
+        "ARUCO3CUDA_ENABLE_CLANG_TIDY": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "native"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "portability", "configurePreset": "portability" },
-    { "name": "dgx-spark", "configurePreset": "dgx-spark" },
-    { "name": "jetson-orin", "configurePreset": "jetson-orin" },
-    { "name": "sanitizer", "configurePreset": "sanitizer" },
-    { "name": "lint", "configurePreset": "lint" }
+    {
+      "name": "portability",
+      "configurePreset": "portability"
+    },
+    {
+      "name": "dgx-spark",
+      "configurePreset": "dgx-spark"
+    },
+    {
+      "name": "native",
+      "configurePreset": "native"
+    },
+    {
+      "name": "jetson-orin",
+      "configurePreset": "jetson-orin"
+    },
+    {
+      "name": "sanitizer",
+      "configurePreset": "sanitizer"
+    },
+    {
+      "name": "lint",
+      "configurePreset": "lint"
+    }
   ],
   "testPresets": [
     {
-      "name": "dgx-spark",
-      "configurePreset": "dgx-spark",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
-    },
-    {
       "name": "portability",
       "configurePreset": "portability",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "dgx-spark",
+      "configurePreset": "dgx-spark",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "native",
+      "configurePreset": "native",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "jetson-orin",
+      "configurePreset": "jetson-orin",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
     },
     {
       "name": "sanitizer",
       "configurePreset": "sanitizer",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "lint",
+      "configurePreset": "lint",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
     }
   ]
 }

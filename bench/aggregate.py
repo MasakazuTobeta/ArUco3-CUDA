@@ -16,11 +16,35 @@ import sys
 from collections import defaultdict
 
 
+def machine_label(environment):
+    """測定結果を機体で区別するための短い名前。
+
+    複数機の結果を並べる場合、どの行がどの機体かが判別できないと比較にならない。
+    基板名が取れる機種はそれを使い、取れない場合は GPU 名で代替する。
+    """
+    if environment is None:
+        return "(不明)"
+    model = environment.get("platform_model")
+    if model:
+        # "Jetson AGX Orin Developer Kit" -> "Jetson AGX Orin"
+        return model.replace(" Developer Kit", "").strip()
+    gpu = environment.get("gpu_name")
+    if gpu:
+        return gpu
+    return environment.get("hostname") or "(不明)"
+
+
 def load_records(paths):
-    """JSONL を読み、環境情報と測定結果へ分ける。"""
+    """JSONL を読み、環境情報と測定結果へ分ける。
+
+    JSONL は 1 行目が環境情報、以降が測定結果である。測定結果には直前に
+    現れた環境情報を対応付ける。1 つの file に複数の環境情報が現れる場合
+    (複数機の結果を連結した場合) も、行の順序で正しく対応する。
+    """
     environments = []
     measurements = []
     for path in paths:
+        current_environment = None
         with open(path, "r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 line = line.strip()
@@ -33,9 +57,20 @@ def load_records(paths):
                 kind = record.get("type")
                 if kind == "environment":
                     record["_source"] = path
-                    environments.append(record)
+                    current_environment = record
+                    # 同一機体の環境行が繰り返し現れる場合は 1 つにまとめる。
+                    key = (record.get("hostname"), record.get("gpu_name"),
+                           record.get("cuda_toolkit"), record.get("power_mode"))
+                    if key not in {(e.get("hostname"), e.get("gpu_name"),
+                                    e.get("cuda_toolkit"), e.get("power_mode"))
+                                   for e in environments}:
+                        environments.append(record)
                 elif kind == "measurement":
                     record["_source"] = path
+                    if current_environment is None:
+                        raise SystemExit(
+                            f"{path}:{line_number}: 環境行より前に measurement がある")
+                    record["_environment"] = current_environment
                     measurements.append(record)
                 else:
                     raise SystemExit(f"{path}:{line_number}: 未知の type: {kind}")
@@ -52,7 +87,11 @@ def format_environment(environment):
         f"  gpu={gpu} ({integrated}) cc={environment.get('gpu_compute_capability') or '-'}"
         f" driver={environment.get('driver_version') or '-'}"
         f" cuda={environment.get('cuda_toolkit') or '-'}\n"
+        f"  model={environment.get('platform_model') or '-'}"
+        f" platform={environment.get('platform_release') or '-'}\n"
         f"  power_mode={environment.get('power_mode') or '(未取得)'}"
+        f" clock={environment.get('gpu_max_clock_mhz') or '-'} MHz (max)"
+        f" / {environment.get('gpu_current_clock_mhz') or '-'} MHz (現在)"
     )
 
 
@@ -63,6 +102,7 @@ def measurement_rows(measurements):
         kernel = record.get("kernel")
         rows.append(
             {
+                "machine": machine_label(record.get("_environment")),
                 "route": record.get("route"),
                 "memory_mode": record.get("memory_mode"),
                 "resolution": f"{record.get('width_px')}x{record.get('height_px')}",
@@ -81,13 +121,14 @@ def measurement_rows(measurements):
 
 def print_table(rows):
     header = [
-        "route", "memory", "resolution", "markers", "fxfy",
+        "machine", "route", "memory", "resolution", "markers", "fxfy",
         "p50_ms", "p95_ms", "p99_ms", "kernel_p50", "fps",
     ]
     widths = {name: len(name) for name in header}
     formatted = []
     for row in rows:
         values = {
+            "machine": str(row["machine"]),
             "route": str(row["route"]),
             "memory": str(row["memory_mode"]),
             "resolution": str(row["resolution"]),
@@ -116,7 +157,8 @@ def print_crossover(rows):
     """
     grouped = defaultdict(dict)
     for row in rows:
-        key = (row["image"], row["resolution"], row["markers"], row["fxfy"])
+        # 機体をまたいだ経路比較は意味が異なるため、機体を key へ含める。
+        key = (row["machine"], row["image"], row["resolution"], row["markers"], row["fxfy"])
         grouped[key][(row["route"], row["memory_mode"])] = row
 
     comparable = {key: value for key, value in grouped.items() if len(value) > 1}
@@ -129,13 +171,40 @@ def print_crossover(rows):
         cpu = next((row for (route, _), row in routes.items() if route == "CPU"), None)
         if cpu is None or not cpu["p50_ms"]:
             continue
-        print(f"{key[1]} markers={key[2]} fxfy={key[3]}")
+        print(f"{key[0]} {key[2]} markers={key[3]} fxfy={key[4]}")
         for (route, memory), row in sorted(routes.items()):
             if not row["p50_ms"]:
                 continue
             ratio = row["p50_ms"] / cpu["p50_ms"]
             verdict = "CPU が速い" if ratio > 1.0 else ("同等" if abs(ratio - 1.0) < 0.05 else "こちらが速い")
             print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  比={ratio:.3f}  {verdict}")
+
+
+def print_machine_comparison(rows):
+    """同じ条件を複数機体で測った場合に、機体間の比を示す。
+
+    どちらが速いかだけでなく、条件ごとに差が変わることを見えるようにする。
+    """
+    grouped = defaultdict(dict)
+    for row in rows:
+        key = (row["route"], row["resolution"], row["markers"], row["fxfy"])
+        grouped[key][row["machine"]] = row
+
+    comparable = {key: value for key, value in grouped.items() if len(value) > 1}
+    if not comparable:
+        return
+
+    print("\n=== 機体比較 (同一条件) ===")
+    for key, machines in sorted(comparable.items(), key=lambda item: str(item[0])):
+        print(f"{key[0]} {key[1]} markers={key[2]} fxfy={key[3]}")
+        baseline_name, baseline = sorted(machines.items())[0]
+        for name, row in sorted(machines.items()):
+            if not row["p50_ms"] or not baseline["p50_ms"]:
+                continue
+            ratio = row["p50_ms"] / baseline["p50_ms"]
+            note = "(基準)" if name == baseline_name else f"基準比 {ratio:.2f}x"
+            print(f"  {name:<22} p50={row['p50_ms']:>8.3f} ms  "
+                  f"fps={row['fps'] or 0:>7.1f}  {note}")
 
 
 def main():
@@ -168,6 +237,7 @@ def main():
     print("\n=== 測定結果 ===")
     print_table(rows)
     print_crossover(rows)
+    print_machine_comparison(rows)
 
 
 if __name__ == "__main__":

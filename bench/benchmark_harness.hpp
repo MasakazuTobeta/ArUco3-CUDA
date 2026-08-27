@@ -92,7 +92,17 @@ struct EnvironmentRecord {
     std::string gpu_name_;
     std::string gpu_compute_capability_;
     std::string driver_version_;
+    /// Jetson の L4T release。Jetson には nvidia-smi が無く driver version を
+    /// 取得できないため、対応する情報としてこちらを記録する。
+    std::string platform_release_;
+    /// 基板名。device tree から取得する。
+    std::string platform_model_;
+    /// 電力モード。評価計画が測定条件として記録を要求する。
     std::string power_mode_;
+    /// GPU の最大 clock (MHz)。取得できない場合は 0 ではなく未設定とする。
+    bool gpu_clock_available_ = false;
+    int gpu_max_clock_mhz_ = 0;
+    int gpu_current_clock_mhz_ = 0;
     bool gpu_integrated_ = false;
     int cpu_online_cores_ = 0;
 };

@@ -9,7 +9,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <exception>
 #include <fstream>
+#include <map>
 #include <ostream>
 #include <ratio>
 #include <string>
@@ -48,6 +50,69 @@ std::string read_command_line(const std::string& command) {
         result.pop_back();
     }
     return result;
+}
+
+/// command の標準出力を全行取得する。
+std::vector<std::string> read_command_lines(const std::string& command) {
+    std::vector<std::string> lines;
+    std::array<char, 512> buffer{};
+    std::FILE* pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) {
+        return lines;
+    }
+    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        std::string line = buffer.data();
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    pclose(pipe);
+    return lines;
+}
+
+/// query-platform-info.sh の key=value 出力を map へ読み込む。
+///
+/// 機種ごとに取得元が異なる項目をここで吸収する。script が無い環境では
+/// 空の map を返し、呼出側は未取得として扱う。推測で埋めない。
+std::map<std::string, std::string> read_platform_info() {
+    std::map<std::string, std::string> info;
+    for (const std::string& line : read_command_lines("query-platform-info.sh 2>/dev/null")) {
+        const std::size_t separator = line.find('=');
+        if (separator == std::string::npos || separator == 0U) {
+            continue;
+        }
+        info[line.substr(0, separator)] = line.substr(separator + 1U);
+    }
+    return info;
+}
+
+/// 整数として解釈できる場合のみ値を返す。
+bool parse_int_field(const std::map<std::string, std::string>& info, const std::string& key,
+                     int* out) {
+    const auto entry = info.find(key);
+    if (entry == info.end() || entry->second.empty()) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const int value = std::stoi(entry->second, &consumed);
+        if (consumed != entry->second.size()) {
+            return false;
+        }
+        *out = value;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+std::string field_or_empty(const std::map<std::string, std::string>& info,
+                           const std::string& key) {
+    const auto entry = info.find(key);
+    return entry == info.end() ? std::string() : entry->second;
 }
 
 std::string read_os_pretty_name() {
@@ -149,14 +214,19 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
                     std::to_string(probe.compute_capability_minor_);
         }
     }
-    // driver version と power mode は library から取得できないため外部 command を使う。
-    environment.driver_version_ = read_command_line(
-            "nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null");
     environment.cuda_toolkit_version_ = read_command_line(
             "nvcc --version 2>/dev/null | sed -n 's/.*release \\([0-9.]*\\).*/\\1/p'");
-    // Jetson の power mode は測定条件に直結する。存在しない環境では空になる。
-    environment.power_mode_ =
-            read_command_line("nvpmodel -q 2>/dev/null | tr '\\n' ' ' | sed 's/  */ /g'");
+
+    // driver version、power mode、clock、L4T release は library から取得できない。
+    // 取得元が機種ごとに異なるため query-platform-info.sh が差を吸収する。
+    const std::map<std::string, std::string> platform_info = read_platform_info();
+    environment.driver_version_ = field_or_empty(platform_info, "driver_version");
+    environment.platform_release_ = field_or_empty(platform_info, "platform_release");
+    environment.platform_model_ = field_or_empty(platform_info, "platform_model");
+    environment.power_mode_ = field_or_empty(platform_info, "power_mode");
+    environment.gpu_clock_available_ =
+            parse_int_field(platform_info, "gpu_max_clock_mhz", &environment.gpu_max_clock_mhz_);
+    parse_int_field(platform_info, "gpu_current_clock_mhz", &environment.gpu_current_clock_mhz_);
 
     return environment;
 }
@@ -259,7 +329,23 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     writer.member_string("gpu_compute_capability", environment.gpu_compute_capability_);
     writer.member_bool("gpu_integrated", environment.gpu_integrated_);
     writer.member_string("driver_version", environment.driver_version_);
+    writer.member_string("platform_release", environment.platform_release_);
+    writer.member_string("platform_model", environment.platform_model_);
     writer.member_string("power_mode", environment.power_mode_);
+    // clock は測定条件に直結する。取得できない場合に 0 を書くと
+    // 「clock が 0」と誤読されるため null とする。
+    writer.key("gpu_max_clock_mhz");
+    if (environment.gpu_clock_available_) {
+        writer.value_int(environment.gpu_max_clock_mhz_);
+    } else {
+        writer.value_null();
+    }
+    writer.key("gpu_current_clock_mhz");
+    if (environment.gpu_current_clock_mhz_ > 0) {
+        writer.value_int(environment.gpu_current_clock_mhz_);
+    } else {
+        writer.value_null();
+    }
     writer.end_object();
     out << '\n';
 }
