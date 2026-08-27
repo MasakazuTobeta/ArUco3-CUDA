@@ -8,7 +8,9 @@ add_executable(aruco3cuda_unit_tests
   unit/test_json_writer.cpp
   unit/test_dictionary.cpp
   unit/test_statistics.cpp
-  unit/test_cuda_check.cpp)
+  unit/test_cuda_check.cpp
+  unit/test_types.cpp
+  unit/test_config.cpp)
 
 target_link_libraries(aruco3cuda_unit_tests
   PRIVATE aruco3cuda::core aruco3cuda::util aruco3cuda::dictionary aruco3cuda::warnings aruco3cuda::coverage GTest::gtest GTest::gtest_main)

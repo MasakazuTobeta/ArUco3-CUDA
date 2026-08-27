@@ -4,6 +4,8 @@
 # 現時点では build 基盤の疎通確認に必要な最小構成のみを含む。
 add_library(aruco3cuda_core
   status.cpp
+  types.cpp
+  config.cpp
   cuda_check.cpp
   device_probe.cu)
 

@@ -33,6 +33,8 @@ const char* to_string(Status status) {
             return "kOk";
         case Status::kInvalidArgument:
             return "kInvalidArgument";
+        case Status::kInvalidImage:
+            return "kInvalidImage";
         case Status::kInvalidConfig:
             return "kInvalidConfig";
         case Status::kUnsupportedDictionary:

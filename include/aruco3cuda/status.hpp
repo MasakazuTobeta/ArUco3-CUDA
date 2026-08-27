@@ -11,6 +11,7 @@ namespace aruco3cuda {
 enum class Status : int {
     kOk = 0,
     kInvalidArgument,        ///< pointer、寸法、index 等が範囲外
+    kInvalidImage,           ///< 画像 view の pointer、寸法、stride、memory 空間が不正
     kInvalidConfig,          ///< 設定値が範囲外、または相互に矛盾
     kUnsupportedDictionary,  ///< 未対応の Dictionary
     kCandidateOverflow,      ///< 候補数が上限を超えた。結果は打ち切られている
