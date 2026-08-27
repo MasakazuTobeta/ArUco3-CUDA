@@ -402,4 +402,6 @@ OpenCV Issue #27118 の報告者は、CPU 実装の処理時間として 640x480
 - [公開 API 草案](design/public-api.md)
 - [Docker 環境設計](design/docker-environment.md)
 - [評価計画](evaluation-plan.md)
+- [Benchmark 報告](benchmark-report.md)
 - [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
+- [ADR-0003: 四角形候補抽出は案 A を主案とする](adr/0003-candidate-extraction-approach.md)

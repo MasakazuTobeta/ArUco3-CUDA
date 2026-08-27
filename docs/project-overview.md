@@ -79,5 +79,7 @@ OpenCV の ArUco3 検出戦略と比較可能な CUDA 実装を独立リポジ�
 ## 関連
 
 - [実装計画](implementation-plan.md)
+- [評価計画](evaluation-plan.md)
+- [Benchmark 報告](benchmark-report.md)
 - [検出パイプライン設計](design/detector-pipeline.md)
 - [Docker 環境設計](design/docker-environment.md)

@@ -107,6 +107,7 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 
 ## 関連
 
+- [Benchmark 報告](benchmark-report.md)
 - [実装計画](implementation-plan.md)
 - [検出パイプライン設計](design/detector-pipeline.md)
 - [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)

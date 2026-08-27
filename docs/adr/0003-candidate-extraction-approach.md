@@ -109,3 +109,4 @@ ArUco3 有効時に案 A が解像度によらず 0.52 ms から 0.67 ms に収�
 - [検出パイプライン設計](../design/detector-pipeline.md)
 - [実装計画](../implementation-plan.md)
 - [評価計画](../evaluation-plan.md)
+- [Benchmark 報告](../benchmark-report.md)

@@ -74,12 +74,14 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 - [Docker 環境設計](docs/design/docker-environment.md)
 - [実装計画](docs/implementation-plan.md)
 - [評価計画](docs/evaluation-plan.md)
+- [Benchmark 報告](docs/benchmark-report.md)
 - [Dictionary 方針](docs/dictionaries.md)
 - [ロードマップ](docs/roadmap.md)
 - [知的財産・ライセンス方針](docs/ip-and-licensing.md)
 - [Code Provenance 記録](docs/code-provenance.md)
 - [ADR-0001: 独立リポジトリで先行実装する](docs/adr/0001-independent-implementation.md)
 - [ADR-0002: build 基盤と対象環境の baseline を固定する](docs/adr/0002-toolchain-and-target-baseline.md)
+- [ADR-0003: 四角形候補抽出は案 A を主案とする](docs/adr/0003-candidate-extraction-approach.md)
 - [コントリビューション規約](CONTRIBUTING.md)
 
 ## ライセンス

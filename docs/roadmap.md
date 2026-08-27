@@ -84,4 +84,6 @@ flowchart TD
 ## 関連
 
 - [実装計画](implementation-plan.md)
+- [評価計画](evaluation-plan.md)
+- [Benchmark 報告](benchmark-report.md)
 - [Docker 環境設計](design/docker-environment.md)
