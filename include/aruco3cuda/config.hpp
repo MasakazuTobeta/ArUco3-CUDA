@@ -8,6 +8,13 @@
 
 namespace aruco3cuda {
 
+/// 適応的二値化で走査する window の最大数。
+///
+/// window 数は (max - min) / step + 1 で決まる。上限を設けるのは、
+/// 段ごとに二値化画像を保持するため、数が増えると workspace が
+/// 際限なく膨らむためである。
+inline constexpr int kMaxAdaptiveThresholdWindows = 16;
+
 /// 四隅の subpixel 補正の方式。
 enum class CornerRefineMethod : int {
     kNone = 0,  ///< 補正しない

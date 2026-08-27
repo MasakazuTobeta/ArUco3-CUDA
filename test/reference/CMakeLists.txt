@@ -7,7 +7,8 @@ add_executable(aruco3cuda_reference_tests
   test_dictionary_conformance.cpp
   test_corpus_generator.cpp
   test_benchmark_harness.cpp
-  test_preprocess.cpp)
+  test_preprocess.cpp
+  test_threshold.cpp)
 
 target_link_libraries(aruco3cuda_reference_tests
   PRIVATE

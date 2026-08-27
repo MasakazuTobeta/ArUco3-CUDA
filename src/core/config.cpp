@@ -147,6 +147,19 @@ Status DetectorConfig::validate(std::string* out_message) const {
                              "min_marker_length_ratio_original_img が共に 0");
         return Status::kInvalidConfig;
     }
+    // window 数が上限を超えると二値化画像の保持量が際限なく増える。
+    const int window_count =
+            (this->adaptive_thresh_win_size_max_px_ - this->adaptive_thresh_win_size_min_px_) /
+                    this->adaptive_thresh_win_size_step_px_ +
+            1;
+    if (window_count > kMaxAdaptiveThresholdWindows) {
+        set_conflict_message(out_message, "適応的二値化の window 数 " +
+                                                  std::to_string(window_count) + " が上限 " +
+                                                  std::to_string(kMaxAdaptiveThresholdWindows) +
+                                                  " を超える");
+        return Status::kInvalidConfig;
+    }
+
     // block 1 辺の thread 数は 2 の冪でなければ warp の割り当てが崩れる。
     if ((this->cuda_block_dim_ & (this->cuda_block_dim_ - 1)) != 0) {
         set_conflict_message(out_message,

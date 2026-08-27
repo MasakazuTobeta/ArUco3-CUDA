@@ -8,6 +8,7 @@ add_library(aruco3cuda_core
   config.cpp
   workspace.cpp
   preprocess.cu
+  threshold.cu
   cuda_check.cpp
   device_probe.cu)
 
