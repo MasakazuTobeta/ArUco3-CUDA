@@ -6,6 +6,7 @@ add_library(aruco3cuda_core
   status.cpp
   types.cpp
   config.cpp
+  workspace.cpp
   cuda_check.cpp
   device_probe.cu)
 

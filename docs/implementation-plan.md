@@ -194,10 +194,14 @@ ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく 
 
 WP-1.1 では [公開 API 草案](design/public-api.md) の未確定事項を 3 件解決しました。公開 aggregate の field にも末尾 `_` を付けること、検証は `Status` を返し理由を任意の out 引数で受け取ること、画像の失敗に `kInvalidImage` を割り当てることです。
 
+WP-1.2 の workspace は bump pointer 方式の arena です。段階ごとの buffer をここから切り出し、フレームの先頭で `reset()` を呼びます。`allocate()` は容量が足りなくても自動で拡張しません。自動拡張はフレームごとの確保を招き、規約が避けよと定める状態を静かに作るためです。容量は `ensure_capacity()` で初期化時に確保します。
+
+完了条件は統計で確認します。100 フレーム分の `reset()` と切り出しを繰り返しても `allocation_count_` が 1 のまま、`reallocation_count_` と `exhausted_count_` が 0 のままであることをテストで固定しました。`MemorySpace` を引数に取るため、評価計画が求める device、pinned host、managed の 3 経路を同じ arena の実装で測れます。
+
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
 | WP-1.1 | 公開型、設定、`validate()` | `include/aruco3cuda/{types,config}.hpp`、`src/core/{types,config}.cpp` | 設定の矛盾と不正な画像 view を境界で拒否するテストが通る。達成済み | WP-0.1 | S |
-| WP-1.2 | workspace 所有と再確保統計 | `src/core` の allocator | フレームごとの確保が発生しないことをテストで確認できる | WP-1.1 | M |
+| WP-1.2 | workspace 所有と再確保統計 | `include/aruco3cuda/workspace.hpp`、`src/core/workspace.cpp` | フレームごとの確保が発生しないことをテストで確認できる。達成済み | WP-1.1 | M |
 | WP-1.3 | S1 pyramid と S2 segmentation の kernel | `src/core` | OpenCV の縮小結果との差が定めた許容内に収まる | WP-1.2 | M |
 | WP-1.4 | S3 適応的二値化 kernel | `src/core` | 3 通りの window size で CPU 基準の二値化と一致率が許容内 | WP-1.3 | M |
 | WP-1.5 | 案 C ハイブリッド経路 | 二値化画像を host へ戻し CPU で候補抽出と decode | 合成画像の基本条件で ID と四隅を取得できる | WP-1.4、WP-0.3 | M |
