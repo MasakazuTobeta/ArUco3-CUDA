@@ -23,14 +23,29 @@ failures=0
 fail() { echo "  [NG] $*"; failures=$((failures + 1)); }
 pass() { echo "  [OK] $*"; }
 
-echo "== 1. CUDA Toolkit の mount =="
+readonly kCudaMode="${ARUCO3_CUDA_MODE:-pinned}"
+
+echo "== 1. CUDA Toolkit (mode=${kCudaMode}) =="
 if [ ! -x "${kCudaHome}/bin/nvcc" ]; then
-  fail "${kCudaHome}/bin/nvcc が無い。host の CUDA Toolkit が mount されていない。"
-  echo "       compose の volumes に host の CUDA directory を指定すること。"
-  echo "       /usr/local/cuda は symlink のため、実体の directory を指定する。"
+  if [ "${kCudaMode}" = "mounted" ]; then
+    fail "${kCudaHome}/bin/nvcc が無い。host の CUDA Toolkit が mount されていない。"
+    echo "       compose.mounted.yaml の volumes に host の CUDA directory を指定すること。"
+    echo "       /usr/local/cuda は symlink のため、実体の directory を指定する。"
+  else
+    fail "${kCudaHome}/bin/nvcc が無い。image への CUDA install に失敗している。"
+    echo "       image を再 build するか、ARUCO3_CUDA_PACKAGES の指定を確認すること。"
+  fi
 else
   nvcc_version="$("${kCudaHome}/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')"
   pass "nvcc ${nvcc_version} (${kCudaHome})"
+  if [ "${kCudaMode}" = "mounted" ]; then
+    echo "       注意: mounted mode は host の CUDA に依存する。"
+    echo "       測定結果を伴う実行は pinned mode で行うこと。"
+  fi
+fi
+
+if [ -f /opt/aruco3cuda/cuda-provenance.json ]; then
+  pass "CUDA provenance: $(jq -rc '.mode + " " + .nvcc_version' /opt/aruco3cuda/cuda-provenance.json)"
 fi
 
 echo "== 2. NVIDIA driver library の注入 =="

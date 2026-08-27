@@ -52,6 +52,13 @@ if [ -f "${opencv_provenance}" ]; then
   opencv_json="$(cat "${opencv_provenance}")"
 fi
 
+# CUDA Toolkit の供給方式と version は測定結果の比較可能性に直結する。
+cuda_provenance="/opt/aruco3cuda/cuda-provenance.json"
+cuda_json='null'
+if [ -f "${cuda_provenance}" ]; then
+  cuda_json="$(cat "${cuda_provenance}")"
+fi
+
 nvcc_version=""
 if [ -x "${kCudaHome}/bin/nvcc" ]; then
   nvcc_version="$("${kCudaHome}/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')"
@@ -77,6 +84,7 @@ jq -n \
   --argjson mem_total_kb "$(awk '/MemTotal/{print $2}' /proc/meminfo)" \
   --arg power_mode "${power_mode}" \
   --argjson opencv "${opencv_json}" \
+  --argjson cuda "${cuda_json}" \
   '{
      recorded_at: $recorded_at,
      host: { hostname: $hostname, os: $os, kernel: $kernel, arch: $arch },
@@ -90,7 +98,7 @@ jq -n \
      },
      cpu: { model: $cpu_model, online_cores: $cpu_online },
      memory: { total_kb: $mem_total_kb },
-     toolchain: { cuda_toolkit: $nvcc, gcc: $gcc, cmake: $cmake },
+     toolchain: { cuda_toolkit: $nvcc, cuda_provenance: $cuda, gcc: $gcc, cmake: $cmake },
      opencv: $opencv
    }' > "${tmp_output}"
 
