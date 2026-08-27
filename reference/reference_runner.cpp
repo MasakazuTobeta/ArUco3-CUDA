@@ -13,9 +13,11 @@
 #include <fstream>
 #include <ios>
 #include <map>
+#include <memory>
 #include <ostream>
 #include <ratio>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "aruco3cuda/util/json_writer.hpp"
@@ -225,11 +227,78 @@ std::vector<std::string> known_dictionary_names() {
     return names;
 }
 
-bool detect_image(const std::string& image_path, const ReferenceConfig& config,
-                  ReferenceResult* out_result, std::string* out_error) {
-    if (out_result == nullptr || out_error == nullptr) {
+namespace {
+
+/// 読み込み済みの画像を検出し、結果を並べ替えて格納する。
+///
+/// 検出そのものだけを行う。file 読み込みと checksum は呼出側の責務とする。
+void run_detection(const cv::aruco::ArucoDetector& detector, const cv::Mat& image,
+                   ReferenceResult* result) {
+    std::vector<std::vector<cv::Point2f>> corners;
+    std::vector<int> ids;
+    std::vector<std::vector<cv::Point2f>> rejected;
+
+    const auto start = std::chrono::steady_clock::now();
+    detector.detectMarkers(image, corners, ids, rejected);
+    const auto finish = std::chrono::steady_clock::now();
+    result->detect_ms_ = std::chrono::duration<double, std::milli>(finish - start).count();
+    result->rejected_count_ = rejected.size();
+
+    result->detections_.clear();
+    result->detections_.reserve(ids.size());
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        ReferenceDetection detection;
+        detection.id_ = ids[i];
+        for (std::size_t c = 0; c < 4; ++c) {
+            detection.corners_[c * 2] = static_cast<double>(corners[i][c].x);
+            detection.corners_[c * 2 + 1] = static_cast<double>(corners[i][c].y);
+        }
+        result->detections_.push_back(detection);
+    }
+
+    // OpenCV が返す順序は候補の抽出順に依存する。比較を容易にするため安定に並べ替える。
+    std::sort(result->detections_.begin(), result->detections_.end(),
+              [](const ReferenceDetection& a, const ReferenceDetection& b) {
+                  if (a.id_ != b.id_) {
+                      return a.id_ < b.id_;
+                  }
+                  if (a.corners_[0] != b.corners_[0]) {
+                      return a.corners_[0] < b.corners_[0];
+                  }
+                  return a.corners_[1] < b.corners_[1];
+              });
+}
+
+/// 画像を読み込み、寸法と checksum と縮小率を求める。
+///
+/// 成功時のみ out_image と out_result を書き換える。
+bool load_image(const std::string& image_path, const ReferenceConfig& config, cv::Mat* out_image,
+                ReferenceResult* out_result, std::string* out_error) {
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
+    if (image.empty()) {
+        *out_error = "画像を読み込めない: " + image_path;
         return false;
     }
+    ReferenceResult result;
+    result.image_path_ = image_path;
+    result.width_px_ = image.cols;
+    result.height_px_ = image.rows;
+    if (!aruco3cuda::util::sha256_file(image_path, &result.image_sha256_)) {
+        *out_error = "checksum を計算できない: " + image_path;
+        return false;
+    }
+    result.fxfy_effective_ = effective_fxfy(config, image.cols, image.rows);
+    result.segmentation_width_px_ = cvRound(result.fxfy_effective_ * image.cols);
+    result.segmentation_height_px_ = cvRound(result.fxfy_effective_ * image.rows);
+
+    *out_image = std::move(image);
+    *out_result = result;
+    return true;
+}
+
+/// 設定と Dictionary 名を検証し、OpenCV の Dictionary を返す。
+bool resolve_dictionary(const ReferenceConfig& config, cv::aruco::Dictionary* out_dictionary,
+                        std::string* out_error) {
     // 設定値を最初に検証する。範囲外の値を OpenCV へ渡すと cv::Exception が
     // 送出され、bool と out_error で失敗を通知する契約を破る。
     if (!validate_config(config, out_error)) {
@@ -240,65 +309,91 @@ bool detect_image(const std::string& image_path, const ReferenceConfig& config,
         *out_error = "未対応の Dictionary: " + config.dictionary_name_;
         return false;
     }
+    *out_dictionary = cv::aruco::getPredefinedDictionary(dictionary_entry->second);
+    return true;
+}
 
-    const cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
-    if (image.empty()) {
-        *out_error = "画像を読み込めない: " + image_path;
+}  // namespace
+
+bool detect_image(const std::string& image_path, const ReferenceConfig& config,
+                  ReferenceResult* out_result, std::string* out_error) {
+    if (out_result == nullptr || out_error == nullptr) {
         return false;
     }
-
+    cv::aruco::Dictionary dictionary;
+    if (!resolve_dictionary(config, &dictionary, out_error)) {
+        return false;
+    }
+    cv::Mat image;
     ReferenceResult result;
-    result.image_path_ = image_path;
-    result.width_px_ = image.cols;
-    result.height_px_ = image.rows;
-    if (!aruco3cuda::util::sha256_file(image_path, &result.image_sha256_)) {
-        *out_error = "checksum を計算できない: " + image_path;
+    if (!load_image(image_path, config, &image, &result, out_error)) {
         return false;
     }
-
-    result.fxfy_effective_ = effective_fxfy(config, image.cols, image.rows);
-    result.segmentation_width_px_ = cvRound(result.fxfy_effective_ * image.cols);
-    result.segmentation_height_px_ = cvRound(result.fxfy_effective_ * image.rows);
-
-    const cv::aruco::Dictionary dictionary =
-            cv::aruco::getPredefinedDictionary(dictionary_entry->second);
     const cv::aruco::ArucoDetector detector(dictionary, to_detector_parameters(config));
-
-    std::vector<std::vector<cv::Point2f>> corners;
-    std::vector<int> ids;
-    std::vector<std::vector<cv::Point2f>> rejected;
-
-    const auto start = std::chrono::steady_clock::now();
-    detector.detectMarkers(image, corners, ids, rejected);
-    const auto finish = std::chrono::steady_clock::now();
-    result.detect_ms_ = std::chrono::duration<double, std::milli>(finish - start).count();
-    result.rejected_count_ = rejected.size();
-
-    result.detections_.reserve(ids.size());
-    for (std::size_t i = 0; i < ids.size(); ++i) {
-        ReferenceDetection detection;
-        detection.id_ = ids[i];
-        for (std::size_t c = 0; c < 4; ++c) {
-            detection.corners_[c * 2] = static_cast<double>(corners[i][c].x);
-            detection.corners_[c * 2 + 1] = static_cast<double>(corners[i][c].y);
-        }
-        result.detections_.push_back(detection);
-    }
-
-    // OpenCV が返す順序は候補の抽出順に依存する。比較を容易にするため安定に並べ替える。
-    std::sort(result.detections_.begin(), result.detections_.end(),
-              [](const ReferenceDetection& a, const ReferenceDetection& b) {
-                  if (a.id_ != b.id_) {
-                      return a.id_ < b.id_;
-                  }
-                  if (a.corners_[0] != b.corners_[0]) {
-                      return a.corners_[0] < b.corners_[0];
-                  }
-                  return a.corners_[1] < b.corners_[1];
-              });
-
+    run_detection(detector, image, &result);
     *out_result = result;
     return true;
+}
+
+/// ReferenceDetector の実装本体。公開 header が OpenCV へ依存しないよう pimpl とする。
+class ReferenceDetector::Impl {
+public:
+    bool initialize(const std::string& image_path, const ReferenceConfig& config,
+                    std::string* out_error) {
+        cv::aruco::Dictionary dictionary;
+        if (!resolve_dictionary(config, &dictionary, out_error)) {
+            return false;
+        }
+        if (!load_image(image_path, config, &this->image_, &this->metadata_, out_error)) {
+            return false;
+        }
+        this->detector_ = cv::aruco::ArucoDetector(dictionary, to_detector_parameters(config));
+        this->initialized_ = true;
+        return true;
+    }
+
+    bool detect(ReferenceResult* out_result, std::string* out_error) {
+        if (!this->initialized_) {
+            *out_error = "initialize() が呼ばれていない";
+            return false;
+        }
+        ReferenceResult result = this->metadata_;
+        run_detection(this->detector_, this->image_, &result);
+        *out_result = std::move(result);
+        return true;
+    }
+
+    const ReferenceResult& metadata() const { return this->metadata_; }
+
+private:
+    bool initialized_ = false;
+    cv::Mat image_;
+    ReferenceResult metadata_;
+    cv::aruco::ArucoDetector detector_;
+};
+
+ReferenceDetector::ReferenceDetector() : impl_(std::make_unique<Impl>()) {}
+ReferenceDetector::~ReferenceDetector() = default;
+ReferenceDetector::ReferenceDetector(ReferenceDetector&&) noexcept = default;
+ReferenceDetector& ReferenceDetector::operator=(ReferenceDetector&&) noexcept = default;
+
+bool ReferenceDetector::initialize(const std::string& image_path, const ReferenceConfig& config,
+                                   std::string* out_error) {
+    if (out_error == nullptr) {
+        return false;
+    }
+    return this->impl_->initialize(image_path, config, out_error);
+}
+
+bool ReferenceDetector::detect(ReferenceResult* out_result, std::string* out_error) {
+    if (out_result == nullptr || out_error == nullptr) {
+        return false;
+    }
+    return this->impl_->detect(out_result, out_error);
+}
+
+const ReferenceResult& ReferenceDetector::metadata() const {
+    return this->impl_->metadata();
 }
 
 ReferenceEnvironment collect_environment(const ReferenceConfig& config) {

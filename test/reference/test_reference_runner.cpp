@@ -13,9 +13,11 @@
 #include <opencv2/objdetect/aruco_detector.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -287,6 +289,91 @@ TEST_F(ReferenceRunnerTest, json_is_byte_identical_when_timing_omitted) {
     const std::string first = render();
     EXPECT_EQ(first, render());
     EXPECT_EQ(first.find("detect_ms"), std::string::npos);
+}
+
+// 正常系: 読み込みを分けても detect_image と同じ結果になる。
+//
+// 測定では読み込みを初期化側へ寄せる。結果が変わってしまえば、測定して
+// いる対象が別物になる。
+TEST_F(ReferenceRunnerTest, detector_matches_detect_image) {
+    const std::string path = this->make_image("aruco3cuda_ref_detector.png");
+    ReferenceConfig config;
+
+    ReferenceResult expected;
+    std::string error;
+    ASSERT_TRUE(aruco3cuda::reference::detect_image(path, config, &expected, &error)) << error;
+
+    aruco3cuda::reference::ReferenceDetector detector;
+    ASSERT_TRUE(detector.initialize(path, config, &error)) << error;
+    EXPECT_EQ(detector.metadata().image_sha256_, expected.image_sha256_);
+    EXPECT_EQ(detector.metadata().width_px_, expected.width_px_);
+    EXPECT_EQ(detector.metadata().height_px_, expected.height_px_);
+    EXPECT_EQ(detector.metadata().fxfy_effective_, expected.fxfy_effective_);
+    // metadata は検出結果を含まない。
+    EXPECT_TRUE(detector.metadata().detections_.empty());
+
+    // 繰り返し呼んでも同じ結果になる。
+    for (int i = 0; i < 3; ++i) {
+        ReferenceResult actual;
+        ASSERT_TRUE(detector.detect(&actual, &error)) << error;
+        ASSERT_EQ(actual.detections_.size(), expected.detections_.size());
+        for (std::size_t k = 0; k < expected.detections_.size(); ++k) {
+            EXPECT_EQ(actual.detections_[k].id_, expected.detections_[k].id_);
+            EXPECT_EQ(actual.detections_[k].corners_, expected.detections_[k].corners_);
+        }
+        EXPECT_EQ(actual.image_sha256_, expected.image_sha256_);
+        EXPECT_EQ(actual.rejected_count_, expected.rejected_count_);
+    }
+}
+
+// 正常系: move してもそのまま使える。
+TEST_F(ReferenceRunnerTest, detector_can_be_moved) {
+    const std::string path = this->make_image("aruco3cuda_ref_detector_move.png");
+    const ReferenceConfig config;
+    std::string error;
+
+    aruco3cuda::reference::ReferenceDetector source;
+    ASSERT_TRUE(source.initialize(path, config, &error)) << error;
+
+    aruco3cuda::reference::ReferenceDetector moved(std::move(source));
+    ReferenceResult first;
+    ASSERT_TRUE(moved.detect(&first, &error)) << error;
+    EXPECT_FALSE(first.detections_.empty());
+
+    aruco3cuda::reference::ReferenceDetector assigned;
+    assigned = std::move(moved);
+    ReferenceResult second;
+    ASSERT_TRUE(assigned.detect(&second, &error)) << error;
+    EXPECT_EQ(second.detections_.size(), first.detections_.size());
+}
+
+// 異常系: 初期化前の検出と、不正な引数を拒否する。
+TEST_F(ReferenceRunnerTest, detector_rejects_invalid_use) {
+    aruco3cuda::reference::ReferenceDetector detector;
+    ReferenceResult result;
+    std::string error;
+
+    EXPECT_FALSE(detector.detect(&result, &error));
+    EXPECT_NE(error.find("initialize"), std::string::npos);
+    EXPECT_FALSE(detector.detect(nullptr, &error));
+    EXPECT_FALSE(detector.detect(&result, nullptr));
+    EXPECT_FALSE(detector.initialize("/nonexistent/image.png", ReferenceConfig(), nullptr));
+
+    // 読み込めない画像。
+    EXPECT_FALSE(detector.initialize("/nonexistent/image.png", ReferenceConfig(), &error));
+    EXPECT_NE(error.find("読み込めない"), std::string::npos);
+
+    // 未対応の Dictionary。
+    ReferenceConfig bad_dictionary;
+    bad_dictionary.dictionary_name_ = "DICT_NOPE";
+    EXPECT_FALSE(detector.initialize("/nonexistent/image.png", bad_dictionary, &error));
+    EXPECT_NE(error.find("Dictionary"), std::string::npos);
+
+    // 設定が矛盾している場合。
+    ReferenceConfig bad_range;
+    bad_range.max_marker_perimeter_rate_ = bad_range.min_marker_perimeter_rate_;
+    EXPECT_FALSE(detector.initialize("/nonexistent/image.png", bad_range, &error));
+    EXPECT_NE(error.find("矛盾"), std::string::npos);
 }
 
 }  // namespace

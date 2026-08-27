@@ -3,6 +3,7 @@
 #define ARUCO3CUDA_REFERENCE_RUNNER_HPP
 
 #include <array>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -141,6 +142,77 @@ std::vector<std::string> known_dictionary_names();
 ///   OpenCV が返す順序は候補の抽出順に依存し、比較用途では扱いにくいため。
 bool detect_image(const std::string& image_path, const ReferenceConfig& config,
                   ReferenceResult* out_result, std::string* out_error);
+
+/// 画像と Dictionary を 1 度だけ用意し、検出だけを繰り返す。
+///
+/// `detect_image` は呼ぶたびに file の読み込みと checksum の計算を行う。
+/// 測定でそれを繰り返すと、検出時間より読み込み時間の方が大きくなり、
+/// 何を比べているのか分からなくなる。合成 corpus の 1280x720 PNG では
+/// 読み込みが測定区間の 6 割から 8 割を占める。読み込みを初期化側へ寄せ、
+/// 測定区間を検出だけにするためにこの型を用意する。
+///
+/// 所有権: 読み込んだ画像と OpenCV の検出器を自身で所有する。
+/// 同期動作: 無し。1 つの instance を複数 thread から同時に使ってはならない。
+///           `detect` は内部状態を変更しないが、OpenCV の検出器の thread 安全性を
+///           前提にできないため const にしていない。
+///
+/// 入力例: initialize("scene.png", 既定設定) のあと detect を 200 回
+/// 出力例: 毎回同じ検出結果。file 読み込みは 1 度だけ
+class ReferenceDetector {
+public:
+    ReferenceDetector();
+    ~ReferenceDetector();
+    ReferenceDetector(const ReferenceDetector&) = delete;
+    ReferenceDetector& operator=(const ReferenceDetector&) = delete;
+    ReferenceDetector(ReferenceDetector&&) noexcept;
+    ReferenceDetector& operator=(ReferenceDetector&&) noexcept;
+
+    /// 画像を読み込み、Dictionary と検出器を用意する。
+    ///
+    /// @param image_path 8-bit grayscale として読み込む画像 file。
+    /// @param config 検出設定。
+    /// @param out_error 失敗時に理由を格納する。nullptr は不可。
+    /// @return 成功した場合は true。
+    ///
+    /// 所有権: 読み込んだ画像を自身で所有する。引数は保持しない。
+    /// 同期動作: 無し。file 入出力を伴う。
+    ///
+    /// 入力例: 1280x720 の PNG と既定設定
+    /// 出力例: true。metadata() が寸法と checksum を返せるようになる
+    bool initialize(const std::string& image_path, const ReferenceConfig& config,
+                    std::string* out_error);
+
+    /// 読み込み済みの画像を検出する。
+    ///
+    /// @param out_result 成功時に結果を格納する。nullptr は不可。
+    /// @param out_error 失敗時に理由を格納する。nullptr は不可。
+    /// @return 成功した場合は true。initialize 前に呼ぶと false。
+    ///
+    /// 備考:
+    ///   検出結果の並べ替え規則は `detect_image` と同じである。
+    ///
+    /// 所有権: 引数を保持しない。
+    /// 同期動作: 無し。file 入出力を行わない。
+    ///
+    /// 入力例: initialize 済みの instance
+    /// 出力例: true。out_result に detect_image と同じ結果が入る
+    bool detect(ReferenceResult* out_result, std::string* out_error);
+
+    /// 画像の情報を返す。検出結果は含まない。
+    ///
+    /// @return path、checksum、寸法、fxfy 実効値を持つ結果。
+    ///
+    /// 所有権: 戻り値の参照先は本 instance が所有する。
+    /// 同期動作: 無し。
+    ///
+    /// 入力例: initialize 済みの instance
+    /// 出力例: image_sha256_ と width_px_ が埋まった結果
+    const ReferenceResult& metadata() const;
+
+private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 /// 実行環境の情報を収集する。
 ///
