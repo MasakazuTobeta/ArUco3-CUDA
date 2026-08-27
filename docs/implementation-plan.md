@@ -116,7 +116,7 @@ G0 の完了条件: 同一入力に対する CPU 基準結果と環境情報を�
 | Dictionary の生成物 | `dictgen --check` が byte 単位で一致 |
 | CPU 経路の測定値 | Jetson は一致。DGX Spark の ArUco3 無効のみ変化。原因は測定条件の固定不足であり、下記に記録した |
 
-corpus の manifest と benchmark の JSONL は `schema_version` を 2 へ上げました。manifest は単位を名前へ示す規約に合わせて key を改名したため破壊的変更です。JSONL は測定条件の項目を追加したためです。
+corpus の manifest は `schema_version` を 2 へ上げました。単位を名前へ示す規約に合わせて key を改名したため破壊的変更です。benchmark の JSONL は現在 3 です。2 で測定条件の項目を追加し、3 で段階時間を追加するとともに CPU 経路の測定区間から画像の読み込みを外しました。
 
 WP-0.7 で判明し修正した、実機でしか現れない問題を記録します。
 
@@ -224,6 +224,14 @@ WP-1.2 の workspace は bump pointer 方式の arena です。段階ごとの b
 
 G1 の完了条件: 合成画像の基本条件で ID と四隅を取得でき、CPU 基準結果との差異が分類できること。**達成済み**。ID と四隅は WP-1.5 で取得でき、差異の分類は WP-1.6 の `aruco3cuda_report` が行います。合成 corpus に対する一致は `cli.report.matches_reference` として ctest へ登録し、差異が出れば test が失敗します。
 
+#### Phase 2 完了後に前倒しした測定
+
+Phase 3 へ進む前に、hybrid 経路を測定 harness へ配線して CPU 基準と比べました。Phase 4 の WP-4.5 に予定していた crossover 報告の一部を前倒ししたものです。理由は、Phase 2 まで進んだ時点で end-to-end の比較が 1 つも無く、CUDA 化に投資を続ける判断材料が無かったためです。
+
+このとき、既存の CPU 測定が検出時間を測っていないことが分かりました。`measure_image` が 1 反復ごとに `cv::imread` と `sha256_file` を呼んでおり、測定区間の 58% から 85% が PNG の復号でした。読み込みを初期化側へ移し、`schema_version` を 3 へ上げています。version 2 以前の結果は同じ key が違う区間を指すため、混ぜて集計できません。
+
+結果は DGX Spark と Jetson Orin で逆になりました。GB10 では 640x480 付近に crossover があり、1280x720 で 1.30 倍、3840x2160 で 2.16 倍 hybrid が速くなります。Orin では全条件で CPU が速く、比は 1.36 から 2.00 です。GPU 段が GB10 の 4 倍を要する一方、CPU 側の差は 1.2 倍しかないためです。詳細と判断は [benchmark 報告](benchmark-report.md) にあります。
+
 #### Phase 2: GPU 候補抽出
 
 WP-2.1 のラベリングは 8 近傍とします。OpenCV の `findContours` が前景を 8 連結として辿るためであり、4 近傍にすると対角にのみ接する前景が別成分になって候補が割れます。label は root の線形 index の昇順に 0 起点の連番で振ります。atomics の到着順に依存する採番だと実行ごとに label が変わり、下流の結果を比較できません。
@@ -324,13 +332,13 @@ CUDA device code は host coverage と別に、入力分割と境界値で実行
 
 | 指標 | 現状 | 目標 |
 | --- | --- | --- |
-| C0 (line) | 90.0% (2887 / 3207) | 100% |
-| C1 (decision) | 82.5% (813 / 986) | 100% |
-| function | 99.4% (173 / 174) | 100% |
+| C0 (line) | 89.5% (3112 / 3477) | 100% |
+| C1 (decision) | 81.5% (892 / 1094) | 100% |
+| function | 99.1% (209 / 211) | 100% |
 
 この値は C++ の翻訳単位のみを対象とします。`.cu` は nvcc が compile するため gcov の計測に入りません。`src/core` の kernel だけでなく、同じ file にある host 側の `reserve_*` と `*_workspace_bytes` も計測外です。これらは `test/reference` の各 test から正常系・異常系ともに呼ばれており、引数不正と容量不足の経路も test で固定していますが、行として数えられていません。計測対象を `.cu` へ広げる手段は Phase 4 で検討します。
 
-規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 320 行の内訳は次のとおりです。
+規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 365 行の内訳は次のとおりです。
 
 | 分類 | 内容 | 扱い |
 | --- | --- | --- |

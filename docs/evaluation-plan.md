@@ -10,7 +10,9 @@ DGX Spark GB10、Jetson Orin、OpenCV ArUco3 CPU 実装、開発する CUDA 実�
 
 ## 現状
 
-CPU 経路の測定 harness、合成 corpus 生成器、CPU 基準 runner は作成済みです。CUDA 経路の測定と実画像データセットは未作成です。
+CPU 経路と hybrid 経路の測定 harness、合成 corpus 生成器、CPU 基準 runner は作成済みです。完全 GPU 経路 (`CUDA-E2E`、`CUDA-Resident`) の測定と実画像データセットは未作成です。
+
+両経路を測った結果は [benchmark 報告](benchmark-report.md) にあります。測定区間は検出のみであり、画像の読み込みと checksum は含みません。1 反復ごとに読み込むと、合成 corpus の 1280x720 PNG では測定区間の 58% から 85% が PNG の復号になり、検出時間の比較として成立しないためです。
 
 分位点は nearest-rank 法で求めます。補間しないため、返る値は必ず実測値のいずれかになります。集計方法が実装依存になると環境をまたいだ比較が成立しないため、この方法を標準とします。
 
