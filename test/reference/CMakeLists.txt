@@ -8,7 +8,8 @@ add_executable(aruco3cuda_reference_tests
   test_corpus_generator.cpp
   test_benchmark_harness.cpp
   test_preprocess.cpp
-  test_threshold.cpp)
+  test_threshold.cpp
+  test_hybrid_detector.cpp)
 
 target_link_libraries(aruco3cuda_reference_tests
   PRIVATE
@@ -17,6 +18,7 @@ target_link_libraries(aruco3cuda_reference_tests
     aruco3cuda::bench
     aruco3cuda::dictionary
     aruco3cuda::core
+    aruco3cuda::hybrid
     aruco3cuda::warnings
     aruco3cuda::coverage
     GTest::gtest
@@ -31,3 +33,7 @@ target_include_directories(aruco3cuda_reference_tests SYSTEM PRIVATE ${OpenCV_IN
 gtest_discover_tests(aruco3cuda_reference_tests
   DISCOVERY_TIMEOUT 60
   PROPERTIES TIMEOUT 300)
+
+# ハイブリッド経路は GPU kernel を実行するため、Compute Sanitizer の対象へ
+# 含める。unit test だけでは前処理と二値化の kernel が検査されない。
+aruco3cuda_add_sanitizer_tests(aruco3cuda_reference_tests)

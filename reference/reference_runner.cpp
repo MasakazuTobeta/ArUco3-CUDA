@@ -71,6 +71,14 @@ cv::aruco::DetectorParameters to_detector_parameters(const ReferenceConfig& conf
     params.minOtsuStdDev = config.min_otsu_std_dev_;
     params.errorCorrectionRate = config.error_correction_rate_;
     params.useAruco3Detection = config.use_aruco3_detection_;
+    params.cornerRefinementMethod = config.use_corner_subpix_refinement_
+                                            ? static_cast<int>(cv::aruco::CORNER_REFINE_SUBPIX)
+                                            : static_cast<int>(cv::aruco::CORNER_REFINE_NONE);
+    params.cornerRefinementWinSize = config.corner_refinement_win_size_px_;
+    params.relativeCornerRefinmentWinSize =
+            static_cast<float>(config.relative_corner_refinement_win_size_);
+    params.cornerRefinementMaxIterations = config.corner_refinement_max_iterations_;
+    params.cornerRefinementMinAccuracy = config.corner_refinement_min_accuracy_px_;
     params.minSideLengthCanonicalImg = config.min_side_length_canonical_img_px_;
     params.minMarkerLengthRatioOriginalImg = config.min_marker_length_ratio_original_img_;
     return params;
@@ -347,6 +355,13 @@ void write_results_json(std::ostream& out, const ReferenceConfig& config,
     writer.member_int("minSideLengthCanonicalImg", config.min_side_length_canonical_img_px_);
     writer.member_double("minMarkerLengthRatioOriginalImg",
                          static_cast<double>(config.min_marker_length_ratio_original_img_), 6);
+    writer.member_bool("useCornerSubpixRefinement", config.use_corner_subpix_refinement_);
+    writer.member_int("cornerRefinementWinSize", config.corner_refinement_win_size_px_);
+    writer.member_double("relativeCornerRefinmentWinSize",
+                         config.relative_corner_refinement_win_size_, 6);
+    writer.member_int("cornerRefinementMaxIterations", config.corner_refinement_max_iterations_);
+    writer.member_double("cornerRefinementMinAccuracy", config.corner_refinement_min_accuracy_px_,
+                         6);
     writer.end_object();
 
     writer.key("images");

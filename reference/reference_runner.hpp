@@ -34,6 +34,14 @@ struct ReferenceConfig {
     double min_otsu_std_dev_ = 5.0;
     double error_correction_rate_ = 0.6;
 
+    /// 四隅の subpixel 補正を行うか。OpenCV は ArUco3 有効時、この指定に
+    /// かかわらず補正を行う。
+    bool use_corner_subpix_refinement_ = false;
+    int corner_refinement_win_size_px_ = 5;
+    double relative_corner_refinement_win_size_ = 0.3;
+    int corner_refinement_max_iterations_ = 30;
+    double corner_refinement_min_accuracy_px_ = 0.1;
+
     bool use_aruco3_detection_ = true;
     int min_side_length_canonical_img_px_ = 32;
     float min_marker_length_ratio_original_img_ = 0.05F;

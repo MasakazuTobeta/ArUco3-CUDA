@@ -95,6 +95,7 @@ function(aruco3cuda_add_coverage_target)
             --filter "${PROJECT_SOURCE_DIR}/reference/"
             --filter "${PROJECT_SOURCE_DIR}/tools/"
             --filter "${PROJECT_SOURCE_DIR}/bench/"
+            --filter "${PROJECT_SOURCE_DIR}/hybrid/"
             --exclude ".*/generated/.*"
             --exclude ".*/test/.*"
             --decisions

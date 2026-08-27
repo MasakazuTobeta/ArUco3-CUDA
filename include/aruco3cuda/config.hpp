@@ -56,6 +56,8 @@ struct DetectorConfig {
     double min_corner_distance_rate_ = 0.05;
     int min_distance_to_border_px_ = 3;
     double min_marker_distance_rate_ = 0.125;
+    /// 同一グループ内で別マーカーとみなす最小距離。cell 1 辺に対する比で表す。
+    double min_group_distance_ = 0.21;
 
     // --- ビット読取りと照合 ---
     int marker_border_bits_ = 1;
@@ -68,6 +70,10 @@ struct DetectorConfig {
     // --- 四隅補正 ---
     CornerRefineMethod corner_refine_method_ = CornerRefineMethod::kSubpix;
     int corner_refinement_win_size_px_ = 5;
+    /// 補正 window をセル 1 辺の何倍にするか。小さいマーカーで window が
+    /// 隣のセルへ食い込まないよう、上限 corner_refinement_win_size_px_ と
+    /// この比から求めた値の小さい方を使う。ArUco3 無効時のみ使用する。
+    double relative_corner_refinement_win_size_ = 0.3;
     int corner_refinement_max_iterations_ = 30;
     double corner_refinement_min_accuracy_px_ = 0.1;
 
