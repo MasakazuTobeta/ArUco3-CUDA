@@ -9,8 +9,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <cstddef>
+#include <fstream>
 #include <map>
 #include <ostream>
 #include <ratio>
@@ -158,8 +158,7 @@ bool detect_image(const std::string& image_path, const ReferenceConfig& config,
     const auto start = std::chrono::steady_clock::now();
     detector.detectMarkers(image, corners, ids, rejected);
     const auto finish = std::chrono::steady_clock::now();
-    result.detect_ms_ =
-            std::chrono::duration<double, std::milli>(finish - start).count();
+    result.detect_ms_ = std::chrono::duration<double, std::milli>(finish - start).count();
     result.rejected_count_ = rejected.size();
 
     result.detections_.reserve(ids.size());
@@ -215,8 +214,7 @@ void write_results_json(std::ostream& out, const ReferenceConfig& config,
     writer.begin_object();
     writer.member_string("opencv_version", environment.opencv_version_);
     writer.member_int("opencv_threads", environment.opencv_threads_);
-    writer.member_bool("opencv_provenance_available",
-                       !environment.opencv_provenance_json_.empty());
+    writer.member_bool("opencv_provenance_available", !environment.opencv_provenance_json_.empty());
     writer.end_object();
 
     writer.key("detector");
@@ -236,8 +234,8 @@ void write_results_json(std::ostream& out, const ReferenceConfig& config,
     writer.member_int("perspectiveRemovePixelPerCell", config.perspective_remove_pixel_per_cell_);
     writer.member_double("perspectiveRemoveIgnoredMarginPerCell",
                          config.perspective_remove_ignored_margin_per_cell_, 6);
-    writer.member_double("maxErroneousBitsInBorderRate",
-                         config.max_erroneous_bits_in_border_rate_, 6);
+    writer.member_double("maxErroneousBitsInBorderRate", config.max_erroneous_bits_in_border_rate_,
+                         6);
     writer.member_double("minOtsuStdDev", config.min_otsu_std_dev_, 6);
     writer.member_double("errorCorrectionRate", config.error_correction_rate_, 6);
     writer.member_bool("useAruco3Detection", config.use_aruco3_detection_);

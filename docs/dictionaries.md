@@ -14,7 +14,7 @@ ArUco3-CUDA が対応する marker Dictionary の互換性、生成方法、デ�
 
 ## 現状
 
-- CUDA detector と Dictionary loader は未実装です。
+- CUDA detector は未実装です。Dictionary の packed table、照合処理、変換 tool は実装済みです。
 - 現在の OpenCV 4.x は `DICT_ARUCO_MIP_36h12` を定義済み Dictionary として収録しています。
 - `DICT_ARUCO_MIP_36h12` は 6x6 bits、250 codes、最小 Hamming 距離 12 です。OpenCV 4.14.0 で実測したところ、`markerSize = 6`、`bytesList` の行数 250、`maxCorrectionBits = 5` でした。
 - OpenCV の `getPredefinedDictionary()` は収録済み codeword を取得します。
@@ -50,6 +50,8 @@ CUDA 側では、正本の codeword から build 時に次を生成します。
 
 Dictionary ごとに、次の自動 test を必須とします。
 
+検証 1 から 5 は `test/reference/test_dictionary_conformance.cpp` として実装済みです。検証 6 は CUDA 実装の追加時に対応します。
+
 1. ID 数、marker size、最大訂正 bit 数が OpenCV 基準と一致する。
 2. 全 ID、全 4 回転の packed codeword が OpenCV の `bytesList` と一致する。
 3. 全 ID の marker image を decode し、元の ID と回転を得られる。
@@ -67,8 +69,8 @@ Dictionary ごとに、次の自動 test を必須とします。
 ## 未確定事項
 
 - 最初の release で `DICT_ARUCO_MIP_36h12` 以外に必須とする Dictionary。
-- codeword を repository に commit するか、build 時に OpenCV から生成するか。
-- OpenCV への runtime dependency を許容するか、生成時 dependency のみにするか。
+- OpenCV から取得した codeword は repository へ commit する方針としました。build 時に生成すると core の build に OpenCV が必要になり、[アーキテクチャ](architecture.md) の「core は OpenCV 型への依存を最小化する」方針と矛盾するためです。生成物と OpenCV の一致は `aruco3cuda_dictgen --check` と自動テストで継続的に検証します。
+- 生成物の整形は行いません。整形すると生成器の出力と byte 単位で一致しなくなり、再生成の検証が成立しないためです。
 - CUDA constant memory と global memory の切替条件。
 - MILP solver による独自 Dictionary 生成を将来 scope に含めるか。
 

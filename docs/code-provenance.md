@@ -62,6 +62,19 @@ script は clone した commit が指定値と一致することを確認し、�
 
 image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を EULA で確認する必要があります。現時点では各機で build する運用を前提とします。
 
+### PR-003: Dictionary packed table の生成
+
+| 項目 | 内容 |
+| --- | --- |
+| Implementation | `tools/dictgen`、`src/dictionary/generated/dict_aruco_mip_36h12.cpp` |
+| Basis | OpenCV の `getPredefinedDictionary()` と `Dictionary::getBitsFromByteList()` の出力 |
+| Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
+| License | Apache-2.0 |
+| Reused expression | codeword data を packed 表現へ変換して格納した。source code の複製はない |
+| Patent review | 未実施 |
+
+生成物には取得元 OpenCV version と再生成手順を header comment として記録しています。公式 ArUco の GPLv3 配布物からは抽出していません。生成物が OpenCV と整合することは `aruco3cuda_dictgen --check` と `test/reference/test_dictionary_conformance.cpp` で継続的に検証します。
+
 ## 目標
 
 - 実装 PR ごとに 1 行以上の記録を追加し、根拠を後から説明できる状態を保つ。

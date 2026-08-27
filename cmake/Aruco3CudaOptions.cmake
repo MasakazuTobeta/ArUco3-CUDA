@@ -63,7 +63,12 @@ function(aruco3cuda_add_format_targets)
   file(GLOB_RECURSE kFormatSources
     "${PROJECT_SOURCE_DIR}/include/*.hpp"
     "${PROJECT_SOURCE_DIR}/src/*.hpp" "${PROJECT_SOURCE_DIR}/src/*.cpp" "${PROJECT_SOURCE_DIR}/src/*.cu"
+    "${PROJECT_SOURCE_DIR}/reference/*.hpp" "${PROJECT_SOURCE_DIR}/reference/*.cpp"
+    "${PROJECT_SOURCE_DIR}/tools/*.hpp" "${PROJECT_SOURCE_DIR}/tools/*.cpp"
     "${PROJECT_SOURCE_DIR}/test/*.cpp" "${PROJECT_SOURCE_DIR}/test/*.cu")
+  # 生成物は整形対象から外す。整形すると生成器の出力と byte 単位で一致しなくなり、
+  # dictgen --check による再生成の検証が成立しなくなる。
+  list(FILTER kFormatSources EXCLUDE REGEX "/generated/")
   add_custom_target(format-check
     COMMAND "${kClangFormat}" --dry-run --Werror ${kFormatSources}
     COMMENT "clang-format による整形差分の確認")

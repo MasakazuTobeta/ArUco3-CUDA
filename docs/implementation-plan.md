@@ -10,7 +10,7 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 
 ## 現状
 
-- WP-0.0、WP-0.1、WP-0.2、WP-0.3 が完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner が動作します。
+- WP-0.0 から WP-0.5 までが完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner、合成 corpus 生成器、Dictionary 変換 tool が動作します。
 - core は build 基盤の疎通確認に必要な最小構成のみです。CUDA 検出器、adapter、benchmark harness、データセットはありません。
 - 開発機は DGX Spark GB10 です。実測値と build baseline の決定案は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) にまとめています。
 - Jetson Orin 実機はこの環境から参照できていません。JetPack version と power mode は未確認です。
@@ -63,11 +63,12 @@ ArUco3-CUDA/
 ├── src/
 │   ├── core/                  作成済み。kernel と host 制御。段階ごとに file を分ける
 │   ├── util/                  作成済み。CUDA にも OpenCV にも依存しない共通処理
+│   ├── dictionary/            作成済み。packed table と照合。generated/ は生成物
 │   ├── dictionary/            packed table と loader
 │   └── adapter/opencv/        cv::Mat / cv::cuda::GpuMat 変換
 ├── tools/
-│   ├── dictgen/               OpenCV から packed codeword を生成する build 時 tool
-│   ├── corpusgen/             ground truth 付き合成画像生成器
+│   ├── dictgen/               作成済み。OpenCV から packed codeword を生成する
+│   ├── corpusgen/             作成済み。ground truth 付き合成画像生成器
 │   └── report/                差異分類と集計 script
 ├── reference/                 作成済み。OpenCV CPU 基準 runner
 ├── bench/                     測定 harness
@@ -94,8 +95,8 @@ ArUco3-CUDA/
 | WP-0.1 | CMake project、C++17、`sm_87` と `sm_121`、warning、`clang-format`、静的解析、`ctest` 骨格 | `CMakeLists.txt`、`CMakePresets.json`、`cmake/**`、`.clang-format`、`.clang-tidy` | 空 library と smoke test が両 architecture 向けに build でき `ctest` が通る。達成済み | WP-0.0 | M |
 | WP-0.2 | OpenCV 4.14.0 の commit 固定 build と provenance 記録 | `docker/scripts/build-opencv.sh`、image 内 provenance JSON | 再現可能に build でき、version と commit が環境情報 JSON へ出力される | WP-0.0 | S |
 | WP-0.3 | CPU 基準 runner | `reference/**`、`aruco3cuda_reference_runner` | 同一入力に対し決定的な ID と四隅、および環境情報を保存できる。達成済み | WP-0.2 | M |
-| WP-0.4 | 合成 corpus 生成器 | `tools/corpusgen`、manifest | seed 固定で再生成でき、四隅の ground truth を持つ corpus が得られる | WP-0.2 | M |
-| WP-0.5 | Dictionary 変換 tool と互換テスト | `tools/dictgen`、packed table、provenance 記録 | [Dictionary 方針](dictionaries.md) の検証 1 から 5 が自動テストで通る | WP-0.2 | M |
+| WP-0.4 | 合成 corpus 生成器 | `tools/corpusgen`、manifest | seed 固定で再生成でき、四隅の ground truth を持つ corpus が得られる。達成済み | WP-0.2 | M |
+| WP-0.5 | Dictionary 変換 tool と互換テスト | `tools/dictgen`、`src/dictionary`、生成 table | [Dictionary 方針](dictionaries.md) の検証 1 から 5 が自動テストで通る。達成済み | WP-0.2 | M |
 | WP-0.6 | benchmark harness 骨格 | 環境収集、CUDA event、JSONL 出力、集計 script | CPU 経路の p50・p95・p99 と環境情報を機械可読形式で保存できる | WP-0.3、WP-0.0 | M |
 | WP-0.7 | Jetson Orin profile の実機検証 | `docker/.env` の既定値確定、[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の更新 | Jetson 実機で image が build でき、環境検査が合格し、CUDA Toolkit の最低 version が確定する | B2、WP-0.0 | M |
 
@@ -122,6 +123,20 @@ WP-0.3 の検証結果は次のとおりです。
 | `ctest` | 35 件全て合格。Compute Sanitizer を含めて 39 件 |
 
 `rotation` は OpenCV の `detectMarkers` が独立した値として返さないため、出力へ含めていません。marker rotation は四隅の並び順として表現されるため、比較は四隅の順序で行います。
+
+WP-0.4 と WP-0.5 の検証結果は次のとおりです。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| corpus の決定性 | 同じ seed から manifest と画像 checksum が一致 |
+| ground truth の妥当性 | CPU 基準実装の検出結果と四隅が 1.5 pixel 以内で一致 |
+| Dictionary 適合性 | 250 ID 全 4 回転の codeword が OpenCV の `bytesList` と一致 |
+| Dictionary 訂正境界 | bit 反転に対する accept / reject が OpenCV の `identify()` と一致 |
+| 最小 Hamming 距離 | 再計算値 12。公称値と一致 |
+| 生成物の再現性 | `dictgen --check` が既存 file と byte 単位で一致 |
+| `ctest` | 61 件全て合格。Compute Sanitizer を含めて 65 件 |
+
+ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく `S + L * tau_i` で決まります。`S` は `minSideLengthCanonicalImg`、`L` は画像の長辺です。1280x720、`S = 32`、`tau_i = 0.05` の場合は 96 pixel が下限であり、実測では 96 pixel は検出されず 128 pixel は検出されました。corpus の manifest は各マーカーの `side_ratio` を記録し、どの `tau_i` で検出対象になるかを後から判断できるようにしています。
 
 #### Phase 1: ハイブリッド最小成立版
 
