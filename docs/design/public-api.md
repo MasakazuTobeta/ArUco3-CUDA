@@ -10,7 +10,9 @@ CUDA 検出器の公開 API の型、所有権、同期動作、エラー通知�
 
 ## 現状
 
-実装は存在しません。本書は草案であり、Phase 1 の実装で確定させます。既定値は OpenCV 4.x の `DetectorParameters` の観測仕様に合わせています。
+`Status`、`MemorySpace`、`ImageViewU8`、`CornerRefineMethod`、`DetectorConfig` と、それぞれの境界検証は実装済みです。`Dictionary` は `include/aruco3cuda/dictionary.hpp` として実装済みです。`DeviceDetections`、`HostDetections`、`Detector` は未実装であり、本書の該当箇所は草案です。
+
+既定値は OpenCV 4.x の `DetectorParameters` の観測仕様に合わせています。ArUco3 検出戦略に関わる 2 項目のみ、評価目的に合わせて既定を変えています。OpenCV と同じ既定値が必要な場合は `DetectorConfig::opencv_defaults()` を使います。
 
 ## 目標
 
@@ -26,13 +28,16 @@ CUDA 検出器の公開 API の型、所有権、同期動作、エラー通知�
 
 ```
 include/aruco3cuda/
-  types.hpp        // ImageViewU8、Status、MemorySpace
-  config.hpp       // DetectorConfig
-  dictionary.hpp   // Dictionary、DictionaryId
-  detections.hpp   // DeviceDetections、HostDetections
-  detector.hpp     // Detector
+  status.hpp       // Status、last_cuda_error_message      実装済み
+  version.hpp      // version 情報                          実装済み
+  types.hpp        // MemorySpace、ImageViewU8、境界検証     実装済み
+  config.hpp       // CornerRefineMethod、DetectorConfig    実装済み
+  dictionary.hpp   // DictionaryTable、照合                  実装済み
+  device_probe.hpp // device の性質取得                      実装済み
+  detections.hpp   // DeviceDetections、HostDetections       未実装
+  detector.hpp     // Detector                               未実装
 include/aruco3cuda/opencv/
-  adapter.hpp      // cv::Mat / cv::cuda::GpuMat との変換
+  adapter.hpp      // cv::Mat / cv::cuda::GpuMat との変換    未実装
 ```
 
 ### 基本型
@@ -271,10 +276,23 @@ if (detector.download(result, stream) != aruco3cuda::Status::kOk) { /* ... */ }
 - overflow を戻り値と結果 flag の両方で通知し、無言の切り捨てを行いません。
 - `Impl` を pimpl とし、公開 header が CUDA 固有型へ依存する範囲を `cudaStream_t` と `float2` に限定します。
 
+## 決定した事項
+
+### 公開 aggregate の field にも末尾 `_` を付ける
+
+`CONTRIBUTING.md` の命名規則をそのまま適用します。既に `DeviceProbeResult`、`DictionaryTable`、`ReferenceConfig`、`SceneSpec`、`BenchmarkConfig` が同じ規則で実装されており、公開 aggregate だけ規則を変えると、同じ repository 内で 2 つの規則が混在します。呼出側の記述はやや冗長になりますが、規則が 1 つである利点を優先します。
+
+### 検証は Status を返し、理由は任意の out 引数で受け取る
+
+`validate_image_view()` と `DetectorConfig::validate()` は `Status` を返し、失敗理由は `std::string*` へ格納します。`nullptr` を渡してよく、その場合は文字列を組み立てません。検証は毎フレーム呼ばれ得るため、成功経路で確保を発生させない構造にしています。
+
+### 画像の失敗に専用の Status を割り当てる
+
+`kInvalidImage` を `kInvalidArgument` と別に設けます。画像 view の不正は呼出側の入力経路の問題であり、設定や index の誤りとは対処が異なります。
+
 ## 未確定事項
 
-- 公開 aggregate である `DetectorConfig` と `ImageViewU8` の field へ末尾 `_` を付ける現在の案は、`CONTRIBUTING.md` の命名規則に従う一方で呼出側の可読性を下げます。規則の適用範囲を class の保持 member に限定するかを決める必要があります。
-- `float2` を公開 header で使用するか、独自の `Point2f` 相当を定義するか。
+- `float2` を公開 header で使用するか、独自の `Point2f` 相当を定義するか。`DeviceDetections` の実装時に決めます。
 - `download()` 以外に、部分結果だけを取得する API を用意するか。
 - 複数 Dictionary の同時照合を初期 scope に含めるか。
 - OpenCV adapter を同一 library に含めるか別 target にするか。[アーキテクチャ](../architecture.md) の未確定事項と同じ。

@@ -15,14 +15,22 @@
 """
 import re, sys, pathlib
 
-HEADERS = [
-    "include/aruco3cuda/status.hpp", "include/aruco3cuda/version.hpp",
-    "include/aruco3cuda/device_probe.hpp", "include/aruco3cuda/dictionary.hpp",
-    "include/aruco3cuda/util/sha256.hpp", "include/aruco3cuda/util/json_writer.hpp",
-    "include/aruco3cuda/util/statistics.hpp",
-    "reference/reference_runner.hpp", "tools/corpusgen/corpus_generator.hpp",
-    "bench/benchmark_harness.hpp", "src/core/cuda_check.hpp",
-]
+# 対象は自動で探索する。一覧を手で保つと、新しい header を追加したときに
+# 検査から漏れ、欠落があっても合格に見えてしまう。
+HEADER_ROOTS = ["include", "reference", "tools", "bench", "src"]
+
+
+def discover_headers():
+    found = []
+    for root in HEADER_ROOTS:
+        for path in sorted(pathlib.Path(root).rglob("*.hpp")):
+            if "generated" in path.parts or "build" in path.parts:
+                continue
+            found.append(str(path))
+    return found
+
+
+HEADERS = discover_headers()
 
 DECL = re.compile(r'^\s{0,4}(?:(?:const\s+)?[\w:]+[\w:<>,\s*&]*?)\s(\w+)\s*\(([^;{]*)\)\s*(?:const)?\s*[;{]')
 CLASS = re.compile(r'^\s*(?:class|struct)\s+(\w+)\s*(?:final)?\s*[{:]')
@@ -124,6 +132,7 @@ for path in HEADERS:
         if "出力例" not in doc: missing.append("出力例")
         if missing: problems.append((path, i + 1, name, missing))
 
+print(f"検査対象 {len(HEADERS)} header")
 cur = None
 for path, line, name, missing in problems:
     if path != cur:

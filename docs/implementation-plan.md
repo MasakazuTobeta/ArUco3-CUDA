@@ -192,9 +192,11 @@ ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく 
 
 #### Phase 1: ハイブリッド最小成立版
 
+WP-1.1 では [公開 API 草案](design/public-api.md) の未確定事項を 3 件解決しました。公開 aggregate の field にも末尾 `_` を付けること、検証は `Status` を返し理由を任意の out 引数で受け取ること、画像の失敗に `kInvalidImage` を割り当てることです。
+
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
-| WP-1.1 | 公開型、設定、`validate()` | `include/aruco3cuda/**` | 設定の矛盾と不正な画像 view を境界で拒否するテストが通る | WP-0.1 | S |
+| WP-1.1 | 公開型、設定、`validate()` | `include/aruco3cuda/{types,config}.hpp`、`src/core/{types,config}.cpp` | 設定の矛盾と不正な画像 view を境界で拒否するテストが通る。達成済み | WP-0.1 | S |
 | WP-1.2 | workspace 所有と再確保統計 | `src/core` の allocator | フレームごとの確保が発生しないことをテストで確認できる | WP-1.1 | M |
 | WP-1.3 | S1 pyramid と S2 segmentation の kernel | `src/core` | OpenCV の縮小結果との差が定めた許容内に収まる | WP-1.2 | M |
 | WP-1.4 | S3 適応的二値化 kernel | `src/core` | 3 通りの window size で CPU 基準の二値化と一致率が許容内 | WP-1.3 | M |
