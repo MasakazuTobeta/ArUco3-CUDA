@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <sstream>
 #include <string>
+
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -34,7 +36,12 @@ protected:
         dictionary.generateImageMarker(17, 160, marker, 1);
         cv::Mat scene(480, 640, CV_8UC1, cv::Scalar(230));
         marker.copyTo(scene(cv::Rect(200, 150, 160, 160)));
-        this->image_path_ = "/tmp/aruco3cuda_bench_test.png";
+        // 画像の path を test ごとに分ける。ctest -j で同時に走る他の test の
+        // TearDown に消されないようにする。
+        const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        this->image_path_ = std::string("/tmp/aruco3cuda_bench_test_") +
+                            (info != nullptr ? info->name() : "unknown") + "_" +
+                            std::to_string(static_cast<long>(::getpid())) + ".png";
         ASSERT_TRUE(cv::imwrite(this->image_path_, scene));
 
         // test を短時間で終えるため回数を絞る。既定値の妥当性は別途評価する。

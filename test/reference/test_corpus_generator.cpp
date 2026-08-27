@@ -19,6 +19,8 @@
 #include <system_error>
 #include <vector>
 
+#include <unistd.h>
+
 #include "reference_runner.hpp"
 
 namespace {
@@ -30,7 +32,12 @@ using aruco3cuda::corpusgen::SceneSpec;
 class CorpusGeneratorTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        this->config_.output_dir_ = "/tmp/aruco3cuda_corpus_test";
+        // 出力先を test ごとに分ける。ctest -j で複数の test が同時に走ると、
+        // 共有 directory では他の test の TearDown に消される。
+        const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        this->config_.output_dir_ = std::string("/tmp/aruco3cuda_corpus_test_") +
+                                    (info != nullptr ? info->name() : "unknown") + "_" +
+                                    std::to_string(static_cast<long>(::getpid()));
         this->config_.seed_ = 12345U;
     }
     void TearDown() override {
