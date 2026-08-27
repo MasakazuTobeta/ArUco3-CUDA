@@ -36,7 +36,7 @@ flowchart TD
 
 ## 開発環境
 
-DGX Spark と Jetson Orin で同じ手順を使うため、開発は container 上で行います。CUDA Toolkit は image へ含めず、host から read-only で bind mount します。
+DGX Spark と Jetson Orin で同じ手順を使うため、開発は container 上で行います。測定に使用した compiler を image と一体にするため、CUDA Toolkit のうち本 project が使用する package のみを image へ固定します。
 
 ```bash
 cp docker/.env.example docker/.env

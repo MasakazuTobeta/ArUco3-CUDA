@@ -49,6 +49,19 @@ build option は `BUILD_LIST=core,imgproc,imgcodecs,calib3d,objdetect`、`WITH_C
 
 script は clone した commit が指定値と一致することを確認し、不一致の場合は build を中止します。
 
+### PR-002: 開発 container への CUDA Toolkit 組み込み
+
+| 項目 | 内容 |
+| --- | --- |
+| Implementation | `docker/scripts/install-cuda-toolkit.sh` |
+| Basis | NVIDIA が配布する CUDA Toolkit の apt package。改変なし |
+| Source version | `cuda-nvcc-13-0` 13.0.88-1 ほか。実際の version は image 内 `/opt/aruco3cuda/cuda-provenance.json` に記録 |
+| License | NVIDIA CUDA Toolkit EULA |
+| Reused expression | なし。再配布せず、image build 時に NVIDIA の repository から取得する |
+| Patent review | 未実施 |
+
+image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を EULA で確認する必要があります。現時点では各機で build する運用を前提とします。
+
 ## 目標
 
 - 実装 PR ごとに 1 行以上の記録を追加し、根拠を後から説明できる状態を保つ。
