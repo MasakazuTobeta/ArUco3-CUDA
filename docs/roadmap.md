@@ -25,12 +25,13 @@ flowchart TD
 
 ### Phase 0: 仕様と基準
 
+- DGX Spark と Jetson Orin で共通に使用する開発 container を用意する。
 - API、Dictionary、検出設定の初期範囲を決める。
 - OpenCV CPU 基準 runner と test corpus を作る。
 - build、format、lint、unit test、benchmark の Skeleton を作る。
 - Apache License 2.0 の適用範囲と第三者 notice の管理方法を確認する。
 
-完了条件: 同一入力に対する CPU 基準結果と環境情報を保存できる。
+完了条件: 両 profile の container 内で build とテストが通り、同一入力に対する CPU 基準結果と環境情報を保存できる。
 
 ### Phase 1: 最小成立版
 
@@ -79,3 +80,8 @@ flowchart TD
 - Phase 1 のハイブリッド構成が十分な検証価値を持つか。
 - OpenCV 側の希望 module と API。
 - 対応 Dictionary の拡張順序。
+
+## 関連
+
+- [実装計画](implementation-plan.md)
+- [Docker 環境設計](design/docker-environment.md)

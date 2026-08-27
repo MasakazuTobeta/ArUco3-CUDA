@@ -23,6 +23,17 @@ DGX Spark GB10、Jetson Orin、OpenCV ArUco3 CPU 実装、開発する CUDA 実�
 | CUDA-Resident | device 入力 CUDA | GPU 常駐画像から device 結果まで |
 | Hybrid | CUDA + CPU | 各段階と同期を個別計測 |
 
+DGX Spark GB10 は `integrated` を 1 と報告し、host と device が同一物理 memory を共有します。Jetson Orin も同じ構成です。このため `CUDA-E2E` と `CUDA-Resident` の差は discrete GPU より小さくなることが見込まれます。上記の経路に加えて、入力 buffer の memory 種別を独立した測定軸として記録します。
+
+| 記号 | memory 種別 | 備考 |
+| --- | --- | --- |
+| M-Pageable | pageable host memory | 最も一般的な呼び出し方 |
+| M-Pinned | page-locked host memory | 明示的な copy あり |
+| M-Managed | managed memory | 明示的な copy なし。同期と cache の費用は残る |
+| M-Device | device 常駐 | 上流処理が GPU 上にある場合 |
+
+得られた crossover point は統合 GPU 環境の結果であり、discrete GPU へ一般化できません。benchmark report へこの制約を明記します。
+
 ### 入力条件
 
 - 解像度: 640x480、1280x720、1920x1080、3840x2160
@@ -55,11 +66,12 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 ### 測定手順
 
 1. hardware、OS、CUDA、driver、compiler、OpenCV、power mode、clock を記録する。
-2. 同じ入力と detector parameters を固定する。
+2. 同じ入力と detector parameters を固定する。ArUco3 検出戦略の設定は、縮小率 `fxfy` の実効値も併せて記録する。`minMarkerLengthRatioOriginalImg` の既定値は 0.0 であり、この場合 `useAruco3Detection` を有効にしても縮小は発生しない。
 3. 初期化と memory allocation を測定区間から分離する。
 4. warm-up 後に十分な回数を測定する。
 5. 外れ値を削除せず、集計方法と全分布を保存する。
 6. CPU が速い条件を含め、crossover point を求める。
+7. CPU 基準の測定値が桁違いに外れていないかを確認する。OpenCV Issue #27118 の報告者は環境と設定が不明な参考値として 640x480 で約 50 ms、1920x1080 で約 150 ms を挙げている。これは合格基準ではなく、測定条件を疑うための sanity check として扱う。
 
 ### 合格条件
 
@@ -86,3 +98,10 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 - CPU thread 数を固定するか、各環境の既定値を使用するか。
 - 実画像データセットの入手・配布条件。
 - 許容する四隅座標誤差と性能改善率の数値基準。
+
+## 関連
+
+- [実装計画](implementation-plan.md)
+- [検出パイプライン設計](design/detector-pipeline.md)
+- [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
+- [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118)

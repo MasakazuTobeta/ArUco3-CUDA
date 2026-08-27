@@ -16,6 +16,7 @@ OpenCV の ArUco3 検出戦略と比較可能な CUDA 実装を独立リポジ�
 - DGX Spark GB10 と Jetson Orin
 - OpenCV CPU 実装との正確性・性能比較
 - GPU 常駐入力、転送込み入力、ハイブリッド処理の比較
+- DGX Spark と Jetson Orin で共通に使用する開発 container 環境
 
 ### 初期対象外
 
@@ -30,6 +31,7 @@ OpenCV の ArUco3 検出戦略と比較可能な CUDA 実装を独立リポジ�
 
 - リポジトリと初期文書を準備した段階です。
 - CUDA 検出器、build system、テスト、データセットは未実装です。
+- 開発 container 環境の設計と script は作成済みです。詳細は [Docker 環境設計](design/docker-environment.md) を参照してください。
 - OpenCV の ArUco 検出には、公式の CUDA API がありません。
 - CPU、CUDA、ハイブリッドのどれが最適かは入力条件に依存するため、測定前には決定しません。
 
@@ -73,3 +75,9 @@ OpenCV の ArUco3 検出戦略と比較可能な CUDA 実装を独立リポジ�
 - public API で OpenCV の型に依存するか、独自の軽量型を正本とするか。
 - CUDA Toolkit と CMake の最低 version。
 - 精度比較に使用する公開データセットと独自撮影データの構成。
+
+## 関連
+
+- [実装計画](implementation-plan.md)
+- [検出パイプライン設計](design/detector-pipeline.md)
+- [Docker 環境設計](design/docker-environment.md)

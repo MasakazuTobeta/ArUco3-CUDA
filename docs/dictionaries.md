@@ -16,7 +16,7 @@ ArUco3-CUDA が対応する marker Dictionary の互換性、生成方法、デ�
 
 - CUDA detector と Dictionary loader は未実装です。
 - 現在の OpenCV 4.x は `DICT_ARUCO_MIP_36h12` を定義済み Dictionary として収録しています。
-- `DICT_ARUCO_MIP_36h12` は 6x6 bits、250 codes、最小 Hamming 距離 12 です。
+- `DICT_ARUCO_MIP_36h12` は 6x6 bits、250 codes、最小 Hamming 距離 12 です。OpenCV 4.14.0 で実測したところ、`markerSize = 6`、`bytesList` の行数 250、`maxCorrectionBits = 5` でした。
 - OpenCV の `getPredefinedDictionary()` は収録済み codeword を取得します。
 - `Dictionary::generateImageMarker()` は取得した Dictionary の指定 ID を画像化します。
 - `extendDictionary()` は custom Dictionary を生成できますが、MILP で生成された既定の `DICT_ARUCO_MIP_36h12` と同じ codeword 集合を再現する API ではありません。
@@ -75,6 +75,8 @@ Dictionary ごとに、次の自動 test を必須とします。
 ## 関連
 
 - [知的財産・ライセンス方針](ip-and-licensing.md)
+- [実装計画](implementation-plan.md)
+- [Docker 環境設計](design/docker-environment.md)
 - [OpenCV Dictionary API](https://docs.opencv.org/4.x/d5/d0b/classcv_1_1aruco_1_1Dictionary.html)
 - [OpenCV predefined dictionaries](https://github.com/opencv/opencv/blob/4.x/modules/objdetect/src/aruco/predefined_dictionaries.hpp)
 - [Generation of fiducial marker dictionaries using Mixed Integer Linear Programming](https://doi.org/10.1016/j.patcog.2015.09.023)

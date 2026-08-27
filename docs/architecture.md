@@ -66,7 +66,7 @@ flowchart TD
 
 ### Hardware portability
 
-- Jetson Orin は `sm_87`、DGX Spark GB10 は `sm_120` として別々に build する。
+- Jetson Orin は `sm_87`、DGX Spark GB10 は `sm_121` として別々に build する。実機の Compute Capability は 12.1 です。詳細は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) を参照してください。
 - algorithm とデータ表現は共通化する。
 - Blackwell 固有機能は compile-time option または局所化した kernel specialization とする。
 - common path を基準とし、機種固有経路には同じ正確性テストを適用する。
@@ -85,3 +85,10 @@ flowchart TD
 - result compaction に prefix sum、atomic counter、二段階収集のどれを使用するか。
 - Dictionary を constant memory、global memory、texture のどこに配置するか。
 - OpenCV adapter を同一 library に含めるか別 target にするか。
+
+## 関連
+
+- [検出パイプライン設計](design/detector-pipeline.md)
+- [公開 API 草案](design/public-api.md)
+- [実装計画](implementation-plan.md)
+- [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
