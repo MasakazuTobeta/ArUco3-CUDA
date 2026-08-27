@@ -13,6 +13,7 @@ add_library(aruco3cuda_core
   labeling.cu
   quad_extract.cu
   candidate_filter.cu
+  candidate_group.cu
   cuda_check.cpp
   device_probe.cu)
 
