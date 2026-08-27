@@ -39,7 +39,7 @@ flowchart TD
 - CUDA 前処理と簡易候補生成を実装する。
 - CPU decode を使用したハイブリッド経路で正確性を確認する。
 
-完了条件: 合成画像の基本条件で ID と四隅を取得できる。
+完了条件: 合成画像の基本条件で ID と四隅を取得できる。達成済み。
 
 ### Phase 2: GPU 候補抽出
 
@@ -47,7 +47,7 @@ flowchart TD
 - 四角形候補の生成、整理、上限管理を GPU 内で行う。
 - 可変長出力と overflow を検証する。
 
-完了条件: 候補抽出まで GPU 常駐し、CPU 基準との差異を分類できる。
+完了条件: 候補抽出まで GPU 常駐し、CPU 基準との差異を分類できる。達成済み。主案の選択は [ADR-0003](adr/0003-candidate-extraction-approach.md) に記録した。
 
 ### Phase 3: GPU decode
 
