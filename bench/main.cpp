@@ -10,6 +10,7 @@
 #include <string>
 #include <fstream>
 #include <iostream>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,8 @@ void print_usage(std::ostream& out) {
         << "  --latency-iterations <n>       遅延測定の回数。既定 200\n"
         << "  --throughput-frames <n>        throughput 測定のフレーム数。0 で無効。既定 100\n"
         << "  --save-samples                 全標本を結果へ含める\n"
+        << "  --cpu-list <n[,n...]>          測定に使う CPU 番号。性能 core と効率 core が\n"
+        << "                                 混在する機では固定しないと値が二極化する\n"
         << "  --dictionary <name>            既定 DICT_ARUCO_MIP_36h12\n"
         << "  --threads <n>                  OpenCV の thread 数。既定 1\n"
         << "  --use-aruco3 <0|1>             既定 1\n"
@@ -56,6 +59,34 @@ bool parse_route(const std::string& name, Route* out) {
         return true;
     }
     return false;
+}
+
+/// カンマ区切りの CPU 番号一覧を解析する。
+///
+/// @param text 例: "5,6,7"。空白は許さない。
+/// @param out 成功時に CPU 番号を格納する。
+/// @return 全ての要素が非負整数なら true。
+bool parse_cpu_list(const std::string& text, std::vector<int>* out) {
+    out->clear();
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t end = text.find(',', begin);
+        const std::string token =
+                text.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+        if (token.empty() || token.find_first_not_of("0123456789") != std::string::npos) {
+            return false;
+        }
+        try {
+            out->push_back(std::stoi(token));
+        } catch (const std::exception&) {
+            return false;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1;
+    }
+    return !out->empty();
 }
 
 /// 解析した整数が指定範囲にあることを確認する。
@@ -120,6 +151,12 @@ int main(int argc, char** argv) {
                     return EXIT_FAILURE;
                 }
                 config.throughput_frames_ = parsed;
+            } else if (option == "--cpu-list") {
+                if (!parse_cpu_list(value, &config.cpu_affinity_)) {
+                    std::cerr << "--cpu-list は カンマ区切りの非負整数である必要がある: " << value
+                              << '\n';
+                    return EXIT_FAILURE;
+                }
             } else if (option == "--dictionary") {
                 config.detector_.dictionary_name_ = value;
             } else if (option == "--threads") {

@@ -140,10 +140,18 @@ aruco3cuda_add_cli_test(cli.bench.detector_options aruco3cuda_bench_cli FALSE
   --min-marker-length-ratio 0.1 --min-side-length-canonical 48
   --warmup 0 --latency-iterations 1 --input /nonexistent/image.png)
 
+# CPU 親和性。性能 core と効率 core が混在する機では固定しないと値が二極化する。
+aruco3cuda_add_cli_test(cli.bench.invalid_cpu_list aruco3cuda_bench_cli FALSE
+  --cpu-list 0,abc --warmup 0 --latency-iterations 1 --input /x.png)
+aruco3cuda_add_cli_test(cli.bench.empty_cpu_list aruco3cuda_bench_cli FALSE
+  --cpu-list "" --warmup 0 --latency-iterations 1 --input /x.png)
+aruco3cuda_add_cli_test(cli.bench.negative_cpu_list aruco3cuda_bench_cli FALSE
+  --cpu-list -1 --warmup 0 --latency-iterations 1 --input /x.png)
+
 add_test(NAME cli.bench.measure
   COMMAND $<TARGET_FILE:aruco3cuda_bench_cli>
           --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png"
-          --warmup 1 --latency-iterations 3 --throughput-frames 2 --save-samples
+          --warmup 1 --latency-iterations 3 --throughput-frames 2 --save-samples --cpu-list 0
           --output "${CMAKE_CURRENT_BINARY_DIR}/cli-bench.jsonl")
 set_tests_properties(cli.bench.measure PROPERTIES FIXTURES_REQUIRED cli_corpus TIMEOUT 300)
 

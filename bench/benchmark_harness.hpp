@@ -73,6 +73,13 @@ struct BenchmarkConfig {
     /// 全標本を結果へ含めるか。分布を保存する必要がある場合に使用する。
     bool save_all_samples_ = false;
 
+    /// 測定に使用する CPU 番号の一覧。空なら OS の割り当てに任せる。
+    ///
+    /// DGX Spark GB10 のように性能 core と効率 core が混在する機では、
+    /// 割り当て先の core 種別で CPU 基準値が 1.6 倍変わる。core を固定しないと
+    /// 測定値が実行ごとに二極化し、crossover point の判断を誤る。
+    std::vector<int> cpu_affinity_;
+
     aruco3cuda::reference::ReferenceConfig detector_;
 };
 
@@ -120,6 +127,17 @@ struct EnvironmentRecord {
     std::string platform_model_;
     /// 電力モード。評価計画が測定条件として記録を要求する。
     std::string power_mode_;
+    /// CPU の core 構成。性能 core と効率 core が混在する機では、
+    /// どの種別で測ったかが分からないと測定値を比較できない。
+    std::string cpu_topology_;
+    /// 実際に使用した CPU 番号。固定しなかった場合は "unpinned"。
+    std::string cpu_affinity_;
+    /// address space 配置の無作為化 (ASLR) の状態。
+    ///
+    /// 全解像度の CPU 経路では、ASLR による memory 配置の違いだけで
+    /// p50 が 9% 変動する。無効化すると実行間で完全に一致する。
+    /// どちらで測ったかが分からないと測定値を比較できない。
+    std::string address_randomization_;
     /// GPU の最大 clock (MHz)。取得できない場合は 0 ではなく未設定とする。
     bool gpu_clock_available_ = false;
     int gpu_max_clock_mhz_ = 0;

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "benchmark_harness.hpp"
 
+#include <sched.h>  // sched_setaffinity は POSIX 拡張であり標準 header に無い
+#include <sys/personality.h>  // ASLR の状態確認。標準 header には無い
 #include <stdio.h>  // popen と pclose は POSIX であり <cstdio> の std 名前空間に無い
 #include <sys/utsname.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -16,6 +19,7 @@
 #include <ostream>
 #include <ratio>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "aruco3cuda/device_probe.hpp"
@@ -136,6 +140,115 @@ std::string field_or_empty(const std::map<std::string, std::string>& info,
     return entry == info.end() ? std::string() : entry->second;
 }
 
+/// /proc/cpuinfo から core 種別ごとの CPU 番号をまとめた文字列を作る。
+///
+/// 性能 core と効率 core が混在する機では、どの種別で測ったかが分からないと
+/// 測定値を比較できない。marketing 名は既知のものだけ補い、未知の実装 ID は
+/// そのまま記録する。推測で名前を付けない。
+std::string read_cpu_topology() {
+    static const std::map<std::string, std::string> kKnownParts = {
+            {"0xd85", "Cortex-X925"}, {"0xd87", "Cortex-A725"}, {"0xd8e", "Cortex-A720"},
+            {"0xd41", "Cortex-A78AE"}, {"0xd42", "Cortex-A78AE"},
+    };
+    std::ifstream info("/proc/cpuinfo");
+    if (!info) {
+        return std::string();
+    }
+    // 出現順を保つため vector で持つ。core 種別は数種類しかない。
+    std::vector<std::pair<std::string, std::vector<int>>> groups;
+    std::string line;
+    int processor = -1;
+    while (std::getline(info, line)) {
+        const std::size_t separator = line.find(':');
+        if (separator == std::string::npos) {
+            continue;
+        }
+        std::string key = line.substr(0, separator);
+        std::string value = line.substr(separator + 1);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) {
+            key.pop_back();
+        }
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+            value.erase(value.begin());
+        }
+        if (key == "processor") {
+            try {
+                processor = std::stoi(value);
+            } catch (const std::exception&) {
+                processor = -1;
+            }
+        } else if (key == "CPU part" && processor >= 0) {
+            const auto known = kKnownParts.find(value);
+            const std::string name = (known == kKnownParts.end()) ? value : known->second;
+            auto entry = std::find_if(groups.begin(), groups.end(),
+                                      [&name](const auto& g) { return g.first == name; });
+            if (entry == groups.end()) {
+                groups.emplace_back(name, std::vector<int>{processor});
+            } else {
+                entry->second.push_back(processor);
+            }
+        }
+    }
+    std::string result;
+    for (const auto& group : groups) {
+        if (!result.empty()) {
+            result += ", ";
+        }
+        result += group.first + " x" + std::to_string(group.second.size());
+    }
+    return result;
+}
+
+/// 測定に使用する CPU を固定する。
+///
+/// @return 固定できた場合は使用した CPU 番号の文字列。固定しない場合は "unpinned"。
+///         失敗した場合は理由を含む文字列を返し、測定自体は継続する。
+std::string apply_cpu_affinity(const std::vector<int>& cpu_list) {
+    if (cpu_list.empty()) {
+        return "unpinned";
+    }
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    std::string names;
+    for (const int cpu : cpu_list) {
+        if (cpu < 0 || cpu >= CPU_SETSIZE) {
+            return "invalid-cpu-" + std::to_string(cpu);
+        }
+        CPU_SET(cpu, &mask);
+        if (!names.empty()) {
+            names += ",";
+        }
+        names += std::to_string(cpu);
+    }
+    if (sched_setaffinity(0, sizeof(mask), &mask) != 0) {
+        return "affinity-failed:" + names;
+    }
+    return names;
+}
+
+/// ASLR の状態を調べる。
+///
+/// process 自身の personality と system 設定の両方を見る。setarch -R などで
+/// process 単位に無効化されている場合、system 設定だけでは判別できない。
+///
+/// @return "disabled(process)"、"disabled(system)"、"enabled"、
+///         または判別できない場合は空文字列。
+std::string read_address_randomization() {
+    const int persona = personality(0xffffffffU);
+    if (persona >= 0 && (static_cast<unsigned int>(persona) & ADDR_NO_RANDOMIZE) != 0U) {
+        return "disabled(process)";
+    }
+    std::ifstream setting("/proc/sys/kernel/randomize_va_space");
+    if (!setting) {
+        return std::string();
+    }
+    std::string value;
+    if (!(setting >> value)) {
+        return std::string();
+    }
+    return value == "0" ? "disabled(system)" : "enabled";
+}
+
 std::string read_os_pretty_name() {
     std::ifstream release("/etc/os-release");
     if (!release) {
@@ -215,6 +328,10 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
         environment.architecture_ = system_info.machine;
     }
     environment.os_ = read_os_pretty_name();
+    environment.cpu_topology_ = read_cpu_topology();
+    // 測定前に CPU を固定する。以降の測定はこの core 集合で行われる。
+    environment.cpu_affinity_ = apply_cpu_affinity(config.cpu_affinity_);
+    environment.address_randomization_ = read_address_randomization();
     // sysconf は失敗時に -1 を返す。core 数として -1 を記録すると
     // 測定条件の解釈を誤るため、取得できない場合は 0 のままとする。
     const long online_cores = sysconf(_SC_NPROCESSORS_ONLN);
@@ -371,12 +488,17 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     JsonWriter writer(out, 0);
     writer.begin_object();
     writer.member_string("type", "environment");
-    writer.member_int("schema_version", 1);
+    // version 2: cpu_topology、cpu_affinity、address_randomization、
+    // gpu clock、platform 情報を追加した。測定条件の再現に必要なため。
+    writer.member_int("schema_version", 2);
     writer.member_string("hostname", environment.hostname_);
     writer.member_string("os", environment.os_);
     writer.member_string("kernel", environment.kernel_);
     writer.member_string("architecture", environment.architecture_);
     writer.member_int("cpu_online_cores", environment.cpu_online_cores_);
+    writer.member_string("cpu_topology", environment.cpu_topology_);
+    writer.member_string("cpu_affinity", environment.cpu_affinity_);
+    writer.member_string("address_randomization", environment.address_randomization_);
     writer.member_string("opencv_version", environment.opencv_version_);
     writer.member_int("opencv_threads", environment.opencv_threads_);
     writer.member_string("cuda_toolkit", environment.cuda_toolkit_version_);
@@ -412,7 +534,7 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
     JsonWriter writer(out, 0);
     writer.begin_object();
     writer.member_string("type", "measurement");
-    writer.member_int("schema_version", 1);
+    writer.member_int("schema_version", 2);
     writer.member_string("route", to_string(config.route_));
     writer.member_string("memory_mode", to_string(config.memory_mode_));
     writer.member_string("image_path", record.image_path_);

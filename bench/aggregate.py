@@ -89,6 +89,9 @@ def format_environment(environment):
         f" cuda={environment.get('cuda_toolkit') or '-'}\n"
         f"  model={environment.get('platform_model') or '-'}"
         f" platform={environment.get('platform_release') or '-'}\n"
+        f"  cpu={environment.get('cpu_topology') or '-'}"
+        f" affinity={environment.get('cpu_affinity') or '-'}"
+        f" aslr={environment.get('address_randomization') or '-'}\n"
         f"  power_mode={environment.get('power_mode') or '(未取得)'}"
         f" clock={environment.get('gpu_max_clock_mhz') or '-'} MHz (max)"
         f" / {environment.get('gpu_current_clock_mhz') or '-'} MHz (現在)"
@@ -108,6 +111,7 @@ def measurement_rows(measurements):
                 "resolution": f"{record.get('width_px')}x{record.get('height_px')}",
                 "markers": record.get("detection_count"),
                 "fxfy": (record.get("conditions") or {}).get("fxfy_effective"),
+                "aruco3": (record.get("conditions") or {}).get("use_aruco3_detection"),
                 "p50_ms": end_to_end.get("p50_ms"),
                 "p95_ms": end_to_end.get("p95_ms"),
                 "p99_ms": end_to_end.get("p99_ms"),
@@ -180,6 +184,33 @@ def print_crossover(rows):
             print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  比={ratio:.3f}  {verdict}")
 
 
+def print_run_variance(rows):
+    """同一条件を複数回実行した場合の、実行間ばらつきを示す。
+
+    process ごとの memory 配置 (ASLR) や core 割り当てで p50 自体が動くため、
+    1 回の実行内の分位点だけでは測定値の再現性を判断できない。
+    """
+    grouped = defaultdict(list)
+    for row in rows:
+        key = (row["machine"], row["route"], row["memory_mode"], row["resolution"],
+               row["markers"], row["fxfy"], row["aruco3"])
+        if row["p50_ms"] is not None:
+            grouped[key].append(row["p50_ms"])
+
+    repeated = {key: values for key, values in grouped.items() if len(values) > 1}
+    if not repeated:
+        return
+
+    print("\n=== 実行間ばらつき (同一条件を複数回実行した場合の p50) ===")
+    for key, values in sorted(repeated.items(), key=lambda item: str(item[0])):
+        values = sorted(values)
+        middle = values[len(values) // 2]
+        spread = (values[-1] - values[0]) / middle * 100.0 if middle else 0.0
+        print(f"{key[0]} {key[1]} {key[3]} markers={key[4]} fxfy={key[5]} aruco3={key[6]}")
+        print(f"  n={len(values)} 中央 {middle:.3f} ms  範囲 {values[0]:.3f} - {values[-1]:.3f} ms"
+              f"  幅 {spread:.1f}%")
+
+
 def print_machine_comparison(rows):
     """同じ条件を複数機体で測った場合に、機体間の比を示す。
 
@@ -236,6 +267,7 @@ def main():
         print(format_environment(environment))
     print("\n=== 測定結果 ===")
     print_table(rows)
+    print_run_variance(rows)
     print_crossover(rows)
     print_machine_comparison(rows)
 

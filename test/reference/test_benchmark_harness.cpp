@@ -159,6 +159,32 @@ TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
     EXPECT_NE(jsonl.find(record.image_sha256_), std::string::npos);
 }
 
+// 正常系: 測定条件の再現に必要な環境情報が記録される。
+// CPU の core 種別と親和性、ASLR の状態が分からないと測定値を比較できない。
+TEST(BenchmarkEnvironmentTest, records_cpu_topology_and_affinity) {
+    aruco3cuda::bench::BenchmarkConfig config;
+    const aruco3cuda::bench::EnvironmentRecord unpinned =
+            aruco3cuda::bench::collect_environment(config);
+    EXPECT_FALSE(unpinned.cpu_topology_.empty());
+    EXPECT_EQ(unpinned.cpu_affinity_, "unpinned");
+    EXPECT_FALSE(unpinned.address_randomization_.empty());
+
+    config.cpu_affinity_ = {0};
+    const aruco3cuda::bench::EnvironmentRecord pinned =
+            aruco3cuda::bench::collect_environment(config);
+    EXPECT_EQ(pinned.cpu_affinity_, "0");
+}
+
+// 異常系: 範囲外の CPU 番号は固定せず、その旨を記録する。
+TEST(BenchmarkEnvironmentTest, invalid_cpu_number_is_reported) {
+    aruco3cuda::bench::BenchmarkConfig config;
+    config.cpu_affinity_ = {-1};
+    const aruco3cuda::bench::EnvironmentRecord environment =
+            aruco3cuda::bench::collect_environment(config);
+    EXPECT_NE(environment.cpu_affinity_.find("invalid-cpu"), std::string::npos)
+            << environment.cpu_affinity_;
+}
+
 // 正常系: 経路と memory 種別の識別子が評価計画の表記と一致する。
 // 集計 script が識別子で経路を区別するため、表記のずれは比較を壊す。
 TEST(BenchmarkRouteTest, identifiers_match_evaluation_plan) {

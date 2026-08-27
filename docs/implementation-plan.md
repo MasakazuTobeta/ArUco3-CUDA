@@ -102,6 +102,21 @@ ArUco3-CUDA/
 
 G0 の完了条件: 同一入力に対する CPU 基準結果と環境情報を保存でき、CUDA 側の空実装が両 profile の container 内で build とテストを通ること。**達成済み**。
 
+規約準拠の作業後に P0 の検証を全項目やり直し、結果が変わっていないことを確認しました。
+
+| 検証項目 | 再検査の結果 |
+| --- | --- |
+| 環境検査 | 両機で全項目合格 |
+| build | DGX Spark で `sm_87` と `sm_121`、Jetson で `sm_87` |
+| `ctest` | 両機 155 件。Compute Sanitizer 込みで 159 件 |
+| smoke test の四隅 | `(399.57, 259.57)` と `(559.43, 419.43)`。両機一致、当初の記録と一致 |
+| `fxfy` と segmentation | 0.3333、427x240。当初の記録と一致 |
+| corpus の checksum | `clean_1280x720_n1_s128` が `ac79179c8e8b`。当初の記録と一致 |
+| Dictionary の生成物 | `dictgen --check` が byte 単位で一致 |
+| CPU 経路の測定値 | Jetson は一致。DGX Spark の ArUco3 無効のみ変化。原因は測定条件の固定不足であり、下記に記録した |
+
+corpus の manifest と benchmark の JSONL は `schema_version` を 2 へ上げました。manifest は単位を名前へ示す規約に合わせて key を改名したため破壊的変更です。JSONL は測定条件の項目を追加したためです。
+
 WP-0.7 で判明し修正した、実機でしか現れない問題を記録します。
 
 | 問題 | 症状 | 対応 |
@@ -146,18 +161,30 @@ WP-0.4 と WP-0.5 の検証結果は次のとおりです。
 | 生成物の再現性 | `dictgen --check` が既存 file と byte 単位で一致 |
 | `ctest` | 61 件全て合格。Compute Sanitizer を含めて 65 件 |
 
-WP-0.6 と WP-0.7 の実測結果は次のとおりです。1280x720、マーカー 4 個、OpenCV thread 1、CPU 経路での測定です。
+WP-0.6 と WP-0.7 の実測結果は次のとおりです。1280x720、マーカー 4 個、OpenCV thread 1、CPU 経路、遅延 200 回、独立した process として 5 回実行した結果です。CPU は性能 core へ固定しています。
 
-| 機体 | 条件 | fxfy | p50 | p95 | p99 | throughput |
-| --- | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 2.208 ms | 2.222 ms | 2.242 ms | 452 frame/s |
-| DGX Spark GB10 | ArUco3 無効 | 1.0000 | 7.570 ms | 7.649 ms | 7.673 ms | 137 frame/s |
-| Jetson AGX Orin | ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 4.387 ms | 4.438 ms | 4.528 ms | 228 frame/s |
-| Jetson AGX Orin | ArUco3 無効 | 1.0000 | 13.464 ms | 13.823 ms | 13.947 ms | 73 frame/s |
+| 機体 | 条件 | fxfy | p50 中央値 | p50 範囲 | p95 | p99 | throughput |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| DGX Spark GB10 | ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 2.198 ms | 2.198 - 2.202 (0.2%) | 2.204 ms | 2.206 ms | 455 frame/s |
+| DGX Spark GB10 | ArUco3 無効 | 1.0000 | 7.035 ms | 6.998 - 7.169 (2.4%) | 7.647 ms | 7.714 ms | 142 frame/s |
+| Jetson AGX Orin | ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 4.387 ms | 4.382 - 4.389 (0.1%) | 4.423 ms | 4.492 ms | 228 frame/s |
+| Jetson AGX Orin | ArUco3 無効 | 1.0000 | 13.432 ms | 13.392 - 13.476 (0.6%) | 13.695 ms | 14.080 ms | 74 frame/s |
 
-検出結果は全条件で 4 個と一致します。ArUco3 検出戦略の効果は DGX Spark で 3.4 倍、Jetson AGX Orin で 3.1 倍です。同一条件での機体差は Jetson を基準として DGX Spark が約 0.5 倍の時間です。Jetson の power mode は MAXN、GPU 最大 clock は 1300 MHz です。
+検出結果は全条件で 4 個と一致します。ArUco3 検出戦略の効果は DGX Spark で 3.2 倍、Jetson AGX Orin で 3.1 倍です。同一条件での機体差は Jetson を基準として DGX Spark が約 0.5 倍の時間です。Jetson の power mode は MAXN、GPU 最大 clock は 1300 MHz です。
 
 これらは CPU 基準側の値であり、CUDA 経路との比較は Phase 1 以降に行います。
+
+#### 測定条件を固定しないと値が再現しない
+
+規約準拠の作業後に P0 の測定値を再検査したところ、DGX Spark の ArUco3 無効の値が当初記録した 7.570 ms から動きました。原因を調べた結果、追加した検証処理ではなく測定条件の固定不足でした。追加した `validate_config` の費用は 1 回あたり 20.7 ns であり、7 ms の検出に対して 0.0003% です。
+
+判明した要因は 2 つです。
+
+**CPU core の種別**: DGX Spark GB10 は Cortex-X925 が 10 個 (cpu 5-9、15-19、最大約 4.0 GHz) と Cortex-A725 が 10 個 (cpu 0-4、10-14、最大約 2.86 GHz) の混成です。同じ条件でも効率 core へ割り当てられると 1.64 倍遅くなります。core を固定しない測定は、割り当て次第で二極化します。Jetson AGX Orin は Cortex-A78AE 12 個の均一構成であり、この影響を受けません。当初の Jetson の値が再測定でも一致したのはこのためです。
+
+**address space の無作為化 (ASLR)**: 全解像度を扱う CPU 経路では、process ごとの memory 配置の違いだけで p50 が 9% 変動します。`setarch -R` で無効化すると 8 回の実行が完全に同じ値になることを確認しました。1 回の実行内の分位点はこの変動を捉えません。
+
+対応として、benchmark harness へ `--cpu-list` を追加し、CPU の core 構成、実際の親和性、ASLR の状態を測定結果へ記録するようにしました。`aggregate.py` は同一条件の複数実行をまとめ、実行間ばらつきを表示します。
 
 合成マーカーの検出四隅は DGX Spark と Jetson AGX Orin で一致しました。CPU 基準実装の結果が機体に依存しないことを示します。
 
@@ -266,11 +293,11 @@ CUDA device code は host coverage と別に、入力分割と境界値で実行
 
 | 指標 | 現状 | 目標 |
 | --- | --- | --- |
-| C0 (line) | 89.9% (1718 / 1912) | 100% |
-| C1 (decision) | 82.7% (464 / 561) | 100% |
-| function | 99.0% (104 / 105) | 100% |
+| C0 (line) | 89.7% (1801 / 2007) | 100% |
+| C1 (decision) | 81.9% (497 / 607) | 100% |
+| function | 99.1% (109 / 110) | 100% |
 
-規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 194 行の内訳は次のとおりです。
+規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 206 行の内訳は次のとおりです。
 
 | 分類 | 内容 | 扱い |
 | --- | --- | --- |

@@ -67,11 +67,13 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 
 ### 測定手順
 
-1. hardware、OS、CUDA、driver、compiler、OpenCV、power mode、clock を記録する。
+1. hardware、OS、CUDA、driver、compiler、OpenCV、power mode、clock を記録する。CPU の core 構成、測定に使用した core、ASLR の状態も記録する。
+1a. CPU を core 種別で固定する。DGX Spark GB10 は Cortex-X925 (性能) と Cortex-A725 (効率) の混成であり、固定しないと同じ条件で 1.64 倍の差が出る。`--cpu-list` で指定し、どの core を使ったかを結果へ残す。
 2. 同じ入力と detector parameters を固定する。ArUco3 検出戦略の設定は、縮小率 `fxfy` の実効値も併せて記録する。`minMarkerLengthRatioOriginalImg` の既定値は 0.0 であり、この場合 `useAruco3Detection` を有効にしても縮小は発生しない。
 3. 初期化と memory allocation を測定区間から分離する。
 4. warm-up 後に十分な回数を測定する。
 5. 外れ値を削除せず、集計方法と全分布を保存する。
+5a. 同一条件を独立した process として複数回実行し、実行間ばらつきを報告する。1 回の実行内の分位点は process ごとの memory 配置による変動を捉えない。全解像度の CPU 経路では ASLR だけで p50 が 9% 動く。前後比較で変化を切り分けたい場合は `setarch -R` で ASLR を無効にし、その旨を記録する。
 6. CPU が速い条件を含め、crossover point を求める。
 7. CPU 基準の測定値が桁違いに外れていないかを確認する。OpenCV Issue #27118 の報告者は環境と設定が不明な参考値として 640x480 で約 50 ms、1920x1080 で約 150 ms を挙げている。これは合格基準ではなく、測定条件を疑うための sanity check として扱う。
 
@@ -96,7 +98,7 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 ## 未確定事項
 
 - warm-up 回数と測定反復数。
-- 測定時に clock を固定するか、既定のまま測るか。使用する Jetson Orin model は AGX Orin Developer Kit、power mode は MAXN で確定した。
+- 測定時に GPU clock を固定するか、既定のまま測るか。CPU の core 固定と ASLR の扱いは決定済み。使用する Jetson Orin model は AGX Orin Developer Kit、power mode は MAXN で確定した。
 - CPU thread 数を固定するか、各環境の既定値を使用するか。
 - 実画像データセットの入手・配布条件。
 - 許容する四隅座標誤差と性能改善率の数値基準。

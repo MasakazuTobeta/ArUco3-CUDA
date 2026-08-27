@@ -466,7 +466,9 @@ void write_manifest_json(std::ostream& out, const CorpusConfig& config, const st
                          const std::vector<GeneratedScene>& scenes) {
     JsonWriter writer(out);
     writer.begin_object();
-    writer.member_int("schema_version", 1);
+    // version 2: blur_sigma を blur_sigma_px へ、noise_sigma を noise_sigma_levels へ
+    // 改名した。単位を名前へ示す規約に合わせるための破壊的変更である。
+    writer.member_int("schema_version", 2);
     writer.member_string("producer", "aruco3cuda_corpusgen");
     writer.member_string("preset", preset);
     writer.member_string("dictionary", config.dictionary_name_);
