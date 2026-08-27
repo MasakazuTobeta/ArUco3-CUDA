@@ -34,7 +34,17 @@ DGX Spark と Jetson Orin で同じ手順の build、test、評価を行える c
 
 `pinned` と `mounted` の両方で環境検査と smoke test が合格することを確認しています。CUDA Toolkit 全体を含む `nvidia/cuda` の devel image を base にした場合、base だけで 5 GB を超えます。
 
-Jetson Orin 実機はまだ確認していません。開発機に存在する別 project の container image は JetPack 5.1.2 と CUDA 11.4 を示しており、Jetson 側が CUDA 11.4 系である可能性があります。確定は実機確認後とします。
+`jetson-orin` profile も実機で構築と検証を完了しています。
+
+| 項目 | 結果 |
+| --- | --- |
+| 実機 | Jetson AGX Orin Developer Kit、L4T R35.4.1 (JetPack 5.1.2)、CUDA 11.4 |
+| image size | 5.0 GB |
+| `verify-environment.sh` | 全 5 項目合格 |
+| `smoke-test.sh` | 合格 |
+| `ctest` | 75 件合格。Compute Sanitizer を含めて 79 件 |
+
+image が DGX Spark の 1.64 GB より大きいのは、base image が `l4t-cuda:11.4.19-devel` であり CUDA 一式を含むためです。Jetson では NVIDIA の apt repository から必要な package だけを選ぶ構成が使えないため、この差は許容します。
 
 ## 目標
 
@@ -96,9 +106,22 @@ install された package の正確な version は image 内の `/opt/aruco3cuda
 | profile | base image | 対象 | `ARUCO3_CUDA_ARCH` | 開発 tool |
 | --- | --- | --- | --- | --- |
 | `dgx-spark` | `ubuntu:24.04` | DGX Spark GB10 | 121 | 含む |
-| `jetson-orin` | `nvcr.io/nvidia/l4t-jetpack:r35.4.1`（既定、上書き可） | Jetson Orin | 87 | 含まない |
+| `jetson-orin` | `nvcr.io/nvidia/l4t-cuda:11.4.19-devel`（既定、上書き可） | Jetson AGX Orin | 87 | 含まない |
 
-Jetson は `pinned` mode でも NVIDIA の CUDA apt repository を使わず、CUDA を含む `l4t-jetpack` を base image とします。`install-cuda-toolkit.sh` は base image に CUDA が存在する場合 install を省略します。base image の tag は実機の JetPack へ合わせて `docker/.env` で指定します。
+Jetson は `pinned` mode でも NVIDIA の CUDA apt repository を使わず、CUDA を含む `l4t-cuda` を base image とします。`install-cuda-toolkit.sh` は base image に CUDA が存在する場合 install を省略します。base image の tag は実機の JetPack へ合わせて `docker/.env` で指定します。
+
+### Jetson 固有の設定
+
+実機検証で必要になった設定です。いずれも Jetson でのみ必要で、DGX Spark には影響しません。
+
+| 設定 | 理由 |
+| --- | --- |
+| `group_add` に video と debug の GID | Tegra の device node は `root:video` が 36 個、`root:debug` が 10 個で権限 0660。非 root 実行では補助グループが無いと開けない |
+| `/var/lib/nvpmodel` と `/etc/nvpmodel.conf` の mount | `nvpmodel` の binary は container に無い。power mode は状態 file と定義 file から読む |
+| `/etc/nv_tegra_release` の mount | L4T version の記録に使う |
+| device tree の model file の mount | Docker は既定で `/sys/firmware` を mask するため、基板名を直接読めない |
+
+補助グループを付与しないと、`cudaGetDeviceCount` が `NvRmMemInitNvmap failed with Permission denied` を経て `operation not supported` で失敗します。`libcuda.so.1` は注入されているため、driver の問題と紛らわしい失敗になります。
 
 `mounted` mode では、host の CUDA Toolkit binary を container 内で実行するため、container の glibc が host CUDA Toolkit の要求 version 以上である必要があります。この場合の base image は JetPack 5.x なら `ubuntu:20.04`、JetPack 6.x なら `ubuntu:22.04` を指定します。
 
@@ -160,11 +183,13 @@ docker compose -f docker/compose.yaml run --rm --user root dgx-spark \
 
 CUDA Toolkit を mount 方式にすると、mount 漏れや version 不整合が build 時の不可解な失敗として現れます。`verify-environment.sh` は container 内で次を検査し、原因が分かる形で失敗させます。
 
-1. CUDA Toolkit が mount され `nvcc` が実行できる。
-2. NVIDIA driver library が注入されている。
-3. `nvcc` が `ARUCO3_CUDA_ARCH` の architecture に対応している。
-4. `nvcc` と host compiler の組み合わせで実際に compile できる。
+1. CUDA Toolkit が使用でき `nvcc` が実行できる。
+2. `nvcc` が `ARUCO3_CUDA_ARCH` の architecture に対応している。
+3. `nvcc` と host compiler の組み合わせで実際に compile できる。
+4. NVIDIA driver library が注入され、CUDA から device を列挙して kernel を実行できる。
 5. OpenCV が install され provenance を読み取れる。
+
+device の確認に `nvidia-smi` を使用しません。Jetson の L4T には `nvidia-smi` が存在しないため、両対象機で成立する CUDA runtime API の呼び出しで確認します。probe を compile して実行し、device 数、名前、Compute Capability、統合 GPU かどうかを取得します。`nvidia-smi` の有無は合否に含めず、補助情報として表示します。
 
 `ARUCO3_VERIFY_ON_START=1` を設定すると、container 起動時に自動実行し、不合格なら起動を中止します。
 
@@ -184,7 +209,7 @@ CUDA Toolkit を mount 方式にすると、mount 漏れや version 不整合が
 
 ## 未確定事項
 
-- Jetson Orin 実機の JetPack version。`l4t-jetpack` の tag と、`mounted` mode 用の base image の既定値はこれを確認してから確定します。
+- Jetson を JetPack 6.x へ更新する場合の base image tag と CUDA version。
 - `pinned` mode の package version を patch 単位まで固定するか。現在は package 名で CUDA 13.0 系までを固定し、実際の version を provenance へ記録する方式です。
 - Phase 4 の profiler (Nsight Systems、Nsight Compute) を image へ含めるか、host 側で実行するか。[ADR-0002](../adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じです。
 - CI を container 内で実行する際の runner の種類。

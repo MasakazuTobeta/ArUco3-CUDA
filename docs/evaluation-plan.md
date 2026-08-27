@@ -96,7 +96,7 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 ## 未確定事項
 
 - warm-up 回数と測定反復数。
-- 使用する Jetson Orin model と power mode。
+- 測定時に clock を固定するか、既定のまま測るか。使用する Jetson Orin model は AGX Orin Developer Kit、power mode は MAXN で確定した。
 - CPU thread 数を固定するか、各環境の既定値を使用するか。
 - 実画像データセットの入手・配布条件。
 - 許容する四隅座標誤差と性能改善率の数値基準。

@@ -10,7 +10,7 @@
 
 ## 現状
 
-Phase 0 を進行中です。開発 container、build 基盤、CPU 基準 runner、test corpus 生成器、Dictionary 変換 tool、benchmark harness は完了し、Jetson Orin 実機での検証が残っています。日付は hardware と開発時間を確認後に設定します。
+Phase 0 を完了しました。開発 container、build 基盤、CPU 基準 runner、test corpus 生成器、Dictionary 変換 tool、benchmark harness が DGX Spark と Jetson AGX Orin の両方で動作します。次は Phase 1 の最小成立版です。日付は hardware と開発時間を確認後に設定します。
 
 ## 目標
 

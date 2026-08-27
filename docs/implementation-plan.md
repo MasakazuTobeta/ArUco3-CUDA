@@ -10,7 +10,7 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 
 ## 現状
 
-- WP-0.0 から WP-0.6 までが完了しています。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner、合成 corpus 生成器、Dictionary 変換 tool、benchmark harness が動作します。残るのは WP-0.7 の Jetson Orin 実機検証です。
+- Phase 0 の全作業単位 WP-0.0 から WP-0.7 が完了しました。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner、合成 corpus 生成器、Dictionary 変換 tool、benchmark harness が DGX Spark と Jetson AGX Orin の両方で動作します。
 - core は build 基盤の疎通確認に必要な最小構成のみです。CUDA 検出器、adapter、benchmark harness、データセットはありません。
 - 開発機は DGX Spark GB10 です。実測値と build baseline の決定案は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) にまとめています。
 - Jetson Orin 実機はこの環境から参照できていません。JetPack version と power mode は未確認です。
@@ -24,13 +24,13 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 | ID | blocker | 解消方法 | 影響する作業単位 |
 | --- | --- | --- | --- |
 | B1 | OpenCV が開発機に無い | WP-0.0 の image へ 4.14.0 を commit 固定で build して含める。`dgx-spark` profile で解消済み | WP-0.2 以降のほぼ全て |
-| B2 | Jetson Orin の環境が未確認 | 実機の JetPack、CUDA、power mode を確認し ADR-0002 の未確定事項を閉じる | WP-0.7、WP-4.4 |
+| B2 | Jetson Orin の環境が未確認 | 実機の JetPack、CUDA、power mode を確認し ADR-0002 の未確定事項を閉じる。解消済み | WP-0.7、WP-4.4 |
 | B3 | `clang-format` が無い | WP-0.0 の `dgx-spark` profile へ含める。解消済み | WP-0.1 |
 | B4 | test corpus と ground truth が無い | WP-0.4 で生成器を作る | Phase 1 以降の正確性評価 |
 
 B1 と B3 を host への直接 install ではなく container で解消するのは、DGX Spark と Jetson Orin で同じ手順を使い、測定結果へ環境情報を機械可読形式で残すためです。
 
-B2 について、開発機に存在する別 project の container image は JetPack 5.1.2 と CUDA 11.4 を示しています。Jetson 側が CUDA 11.4 系である場合、DGX Spark の CUDA 13.0 との差が大きく、使用できる CUDA 機能と CUB / Thrust の version が制約されます。実機確認を WP-0.7 で行い、確認前は共通経路が CUDA 11.4 でも compile できる範囲に留めます。
+B2 は WP-0.7 で解消しました。実機は Jetson AGX Orin Developer Kit、L4T R35.4.1 (JetPack 5.1.2)、CUDA 11.4 です。CUDA Toolkit の最低 version を 11.4 とする決定は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) に記録しました。
 
 ## 目標
 
@@ -98,9 +98,19 @@ ArUco3-CUDA/
 | WP-0.4 | 合成 corpus 生成器 | `tools/corpusgen`、manifest | seed 固定で再生成でき、四隅の ground truth を持つ corpus が得られる。達成済み | WP-0.2 | M |
 | WP-0.5 | Dictionary 変換 tool と互換テスト | `tools/dictgen`、`src/dictionary`、生成 table | [Dictionary 方針](dictionaries.md) の検証 1 から 5 が自動テストで通る。達成済み | WP-0.2 | M |
 | WP-0.6 | benchmark harness 骨格 | `bench/**`、`aggregate.py` | CPU 経路の p50・p95・p99 と環境情報を機械可読形式で保存できる。達成済み | WP-0.3、WP-0.0 | M |
-| WP-0.7 | Jetson Orin profile の実機検証 | `docker/.env` の既定値確定、[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の更新 | Jetson 実機で image が build でき、環境検査が合格し、CUDA Toolkit の最低 version が確定する | B2、WP-0.0 | M |
+| WP-0.7 | Jetson Orin profile の実機検証 | `docker/.env` の既定値確定、[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の更新 | Jetson 実機で image が build でき、環境検査が合格し、CUDA Toolkit の最低 version が確定する。達成済み | B2、WP-0.0 | M |
 
-G0 の完了条件: 同一入力に対する CPU 基準結果と環境情報を保存でき、CUDA 側の空実装が両 profile の container 内で build とテストを通ること。
+G0 の完了条件: 同一入力に対する CPU 基準結果と環境情報を保存でき、CUDA 側の空実装が両 profile の container 内で build とテストを通ること。**達成済み**。
+
+WP-0.7 で判明し修正した、実機でしか現れない問題を記録します。
+
+| 問題 | 症状 | 対応 |
+| --- | --- | --- |
+| 環境検査が `nvidia-smi` に依存していた | Jetson には `nvidia-smi` が無く、正常な環境で不合格になる | device 確認を CUDA runtime API の probe へ置き換えた |
+| Tegra の device node に権限が無い | `libcuda.so.1` は見えるのに `cudaGetDeviceCount` が `NvRmMemInitNvmap failed with Permission denied` で失敗する | 非 root 実行の container へ video と debug の補助 GID を付与した |
+| `nvpmodel` が container に無い | 評価計画が必須とする power mode が空のまま記録される | 状態 file と定義 file を mount し、取得元の差を script へ集約した |
+| Docker が `/sys/firmware` を mask する | 基板名を取得できない。Orin は AGX と NX で性能が大きく異なる | device tree の model file を個別に mount した |
+| `jetson-orin` の test preset が無い | `ctest --preset jetson-orin` が preset 一覧を表示して終わる | 全 configure preset に build と test preset を対応させた |
 
 WP-0.1 の検証結果は次のとおりです。`libaruco3cuda.a` に `sm_87` と `sm_121` の両方の code が含まれることを `cuobjdump --list-elf` で確認しています。
 
@@ -136,14 +146,20 @@ WP-0.4 と WP-0.5 の検証結果は次のとおりです。
 | 生成物の再現性 | `dictgen --check` が既存 file と byte 単位で一致 |
 | `ctest` | 61 件全て合格。Compute Sanitizer を含めて 65 件 |
 
-WP-0.6 の実測結果は次のとおりです。DGX Spark、1280x720、マーカー 4 個、OpenCV thread 1 での測定です。
+WP-0.6 と WP-0.7 の実測結果は次のとおりです。1280x720、マーカー 4 個、OpenCV thread 1、CPU 経路での測定です。
 
-| 条件 | fxfy | p50 | p95 | p99 | throughput |
-| --- | --- | --- | --- | --- | --- |
-| ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 2.200 ms | 2.215 ms | 2.221 ms | 454 frame/s |
-| ArUco3 無効 | 1.0000 | 7.070 ms | 7.130 ms | 7.393 ms | 140 frame/s |
+| 機体 | 条件 | fxfy | p50 | p95 | p99 | throughput |
+| --- | --- | --- | --- | --- | --- | --- |
+| DGX Spark GB10 | ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 2.208 ms | 2.222 ms | 2.242 ms | 452 frame/s |
+| DGX Spark GB10 | ArUco3 無効 | 1.0000 | 7.570 ms | 7.649 ms | 7.673 ms | 137 frame/s |
+| Jetson AGX Orin | ArUco3 有効 (`tau_i = 0.05`) | 0.3333 | 4.387 ms | 4.438 ms | 4.528 ms | 228 frame/s |
+| Jetson AGX Orin | ArUco3 無効 | 1.0000 | 13.464 ms | 13.823 ms | 13.947 ms | 73 frame/s |
 
-検出結果はどちらも 4 個で一致します。これは CPU 基準側の値であり、CUDA 経路との比較は Phase 1 以降に行います。
+検出結果は全条件で 4 個と一致します。ArUco3 検出戦略の効果は DGX Spark で 3.4 倍、Jetson AGX Orin で 3.1 倍です。同一条件での機体差は Jetson を基準として DGX Spark が約 0.5 倍の時間です。Jetson の power mode は MAXN、GPU 最大 clock は 1300 MHz です。
+
+これらは CPU 基準側の値であり、CUDA 経路との比較は Phase 1 以降に行います。
+
+合成マーカーの検出四隅は DGX Spark と Jetson AGX Orin で一致しました。CPU 基準実装の結果が機体に依存しないことを示します。
 
 ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく `S + L * tau_i` で決まります。`S` は `minSideLengthCanonicalImg`、`L` は画像の長辺です。1280x720、`S = 32`、`tau_i = 0.05` の場合は 96 pixel が下限であり、実測では 96 pixel は検出されず 128 pixel は検出されました。corpus の manifest は各マーカーの `side_ratio` を記録し、どの `tau_i` で検出対象になるかを後から判断できるようにしています。
 

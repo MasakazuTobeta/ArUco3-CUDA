@@ -39,6 +39,26 @@ CMake、CUDA Toolkit、host compiler、対象 CUDA architecture、CPU 基準実�
 
 [README](../../README.md) と [アーキテクチャ](../architecture.md) は DGX Spark GB10 を Compute Capability 12.0、`sm_120` と記載しています。実機は 12.1 を報告するため、記載を修正する必要があります。
 
+### Jetson Orin 実機の実測値
+
+2026-08-27 に実機で測定した値です。
+
+| 項目 | 値 |
+| --- | --- |
+| 基板 | Jetson AGX Orin Developer Kit |
+| L4T | R35.4.1 (JetPack 5.1.2) |
+| OS / glibc | Ubuntu 20.04.6 LTS / 2.31 |
+| CUDA Toolkit | 11.4 (V11.4.315) |
+| nvcc の最大 architecture | `compute_87` |
+| host compiler | gcc 9.4.0 |
+| power mode | MAXN (0) |
+| GPU 最大 clock | 1300 MHz |
+| CPU 論理 core 数 | 12 |
+| system memory | 61 GB |
+| `nvidia-smi` | 存在しない |
+
+CUDA 11.4 の nvcc は `compute_87` までしか対応しません。`CMAKE_CUDA_ARCHITECTURES` の既定値 `87;121` は Jetson では使用できないため、Jetson では `jetson-orin` preset を使用します。
+
 ### 未 install の前提条件
 
 開発機には OpenCV、`clang-format`、`ninja` が install されていません。`compute-sanitizer` は `/usr/local/cuda/bin` に存在します。
@@ -57,6 +77,8 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 6. 最初の対象を OpenCV 4.x とし、5.x への追随は Phase 5 の判断へ委ねる。
 7. 生成する成果物は host 側で例外を使用してよいが、core の公開 API は `Status` を返す。詳細は [公開 API 草案](../design/public-api.md) に従う。
 8. toolchain の固定は host への直接 install ではなく開発 container で行う。CUDA Toolkit も image へ固定し、必要な package のみを install する。host から bind mount する mode は手元の試行用に残すが、測定を伴う実行には使用しない。詳細は [Docker 環境設計](../design/docker-environment.md) に従う。
+9. CUDA Toolkit の最低 version を 11.4 とする。対象とする Jetson AGX Orin が JetPack 5.1.2 (L4T R35.4.1) であり、同梱の CUDA が 11.4 であることを実機で確認した。共通経路はこの version で compile できる範囲に留める。
+10. Jetson の pinned mode の base image を `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` とする。CUDA のみを含み `l4t-jetpack` より小さい。
 
 ## 理由
 
@@ -79,7 +101,7 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 
 ## 未確定事項
 
-- CUDA Toolkit の最低 version。Jetson Orin 実機の JetPack version を確認してから決める。開発機に存在する別 project の container image は JetPack 5.1.2 と CUDA 11.4 を示しており、この値が Jetson 側の実際の環境である可能性がある。CUDA 11.4 が対象になる場合、DGX Spark の CUDA 13.0 との差が大きく、使用できる CUDA 機能と CUB / Thrust の version が制約される。実機確認は実装計画の WP-0.7 で行う。
+- Jetson Orin を JetPack 6.x へ更新する時期。更新すれば CUDA 12.6 となり、DGX Spark の CUDA 13.0 との差が縮まる。
 - Jetson Orin 向けを cross-compile とするか実機 build とするか。
 - `clang-format` の style 設定を OpenCV 準拠にするか独自にするか。暫定として、OpenCV へのコントリビュートを想定し Google style を基礎に indent 4、桁数 100 とした `.clang-format` を置いている。決定後に本 ADR を更新する。
 
