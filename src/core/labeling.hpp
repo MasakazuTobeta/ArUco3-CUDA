@@ -10,6 +10,7 @@
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/workspace.hpp"
 #include "preprocess.hpp"
+#include "scan.hpp"
 
 namespace aruco3cuda::detail {
 
@@ -43,10 +44,9 @@ struct LabelBuffers {
     /// scan の入出力を兼ねる。root であることを示す 1/0 を書き込んでから
     /// 排他 scan を掛けると、そのまま詰めた label になる。
     std::int32_t* compact_ids_ = nullptr;
-    /// scan の block ごとの開始位置。要素数は scan_block_count_。
-    std::int32_t* block_offsets_ = nullptr;
-    int scan_block_count_ = 0;
-    /// device 側の label 数。要素数 1。
+    /// 詰めた label を求める排他 scan の作業領域。
+    ScanBuffers scan_;
+    /// device 側の label 数。要素数 1。scan の総和と同じ領域を指す。
     std::int32_t* label_count_ = nullptr;
     int width_px_ = 0;
     int height_px_ = 0;

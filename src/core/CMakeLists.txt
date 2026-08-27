@@ -9,8 +9,10 @@ add_library(aruco3cuda_core
   workspace.cpp
   preprocess.cu
   threshold.cu
+  scan.cu
   labeling.cu
   quad_extract.cu
+  candidate_filter.cu
   cuda_check.cpp
   device_probe.cu)
 

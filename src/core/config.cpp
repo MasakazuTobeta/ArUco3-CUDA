@@ -95,6 +95,8 @@ Status DetectorConfig::validate(std::string* out_message) const {
             {"min_corner_distance_rate", this->min_corner_distance_rate_, 0.0, 1.0},
             {"min_marker_distance_rate", this->min_marker_distance_rate_, 0.0, 4.0},
             {"min_group_distance", this->min_group_distance_, 0.0, 4.0},
+            {"min_quad_inlier_ratio", this->min_quad_inlier_ratio_, 0.0, 1.0},
+            {"min_edge_support_ratio", this->min_edge_support_ratio_, 0.0, 64.0},
             {"relative_corner_refinement_win_size", this->relative_corner_refinement_win_size_, 0.0,
              4.0},
             {"perspective_remove_ignored_margin_per_cell",

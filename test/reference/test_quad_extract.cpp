@@ -119,16 +119,25 @@ private:
         if (count == 0U) {
             return true;
         }
+        // 確保数ではなく label 数だけを読む。label 数を超える範囲は書かれて
+        // おらず、読むと未初期化 memory を触ることになる。
         const auto capacity = static_cast<std::size_t>(quads.capacity_);
-        std::vector<std::int32_t> corner_x(capacity * kQuadCornerCount);
-        std::vector<std::int32_t> corner_y(capacity * kQuadCornerCount);
-        std::vector<std::uint8_t> valid(capacity);
-        if (cudaMemcpy(corner_x.data(), quads.corner_x_, corner_x.size() * sizeof(std::int32_t),
-                       cudaMemcpyDeviceToHost) != cudaSuccess ||
-            cudaMemcpy(corner_y.data(), quads.corner_y_, corner_y.size() * sizeof(std::int32_t),
-                       cudaMemcpyDeviceToHost) != cudaSuccess ||
-            cudaMemcpy(valid.data(), quads.valid_, valid.size(), cudaMemcpyDeviceToHost) !=
-                    cudaSuccess) {
+        std::vector<std::int32_t> corner_x(count * kQuadCornerCount);
+        std::vector<std::int32_t> corner_y(count * kQuadCornerCount);
+        std::vector<std::uint8_t> valid(count);
+        const std::size_t row_bytes = count * sizeof(std::int32_t);
+        for (int corner = 0; corner < kQuadCornerCount; ++corner) {
+            const std::size_t offset = static_cast<std::size_t>(corner) * capacity;
+            const std::size_t destination = static_cast<std::size_t>(corner) * count;
+            if (cudaMemcpy(corner_x.data() + destination, quads.corner_x_ + offset, row_bytes,
+                           cudaMemcpyDeviceToHost) != cudaSuccess ||
+                cudaMemcpy(corner_y.data() + destination, quads.corner_y_ + offset, row_bytes,
+                           cudaMemcpyDeviceToHost) != cudaSuccess) {
+                return false;
+            }
+        }
+        if (cudaMemcpy(valid.data(), quads.valid_, valid.size(), cudaMemcpyDeviceToHost) !=
+            cudaSuccess) {
             return false;
         }
         for (std::size_t label = 0; label < count; ++label) {
@@ -136,7 +145,7 @@ private:
             quad.valid_ = valid[label] != 0U;
             quad.corners_.resize(kQuadCornerCount);
             for (int corner = 0; corner < kQuadCornerCount; ++corner) {
-                const std::size_t index = (static_cast<std::size_t>(corner) * capacity) + label;
+                const std::size_t index = (static_cast<std::size_t>(corner) * count) + label;
                 quad.corners_[static_cast<std::size_t>(corner)] = cv::Point2f(
                         static_cast<float>(corner_x[index]), static_cast<float>(corner_y[index]));
             }

@@ -11,6 +11,7 @@ add_executable(aruco3cuda_reference_tests
   test_threshold.cpp
   test_labeling.cpp
   test_quad_extract.cpp
+  test_candidate_filter.cpp
   test_hybrid_detector.cpp
   test_report_diff.cpp)
 

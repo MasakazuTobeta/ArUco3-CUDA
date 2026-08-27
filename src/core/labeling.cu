@@ -11,15 +11,12 @@
 #include "aruco3cuda/workspace.hpp"
 #include "cuda_check.hpp"
 #include "preprocess.hpp"
+#include "scan.hpp"
 
 namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// scan 1 block あたりの thread 数と要素数。
-///
-/// 共有 memory 上の走査を 1 要素 1 thread で行うため両者は等しい。
-constexpr int kScanThreads = 256;
 /// 走査系 kernel の block あたり thread 数。
 constexpr int kLinearThreads = 256;
 /// 外接矩形の初期値。atomicMin と atomicMax の単位元として使う。
@@ -129,78 +126,6 @@ __global__ void flag_roots_kernel(const std::int32_t* labels, std::int32_t* flag
     flags[index] = (labels[index] == index) ? 1 : 0;
 }
 
-/// block ごとに排他 scan を行い、block の合計を block_sums へ書く。
-///
-/// 入出力に同じ配列を渡してよい。各 thread は書き込みの前に自分の値を
-/// register へ読み出し、他 thread の位置へは書かないためである。
-__global__ void scan_within_block_kernel(std::int32_t* values, std::int32_t* block_sums,
-                                         int count) {
-    __shared__ std::int32_t shared[kScanThreads];
-    const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
-    const std::int32_t value = (index < count) ? values[index] : 0;
-    shared[threadIdx.x] = value;
-    __syncthreads();
-    for (int offset = 1; offset < kScanThreads; offset <<= 1) {
-        std::int32_t addend = 0;
-        if (static_cast<int>(threadIdx.x) >= offset) {
-            addend = shared[threadIdx.x - static_cast<unsigned int>(offset)];
-        }
-        __syncthreads();
-        shared[threadIdx.x] += addend;
-        __syncthreads();
-    }
-    if (index < count) {
-        values[index] = shared[threadIdx.x] - value;
-    }
-    if (threadIdx.x == static_cast<unsigned int>(kScanThreads - 1)) {
-        block_sums[blockIdx.x] = shared[threadIdx.x];
-    }
-}
-
-/// block の合計を 1 block で排他 scan し、総和を out_total へ書く。
-///
-/// block 数が thread 数を超える場合は塊ごとに走査し、直前までの総和を
-/// 繰り越す。block 数は画素数の 1/256 であり、この逐次化は問題にならない。
-__global__ void scan_block_sums_kernel(std::int32_t* block_sums, int block_count,
-                                       std::int32_t* out_total) {
-    __shared__ std::int32_t shared[kScanThreads];
-    std::int32_t running = 0;
-    for (int base = 0; base < block_count; base += kScanThreads) {
-        const int index = base + static_cast<int>(threadIdx.x);
-        const std::int32_t value = (index < block_count) ? block_sums[index] : 0;
-        shared[threadIdx.x] = value;
-        __syncthreads();
-        for (int offset = 1; offset < kScanThreads; offset <<= 1) {
-            std::int32_t addend = 0;
-            if (static_cast<int>(threadIdx.x) >= offset) {
-                addend = shared[threadIdx.x - static_cast<unsigned int>(offset)];
-            }
-            __syncthreads();
-            shared[threadIdx.x] += addend;
-            __syncthreads();
-        }
-        if (index < block_count) {
-            block_sums[index] = running + shared[threadIdx.x] - value;
-        }
-        const std::int32_t chunk_total = shared[kScanThreads - 1];
-        __syncthreads();
-        running += chunk_total;
-    }
-    if (threadIdx.x == 0U) {
-        *out_total = running;
-    }
-}
-
-/// block ごとの開始位置を各要素へ加える。
-__global__ void add_block_offsets_kernel(std::int32_t* values, const std::int32_t* block_offsets,
-                                         int count) {
-    const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
-    if (index >= count) {
-        return;
-    }
-    values[index] += block_offsets[blockIdx.x];
-}
-
 /// 根の線形 index を詰めた label へ置き換える。
 __global__ void relabel_kernel(std::int32_t* labels, const std::int32_t* compact_ids, int count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -275,11 +200,6 @@ __global__ void finalize_stats_kernel(LabelStatisticsBuffers stats,
                                                   static_cast<double>(count));
 }
 
-/// 画素数から scan の block 数を求める。
-int scan_block_count_of(int count) {
-    return (count + kScanThreads - 1) / kScanThreads;
-}
-
 /// int32 配列の byte 数を求める。桁溢れなら 0 を返す。
 std::size_t array_bytes_i32(std::size_t count) {
     if (count == 0U) {
@@ -312,12 +232,12 @@ std::size_t labeling_workspace_bytes(int width_px, int height_px) {
         return 0U;
     }
     const std::size_t blocks =
-            array_bytes_i32(static_cast<std::size_t>(scan_block_count_of(static_cast<int>(count))));
-    const std::size_t total_counter = array_bytes_i32(1U);
-    if (blocks == 0U || total_counter == 0U) {
+            align_up(scan_workspace_bytes(static_cast<int>(count)), kPlaneAlignment);
+    const std::size_t label_counter = array_bytes_i32(1U);
+    if (blocks == 0U || label_counter == 0U) {
         return 0U;
     }
-    return (plane * 2U) + blocks + total_counter;
+    return (plane * 2U) + blocks + label_counter;
 }
 
 Status reserve_labeling(int width_px, int height_px, Workspace& workspace, LabelBuffers* out) {
@@ -351,20 +271,12 @@ Status reserve_labeling(int width_px, int height_px, Workspace& workspace, Label
     }
     buffers.compact_ids_ = static_cast<std::int32_t*>(pointer);
 
-    buffers.scan_block_count_ = scan_block_count_of(static_cast<int>(count));
-    status = workspace.allocate(
-            static_cast<std::size_t>(buffers.scan_block_count_) * sizeof(std::int32_t),
-            kPlaneAlignment, &pointer);
+    status = reserve_scan(static_cast<int>(count), workspace, &buffers.scan_);
     if (status != Status::kOk) {
         return status;
     }
-    buffers.block_offsets_ = static_cast<std::int32_t*>(pointer);
-
-    status = workspace.allocate(sizeof(std::int32_t), kPlaneAlignment, &pointer);
-    if (status != Status::kOk) {
-        return status;
-    }
-    buffers.label_count_ = static_cast<std::int32_t*>(pointer);
+    // scan の総和がそのまま label 数になる。別に数え直す必要はない。
+    buffers.label_count_ = buffers.scan_.total_;
 
     *out = buffers;
     return Status::kOk;
@@ -385,7 +297,6 @@ Status build_labels_async(const ImagePlaneU8& binary, LabelBuffers* buffers, cud
     const dim3 grid((static_cast<unsigned int>(width) + block.x - 1U) / block.x,
                     (static_cast<unsigned int>(height) + block.y - 1U) / block.y, 1U);
     const int linear_blocks = (count + kLinearThreads - 1) / kLinearThreads;
-    const int scan_blocks = buffers->scan_block_count_;
 
     Status status = Status::kOk;
     initialize_labels_kernel<<<grid, block, 0, stream>>>(binary.data_, binary.pitch_bytes_,
@@ -416,23 +327,7 @@ Status build_labels_async(const ImagePlaneU8& binary, LabelBuffers* buffers, cud
     if (status != Status::kOk) {
         return status;
     }
-    scan_within_block_kernel<<<static_cast<unsigned int>(scan_blocks),
-                               static_cast<unsigned int>(kScanThreads), 0, stream>>>(
-            buffers->compact_ids_, buffers->block_offsets_, count);
-    status = check_kernel_launch("labeling.scan_within_block_kernel", -1, false, stream);
-    if (status != Status::kOk) {
-        return status;
-    }
-    scan_block_sums_kernel<<<1U, static_cast<unsigned int>(kScanThreads), 0, stream>>>(
-            buffers->block_offsets_, scan_blocks, buffers->label_count_);
-    status = check_kernel_launch("labeling.scan_block_sums_kernel", -1, false, stream);
-    if (status != Status::kOk) {
-        return status;
-    }
-    add_block_offsets_kernel<<<static_cast<unsigned int>(scan_blocks),
-                               static_cast<unsigned int>(kScanThreads), 0, stream>>>(
-            buffers->compact_ids_, buffers->block_offsets_, count);
-    status = check_kernel_launch("labeling.add_block_offsets_kernel", -1, false, stream);
+    status = exclusive_scan_async(buffers->compact_ids_, count, &buffers->scan_, stream);
     if (status != Status::kOk) {
         return status;
     }
