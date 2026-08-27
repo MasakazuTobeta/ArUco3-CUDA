@@ -155,6 +155,41 @@ add_test(NAME cli.bench.measure
           --output "${CMAKE_CURRENT_BINARY_DIR}/cli-bench.jsonl")
 set_tests_properties(cli.bench.measure PROPERTIES FIXTURES_REQUIRED cli_corpus TIMEOUT 300)
 
+# --- 差分レポート tool ---
+aruco3cuda_add_cli_test(cli.report.help aruco3cuda_report_cli TRUE --help)
+aruco3cuda_add_cli_test(cli.report.no_input aruco3cuda_report_cli FALSE --fail-on-diff)
+aruco3cuda_add_cli_test(cli.report.unknown_option aruco3cuda_report_cli FALSE --nonexistent-option)
+aruco3cuda_add_cli_test(cli.report.missing_value aruco3cuda_report_cli FALSE --input)
+aruco3cuda_add_cli_test(cli.report.invalid_tolerance aruco3cuda_report_cli FALSE
+  --corner-tolerance-px abc --input /nonexistent.png)
+aruco3cuda_add_cli_test(cli.report.negative_tolerance aruco3cuda_report_cli FALSE
+  --corner-tolerance-px -1 --input /nonexistent.png)
+aruco3cuda_add_cli_test(cli.report.invalid_match_radius aruco3cuda_report_cli FALSE
+  --match-radius-ratio 0 --input /nonexistent.png)
+aruco3cuda_add_cli_test(cli.report.invalid_use_aruco3 aruco3cuda_report_cli FALSE
+  --use-aruco3 yes --input /nonexistent.png)
+aruco3cuda_add_cli_test(cli.report.missing_image aruco3cuda_report_cli FALSE
+  --input /nonexistent/image.png)
+
+# 正常系: 合成 corpus に対して CPU 基準と一致することを ctest から確認する。
+# --fail-on-diff により、差異があれば test が失敗する。
+add_test(NAME cli.report.matches_reference
+  COMMAND $<TARGET_FILE:aruco3cuda_report_cli>
+          --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png"
+          --input "${kCliCorpusDir}/clean_1280x720_n4_s128.png"
+          --input "${kCliCorpusDir}/degraded_1280x720.png"
+          --output "${CMAKE_CURRENT_BINARY_DIR}/cli-report.json"
+          --fail-on-diff)
+set_tests_properties(cli.report.matches_reference PROPERTIES
+  FIXTURES_REQUIRED cli_corpus TIMEOUT 300
+  PASS_REGULAR_EXPRESSION "差異は無い")
+
+aruco3cuda_add_cli_test(cli.report.unwritable_output aruco3cuda_report_cli FALSE
+  --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png"
+  --output /nonexistent-dir/report.json)
+set_tests_properties(cli.report.unwritable_output PROPERTIES FIXTURES_REQUIRED cli_corpus)
+
+
 # 公開 API の Doxygen 要件を継続的に検査する。
 # 宣言を追加したときに記載漏れへ気付けるようにする。
 find_package(Python3 COMPONENTS Interpreter)

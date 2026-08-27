@@ -4,3 +4,4 @@
 # core と dictionary は tools へ依存しない。
 add_subdirectory(dictgen)
 add_subdirectory(corpusgen)
+add_subdirectory(report)

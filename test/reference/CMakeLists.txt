@@ -9,7 +9,8 @@ add_executable(aruco3cuda_reference_tests
   test_benchmark_harness.cpp
   test_preprocess.cpp
   test_threshold.cpp
-  test_hybrid_detector.cpp)
+  test_hybrid_detector.cpp
+  test_report_diff.cpp)
 
 target_link_libraries(aruco3cuda_reference_tests
   PRIVATE
@@ -19,6 +20,7 @@ target_link_libraries(aruco3cuda_reference_tests
     aruco3cuda::dictionary
     aruco3cuda::core
     aruco3cuda::hybrid
+    aruco3cuda::report
     aruco3cuda::warnings
     aruco3cuda::coverage
     GTest::gtest
