@@ -7,6 +7,11 @@
 #   Status の基底型 int は公開 ABI の一部である。将来 C API を追加する場合や
 #   host と device をまたぐ受け渡しで表現を安定させるため、size 削減より
 #   型の固定を優先する。
+#
+# misc-const-correctness を無効にしている理由:
+#   cv::Mat と GpuMat は handle 型であり、handle を const にしても指す先の
+#   pixel は変更できる。const を付けると不変であるかのように読めてしまい、
+#   この check の助言はかえって誤解を招く。
 Checks: >
   -*,
   bugprone-*,
@@ -21,14 +26,15 @@ Checks: >
   readability-identifier-naming,
   -misc-non-private-member-variables-in-classes,
   -bugprone-easily-swappable-parameters,
-  -performance-enum-size
+  -performance-enum-size,
+  -misc-const-correctness
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*/(include|src)/aruco3cuda/.*'
 CheckOptions:
-  # CUDA runtime の型は driver_types.h 等の内部 header が提供するが、
-  # 直接 include すべきではない。cuda_runtime_api.h を入口として扱う。
+  # CUDA と OpenCV の型は内部 header が提供するが、直接 include すべきではない。
+  # cuda_runtime_api.h と opencv2/*.hpp を入口として扱う。
   - key: misc-include-cleaner.IgnoreHeaders
-    value: '.*cuda_runtime.*;.*driver_types.*;.*vector_types.*;.*crt/.*;.*cuda_device_runtime_api.*'
+    value: '.*cuda_runtime.*;.*driver_types.*;.*vector_types.*;.*crt/.*;.*cuda_device_runtime_api.*;.*opencv2/.*'
   - key: readability-identifier-naming.ClassCase
     value: CamelCase
   - key: readability-identifier-naming.StructCase
@@ -43,7 +49,25 @@ CheckOptions:
     value: _
   - key: readability-identifier-naming.NamespaceCase
     value: lower_case
+  # CONTRIBUTING.md の「定数は kPascalCase」を、定数のあらゆる出現箇所へ適用する。
   - key: readability-identifier-naming.GlobalConstantPrefix
     value: k
   - key: readability-identifier-naming.GlobalConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConstexprVariablePrefix
+    value: k
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: CamelCase
+  # LocalConstant は const を付けた局所変数全般を指す。CONTRIBUTING.md では
+  # これは「ローカル変数」であり snake_case とする。kPascalCase は
+  # コンパイル時定数 (ConstexprVariable、Static/Global/Class の定数) へ適用する。
+  - key: readability-identifier-naming.LocalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.StaticConstantPrefix
+    value: k
+  - key: readability-identifier-naming.StaticConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ClassConstantPrefix
+    value: k
+  - key: readability-identifier-naming.ClassConstantCase
     value: CamelCase
