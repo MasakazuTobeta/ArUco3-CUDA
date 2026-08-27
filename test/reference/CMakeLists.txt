@@ -9,6 +9,7 @@ add_executable(aruco3cuda_reference_tests
   test_benchmark_harness.cpp
   test_preprocess.cpp
   test_threshold.cpp
+  test_labeling.cpp
   test_hybrid_detector.cpp
   test_report_diff.cpp)
 
