@@ -4,7 +4,8 @@
 # core、reference、tools のいずれからも利用できる。
 add_library(aruco3cuda_util
   sha256.cpp
-  json_writer.cpp)
+  json_writer.cpp
+  statistics.cpp)
 
 add_library(aruco3cuda::util ALIAS aruco3cuda_util)
 
