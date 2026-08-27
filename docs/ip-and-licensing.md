@@ -20,6 +20,8 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 - Universidad de Córdoba の公式 ArUco ページは、配布 software を GPLv3 と表示しています。
 - 同ページには personal、research、educational purposes と commercial license への問い合わせも記載されています。GPLv3 自体は商用利用を一律に禁止する license ではないため、公式配布物へ追加条件があるかは、利用前に配布物内の license 本文または権利者へ確認が必要です。
 - OpenCV は Apache-2.0 で配布され、OpenCV の ArUco3 対応は GPL 非互換 code に基づかないことを contribution checklist で確認して取り込まれています。
+- 現在の OpenCV 4.x は従来方式だけではなく、`DetectorParameters::useAruco3Detection` によって 2018 年論文の高速検出戦略を有効化できます。
+- OpenCV 4.x は `DICT_ARUCO_MIP_36h12` を 6x6、250 code、最小 Hamming 距離 12 の定義済み Dictionary として収録しています。
 - 本リポジトリには、公式 ArUco または OpenCV の source code はまだ含まれていません。
 - 本リポジトリの license は Apache License 2.0 とします。contribution も明示的な例外がない限り同 license で受け入れます。
 
@@ -47,6 +49,32 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 4. 専門家による freedom-to-operate review の要否を判断する。
 
 ## 実装方針
+
+次の方針を本 project の必須条件とします。
+
+1. 公式 ArUco GPLv3 source code を閲覧、コピー、翻案または移植して実装しない。
+2. ArUco3 検出戦略は、2018 年論文のアルゴリズム、数式、公開評価条件を設計根拠とする。
+3. 互換性の確認と不足仕様の特定には、Apache-2.0 の OpenCV 4.x API、source code、test、観測可能な入出力を使用する。
+4. OpenCV code または定義済み Dictionary を利用する場合は、対象 version、commit、file、license、変更内容を code provenance に記録し、必要な copyright と notice を保持する。
+5. Dictionary は公式 ArUco GPLv3 配布物から抽出しない。OpenCV 4.x の Apache-2.0 配布物を正本とするか、公開アルゴリズムから独自生成する。
+6. 論文の本文、図、表、評価画像を repository へ転載しない。必要な内容は引用の範囲を超えない独自の文章、数式参照、実験条件として記述する。
+7. CUDA kernel の分割、memory layout、work queue、同期、Dictionary 照合、corner refinement は本 project の独自設計として記録する。
+8. CPU 基準との比較には OpenCV 4.x を使用し、公式 ArUco GPLv3 binary を build または link した成果物を配布しない。
+9. `ArUco` の名称は互換対象と技術方式を示す目的でのみ使用し、公式実装または Universidad de Córdoba との提携・承認を示唆しない。
+10. 商用製品へ組み込む前に、販売予定国を対象として有効な patent claim の freedom-to-operate review を行う。
+
+## Dictionary の取扱い
+
+`DICT_ARUCO_MIP_36h12` に関する「生成」は、次の処理を区別します。
+
+| 処理 | OpenCV 4.x で可能か | 本 project の扱い |
+| --- | --- | --- |
+| 既定の `DICT_ARUCO_MIP_36h12` を取得する | 可能。`getPredefinedDictionary()` を使用する | CPU 基準および互換データの正本とする |
+| 指定 ID の marker image を生成する | 可能。`Dictionary::generateImageMarker()` を使用する | test fixture の生成に使用できる |
+| 新しい custom Dictionary を生成する | 可能。`extendDictionary()` を使用できる | 既定 MIP Dictionary とは別物として扱う |
+| MILP を解いて既定 MIP Dictionary と同一集合を再生成する | 論文から原理的には実装可能だが、OpenCV API は同一集合の再現を保証しない | 初期 scope 外。solver、制約、seed、tie-break を固定しても byte 単位の一致を別途検証する |
+
+定義済み Dictionary を CUDA の constant memory 等へ変換する場合は、OpenCV の `bytesList` と全 4 回転について byte 単位で比較する test を必須とします。詳細は [Dictionary 方針](dictionaries.md) を参照してください。
 
 ### 使用してよい情報源
 
@@ -97,7 +125,7 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 ## 未確定事項
 
 - 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。
-- ArUco Dictionary の個別データに著作権その他の権利が成立する範囲。
+- OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。
 - patent clearance の対象国と実施担当。
 
 ## 参考資料
@@ -107,3 +135,7 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 - [U.S. Copyright Office: Computer Programs](https://www.copyright.gov/register/tx-programs.html)
 - [OpenCV Issue: ArUco is now GPLv3](https://github.com/opencv/opencv_contrib/issues/2242)
 - [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118)
+- [OpenCV: DetectorParameters](https://docs.opencv.org/4.x/d1/dcd/structcv_1_1aruco_1_1DetectorParameters.html)
+- [OpenCV: Dictionary](https://docs.opencv.org/4.x/d5/d0b/classcv_1_1aruco_1_1Dictionary.html)
+- [OpenCV PR #3151: ArUco3 speedup](https://github.com/opencv/opencv_contrib/pull/3151)
+- [OpenCV: predefined_dictionaries.hpp](https://github.com/opencv/opencv/blob/4.x/modules/objdetect/src/aruco/predefined_dictionaries.hpp)

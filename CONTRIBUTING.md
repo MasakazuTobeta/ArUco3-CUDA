@@ -40,6 +40,10 @@
 - 実装根拠にした論文、仕様、permissive license の source code を `docs/ip-and-licensing.md` または実装の sidecar 文書へ記録する。
 - 公式 ArUco GPLv3 code の構造、表現、コメント、関数分割を移植しない。
 - OpenCV の Apache-2.0 code を改変または一部利用する場合は、対象 file、commit、ライセンス、変更内容を記録し、必要な copyright と notice を保持する。
+- ArUco3 検出戦略の実装根拠は、2018 年の論文と Apache-2.0 の OpenCV 4.x に限定する。公式 ArUco GPLv3 source code は、実装、レビュー、最適化、test data 作成の根拠に使用しない。
+- 定義済み Dictionary は、version と commit を固定した OpenCV 4.x の `predefined_dictionaries.hpp` を正本とする。公式 ArUco GPLv3 配布物から codeword、table、画像を抽出しない。
+- OpenCV の定義済み Dictionary を repository 内へ格納する場合は、取得元 file、commit、license、変換手順、変換前後の hash を記録し、必要な notice を保持する。
+- `extendDictionary()` 等で生成した custom Dictionary を `DICT_ARUCO_MIP_36h12` と同一であるかのように扱わない。既定 Dictionary と custom Dictionary は識別子、metadata、test を分離する。
 - CPU 実装を互換性 oracle として実行しただけの場合も、使用 version と設定を評価結果へ記録する。
 - code provenance が説明できない寄稿は取り込まない。
 - 特許の有無は source code license と別に扱う。商用公開前に必要な patent clearance を行う。

@@ -50,6 +50,7 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 - [プロジェクト概要](docs/project-overview.md)
 - [アーキテクチャ](docs/architecture.md)
 - [評価計画](docs/evaluation-plan.md)
+- [Dictionary 方針](docs/dictionaries.md)
 - [ロードマップ](docs/roadmap.md)
 - [知的財産・ライセンス方針](docs/ip-and-licensing.md)
 - [ADR-0001: 独立リポジトリで先行実装する](docs/adr/0001-independent-implementation.md)
@@ -58,3 +59,5 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 ## ライセンス
 
 本プロジェクトは [Apache License 2.0](LICENSE) で提供します。公式 ArUco の GPLv3 code はコピーまたは翻案しません。詳細は [知的財産・ライセンス方針](docs/ip-and-licensing.md) を参照してください。
+
+実装根拠は ArUco3 論文と Apache-2.0 の OpenCV 4.x に限定します。定義済み Dictionary は GPLv3 の公式 ArUco 配布物から抽出せず、version と commit を固定した OpenCV 4.x のデータを正本として扱います。
