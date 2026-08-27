@@ -17,10 +17,15 @@ name: aruco3-cuda
 x-common: &common
   runtime: nvidia
   working_dir: /workspace
+  # host の user で実行し、bind mount した repository へ root 所有の file を
+  # 作らない。container 内に対応する user は無いが、build と test には支障ない。
+  user: "${ARUCO3_UID:-1000}:${ARUCO3_GID:-1000}"
   environment:
     NVIDIA_VISIBLE_DEVICES: all
     NVIDIA_DRIVER_CAPABILITIES: compute,utility
     ARUCO3_VERIFY_ON_START: "${ARUCO3_VERIFY_ON_START:-0}"
+    # 対応する user が居ないため HOME が未定義になる。tool の cache 書き込み先を与える。
+    HOME: /tmp
   # benchmark 時に測定条件を固定するため、既定の制限を外す。
   ulimits:
     memlock: -1
@@ -42,7 +47,6 @@ services:
     volumes:
       - ${ARUCO3_CUDA_HOST_PATH_DGX:-/usr/local/cuda-13.0}:/usr/local/cuda:ro
       - ..:/workspace
-      - dgx-build:/workspace/build
       - dgx-opencv-cuda:/opt/opencv-cuda
 
   # Jetson Orin (Ampere, sm_87)。実運用を想定した遅延・電力評価環境。
@@ -61,11 +65,10 @@ services:
     volumes:
       - ${ARUCO3_CUDA_HOST_PATH_JETSON:-/usr/local/cuda-11.4}:/usr/local/cuda:ro
       - ..:/workspace
-      - jetson-build:/workspace/build
       - jetson-opencv-cuda:/opt/opencv-cuda
 
 volumes:
-  dgx-build:
-  jetson-build:
+  # CUDA 対応 OpenCV の install 先。既定 image の OpenCV とは分けて保持する。
+  # この volume へ書き込む build-opencv.sh --with-cuda は --user root で実行する。
   dgx-opencv-cuda:
   jetson-opencv-cuda:
