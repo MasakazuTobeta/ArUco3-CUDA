@@ -38,10 +38,18 @@ detect_cpu_model() {
 }
 
 # Jetson の power mode と clock は測定条件に直結するため必ず記録する。
-power_mode=""
-if command -v nvpmodel >/dev/null 2>&1; then
-  power_mode="$(nvpmodel -q 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')"
-fi
+# power mode、clock、driver、L4T release は取得元が機種ごとに異なる。
+# 差の吸収は query-platform-info.sh へ集約する。
+platform_info="$(query-platform-info.sh 2>/dev/null || true)"
+platform_field() {
+  printf '%s\n' "${platform_info}" | sed -n "s/^$1=//p" | head -1
+}
+platform_release="$(platform_field platform_release)"
+power_mode="$(platform_field power_mode)"
+gpu_max_clock_mhz="$(platform_field gpu_max_clock_mhz)"
+gpu_current_clock_mhz="$(platform_field gpu_current_clock_mhz)"
+driver_version_from_platform="$(platform_field driver_version)"
+platform_model="$(platform_field platform_model)"
 
 tmp_output="$(mktemp)"
 trap 'rm -f "${tmp_output}"' EXIT
@@ -73,16 +81,19 @@ jq -n \
   --arg container_profile "${ARUCO3_PROFILE:-unknown}" \
   --arg cuda_arch "${ARUCO3_CUDA_ARCH:-}" \
   --arg nvcc "${nvcc_version}" \
-  --arg driver "$(query_gpu driver_version)" \
+  --arg driver "${driver_version_from_platform}" \
   --arg gpu_name "$(query_gpu name)" \
   --arg gpu_compute_cap "$(query_gpu compute_cap)" \
-  --arg gpu_clock_max_mhz "$(query_gpu clocks.max.sm)" \
+  --arg gpu_clock_max_mhz "${gpu_max_clock_mhz}" \
+  --arg gpu_clock_current_mhz "${gpu_current_clock_mhz}" \
   --arg gcc "$(gcc --version | head -1)" \
   --arg cmake "$(cmake --version | head -1 | awk '{print $3}')" \
   --arg cpu_model "$(detect_cpu_model)" \
   --argjson cpu_online "$(nproc)" \
   --argjson mem_total_kb "$(awk '/MemTotal/{print $2}' /proc/meminfo)" \
   --arg power_mode "${power_mode}" \
+  --arg platform_release "${platform_release}" \
+  --arg platform_model "${platform_model}" \
   --argjson opencv "${opencv_json}" \
   --argjson cuda "${cuda_json}" \
   '{
@@ -94,7 +105,10 @@ jq -n \
        compute_capability: $gpu_compute_cap,
        driver_version: $driver,
        max_sm_clock_mhz: $gpu_clock_max_mhz,
-       power_mode: $power_mode
+       current_sm_clock_mhz: $gpu_clock_current_mhz,
+       power_mode: $power_mode,
+       platform_release: $platform_release,
+       platform_model: $platform_model
      },
      cpu: { model: $cpu_model, online_cores: $cpu_online },
      memory: { total_kb: $mem_total_kb },
