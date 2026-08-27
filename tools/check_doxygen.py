@@ -17,7 +17,7 @@ import re, sys, pathlib
 
 # 対象は自動で探索する。一覧を手で保つと、新しい header を追加したときに
 # 検査から漏れ、欠落があっても合格に見えてしまう。
-HEADER_ROOTS = ["include", "reference", "tools", "bench", "src"]
+HEADER_ROOTS = ["include", "reference", "tools", "bench", "src", "hybrid"]
 
 
 def discover_headers():

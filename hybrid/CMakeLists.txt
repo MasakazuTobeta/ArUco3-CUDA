@@ -3,7 +3,7 @@
 # 案 C のハイブリッド経路。GPU で前処理と二値化を行い、候補抽出と decode を
 # CPU で行う。GPU 側の段階を 1 つずつ置き換える際の基準であり、
 # 案 A が期待どおりに動かない場合の fallback でもある。
-add_library(aruco3cuda_hybrid STATIC hybrid_detector.cpp)
+add_library(aruco3cuda_hybrid STATIC hybrid_detector.cpp cpu_candidates.cpp)
 add_library(aruco3cuda::hybrid ALIAS aruco3cuda_hybrid)
 
 target_include_directories(aruco3cuda_hybrid
