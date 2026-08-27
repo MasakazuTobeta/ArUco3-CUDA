@@ -20,8 +20,14 @@ namespace aruco3cuda::detail {
 /// @param api_name 呼び出した CUDA API 名。静的記憶域を持つ文字列を渡す。
 /// @param stage 処理段階。どの kernel または手順で失敗したかを示す。
 /// @param device_index 対象 device。不明な場合は -1 を渡す。
+/// @param stream 対象 stream。既定 stream または stream を伴わない API では nullptr を渡す。
 /// @return error が cudaSuccess なら Status::kOk、それ以外は Status::kCudaError。
-Status check_cuda(cudaError_t error, const char* api_name, const char* stage, int device_index);
+///
+/// 入力例: check_cuda(cudaErrorInvalidValue, "cudaMemcpyAsync", "upload", 0, stream)
+/// 出力例: Status::kCudaError。last_cuda_error_message() が
+///         "api=cudaMemcpyAsync stage=upload device=0 stream=0x... error=..." を返す
+Status check_cuda(cudaError_t error, const char* api_name, const char* stage, int device_index,
+                  cudaStream_t stream = nullptr);
 
 /// 直近の kernel 起動の失敗を検査する。
 ///
@@ -31,8 +37,10 @@ Status check_cuda(cudaError_t error, const char* api_name, const char* stage, in
 /// @param stage 処理段階。
 /// @param device_index 対象 device。
 /// @param synchronize 同期して実行時エラーまで検出するか。
+/// @param stream 対象 stream。既定 stream の場合は nullptr を渡す。
 /// @return kOk または kCudaError。
-Status check_kernel_launch(const char* stage, int device_index, bool synchronize);
+Status check_kernel_launch(const char* stage, int device_index, bool synchronize,
+                           cudaStream_t stream = nullptr);
 
 }  // namespace aruco3cuda::detail
 

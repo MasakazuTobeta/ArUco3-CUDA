@@ -35,7 +35,26 @@ enum class MemoryMode : int {
     kDevice,
 };
 
+/// Route を評価計画の表記へ変換する。結果 JSONL の識別子に使用する。
+///
+/// @param route 変換対象。列挙に無い値でも nullptr を返さない。
+/// @return 静的記憶域を持つ文字列。呼出側は解放しない。
+///
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: Route::kCudaEndToEnd
+/// 出力例: "CUDA-E2E"
 const char* to_string(Route route);
+
+/// MemoryMode を評価計画の表記へ変換する。
+///
+/// @param mode 変換対象。列挙に無い値でも nullptr を返さない。
+/// @return 静的記憶域を持つ文字列。呼出側は解放しない。
+///
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: MemoryMode::kHostPinned
+/// 出力例: "M-Pinned"
 const char* to_string(MemoryMode mode);
 
 /// 測定条件。
@@ -105,12 +124,28 @@ struct EnvironmentRecord {
     int gpu_current_clock_mhz_ = 0;
     bool gpu_integrated_ = false;
     int cpu_online_cores_ = 0;
+    /// GPU 情報を取得できなかった場合の理由。空なら取得に成功している。
+    /// 無言で項目が欠けることを防ぎ、後から原因を追えるようにする。
+    std::string gpu_probe_error_;
 };
 
 /// 実行環境の情報を収集する。
 ///
 /// GPU 情報は CUDA device が利用できる場合のみ埋まる。取得できない項目は
 /// 空文字列のままとし、推測で埋めない。
+///
+/// @param config 検出設定。OpenCV の thread 数の設定にのみ使用する。
+/// @return 収集した環境情報。取得できなかった項目は空文字列または未設定を示す flag を持つ。
+///
+/// 所有権: 戻り値は値であり、内部の資源を参照しない。
+/// 同期動作: CUDA device の性質取得で CUDA runtime を呼ぶが device 同期は行わない。
+///           power mode と driver version の取得のため外部 command を起動する。
+///
+/// 副作用: config.detector_.num_threads_ が 1 以上なら cv::setNumThreads() を呼び、
+///         以降の OpenCV 処理の thread 数を変更する。測定条件を固定するための意図的な副作用である。
+///
+/// 入力例: 既定の BenchmarkConfig
+/// 出力例: opencv_version_ = "4.14.0"、gpu_name_ = "Orin"、power_mode_ = "MAXN (0)"
 EnvironmentRecord collect_environment(const BenchmarkConfig& config);
 
 /// 1 つの画像を測定する。
@@ -128,9 +163,36 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
                    MeasurementRecord* out_record, std::string* out_error);
 
 /// 環境情報を JSONL の 1 行として書き出す。
+///
+/// 末尾へ改行を 1 つ書く。JSONL は 1 行 1 record であり、この行が結果 file の先頭になる。
+///
+/// @param out 出力先。所有権は呼出側が保持し、この関数は解放も flush も行わない。
+///            書き込み失敗の確認は呼出側の責務である。
+/// @param environment 書き出す環境情報。取得できなかった clock は 0 ではなく null になる。
+/// @return 無し。
+///
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: collect_environment() の戻り値
+/// 出力例: {"type":"environment","schema_version":1,...}
 void write_environment_line(std::ostream& out, const EnvironmentRecord& environment);
 
 /// 測定結果を JSONL の 1 行として書き出す。
+///
+/// 末尾へ改行を 1 つ書く。CPU 経路には kernel 時間が存在しないため、
+/// kernel_time_available_ が false の場合は 0 で埋めず null を出力する。
+/// 0 を書くと集計時に「非常に速い kernel」と誤読されるためである。
+///
+/// @param out 出力先。所有権は呼出側が保持し、この関数は解放も flush も行わない。
+///            書き込み失敗の確認は呼出側の責務である。
+/// @param config 測定条件。経路、memory 種別、検出設定を条件として記録する。
+/// @param record 測定結果。
+/// @return 無し。
+///
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: measure_image() の戻り値と、その測定に使用した BenchmarkConfig
+/// 出力例: {"type":"measurement","route":"CPU",...,"kernel":null,...}
 void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
                             const MeasurementRecord& record);
 

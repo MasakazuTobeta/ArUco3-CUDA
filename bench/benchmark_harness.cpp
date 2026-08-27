@@ -12,6 +12,7 @@
 #include <exception>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <ostream>
 #include <ratio>
 #include <string>
@@ -29,38 +30,59 @@ namespace {
 using aruco3cuda::util::JsonWriter;
 using aruco3cuda::util::SampleStatistics;
 
+/// popen が返す pipe を RAII で保持する。
+///
+/// popen / pclose を手動で対にすると、途中の早期 return や例外で子 process が
+/// 残る。unique_ptr の deleter へ pclose を委ね、経路によらず必ず閉じる。
+struct PipeCloser {
+    void operator()(std::FILE* pipe) const noexcept {
+        if (pipe != nullptr) {
+            pclose(pipe);
+        }
+    }
+};
+using UniquePipe = std::unique_ptr<std::FILE, PipeCloser>;
+
+UniquePipe open_command(const std::string& command) {
+    return UniquePipe(popen(command.c_str(), "r"));
+}
+
 /// command を実行し標準出力を 1 行取得する。取得できない場合は空文字列を返す。
 ///
-/// nvidia-smi や nvpmodel のように、library 経由で取得できない環境情報を
-/// 記録するために使用する。失敗しても測定自体は継続する。
+/// nvpmodel のように library 経由で取得できない環境情報を記録するために使用する。
+/// 失敗しても測定自体は継続する。値が取れないことと空であることを
+/// 呼出側が区別する必要はなく、いずれも「未取得」として扱う。
 std::string read_command_line(const std::string& command) {
     std::array<char, 512> buffer{};
-    // popen は RAII 対象にならないため、この関数内で確実に閉じる。
-    std::FILE* pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
+    const UniquePipe pipe = open_command(command);
+    if (!pipe) {
         return std::string();
     }
     std::string result;
-    if (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+    if (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
         result = buffer.data();
     }
-    pclose(pipe);
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' ||
-                              result.back() == ' ')) {
+    while (!result.empty() &&
+           (result.back() == '\n' || result.back() == '\r' || result.back() == ' ')) {
         result.pop_back();
     }
     return result;
 }
 
 /// command の標準出力を全行取得する。
+///
+/// 想定するのは query-platform-info.sh の数行の出力である。外部 command の
+/// 出力を無制限に取り込まないよう行数の上限を設ける。
 std::vector<std::string> read_command_lines(const std::string& command) {
+    constexpr std::size_t kMaxLines = 256U;
     std::vector<std::string> lines;
     std::array<char, 512> buffer{};
-    std::FILE* pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
+    const UniquePipe pipe = open_command(command);
+    if (!pipe) {
         return lines;
     }
-    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+    while (lines.size() < kMaxLines &&
+           std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
         std::string line = buffer.data();
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
             line.pop_back();
@@ -69,7 +91,6 @@ std::vector<std::string> read_command_lines(const std::string& command) {
             lines.push_back(line);
         }
     }
-    pclose(pipe);
     return lines;
 }
 
@@ -194,7 +215,12 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
         environment.architecture_ = system_info.machine;
     }
     environment.os_ = read_os_pretty_name();
-    environment.cpu_online_cores_ = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
+    // sysconf は失敗時に -1 を返す。core 数として -1 を記録すると
+    // 測定条件の解釈を誤るため、取得できない場合は 0 のままとする。
+    const long online_cores = sysconf(_SC_NPROCESSORS_ONLN);
+    if (online_cores > 0) {
+        environment.cpu_online_cores_ = static_cast<int>(online_cores);
+    }
 
     const aruco3cuda::reference::ReferenceEnvironment detector_environment =
             aruco3cuda::reference::collect_environment(config.detector_);
@@ -202,10 +228,26 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     environment.opencv_threads_ = detector_environment.opencv_threads_;
 
     // GPU 情報。device が無い環境でも測定自体は成立するため、失敗を致命的に扱わない。
+    // ただし無言では継続しない。CUDA 側の失敗は記録し、環境情報から
+    // GPU の項目が欠けている理由を後から追えるようにする。
     int device_count = 0;
-    if (aruco3cuda::device_count(&device_count) == aruco3cuda::Status::kOk && device_count > 0) {
+    const aruco3cuda::Status count_status = aruco3cuda::device_count(&device_count);
+    if (count_status != aruco3cuda::Status::kOk) {
+        environment.gpu_probe_error_ = std::string("device_count が失敗した: ") +
+                                       aruco3cuda::to_string(count_status) + " " +
+                                       aruco3cuda::last_cuda_error_message();
+    } else if (device_count == 0) {
+        environment.gpu_probe_error_ = "CUDA device が 1 つも見つからない";
+    }
+    if (count_status == aruco3cuda::Status::kOk && device_count > 0) {
         aruco3cuda::DeviceProbeResult probe;
-        if (aruco3cuda::probe_device(0, &probe) == aruco3cuda::Status::kOk) {
+        const aruco3cuda::Status probe_status = aruco3cuda::probe_device(0, &probe);
+        if (probe_status != aruco3cuda::Status::kOk) {
+            environment.gpu_probe_error_ = std::string("probe_device が失敗した: ") +
+                                           aruco3cuda::to_string(probe_status) + " " +
+                                           aruco3cuda::last_cuda_error_message();
+        }
+        if (probe_status == aruco3cuda::Status::kOk) {
             // device 名と性質は CUDA から取得する。nvidia-smi が無い環境でも記録できる。
             environment.gpu_name_ = probe.name_;
             environment.gpu_integrated_ = probe.integrated_;
@@ -242,8 +284,21 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
                      " は未実装。現在測定できるのは CPU 経路のみ";
         return false;
     }
+    // 測定条件を境界で検証する。負値は反復 loop を素通りし、
+    // 標本 0 件のまま「測定した」ことになってしまう。
     if (config.latency_iterations_ <= 0) {
-        *out_error = "latency_iterations は 1 以上である必要がある";
+        *out_error = "latency_iterations は 1 以上である必要がある: " +
+                     std::to_string(config.latency_iterations_);
+        return false;
+    }
+    if (config.warmup_iterations_ < 0) {
+        *out_error = "warmup_iterations は 0 以上である必要がある: " +
+                     std::to_string(config.warmup_iterations_);
+        return false;
+    }
+    if (config.throughput_frames_ < 0) {
+        *out_error = "throughput_frames は 0 以上である必要がある: " +
+                     std::to_string(config.throughput_frames_);
         return false;
     }
 
@@ -332,6 +387,8 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     writer.member_string("platform_release", environment.platform_release_);
     writer.member_string("platform_model", environment.platform_model_);
     writer.member_string("power_mode", environment.power_mode_);
+    // GPU 情報が欠けている場合の理由。空なら取得に成功している。
+    writer.member_string("gpu_probe_error", environment.gpu_probe_error_);
     // clock は測定条件に直結する。取得できない場合に 0 を書くと
     // 「clock が 0」と誤読されるため null とする。
     writer.key("gpu_max_clock_mhz");

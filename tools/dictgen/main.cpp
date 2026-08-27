@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <ios>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -269,6 +270,16 @@ int main(int argc, char** argv) {
             std::cerr << "確認対象の file を開けない: " << check_path << '\n';
             return EXIT_FAILURE;
         }
+        // 比較対象は数十 KB と既知である。任意 path を無制限に読み込まないため
+        // 上限を設ける。上限超過は比較の前に失敗として扱う。
+        constexpr std::streamsize kMaxCheckBytes = 16 << 20;  // 16 MiB
+        existing.seekg(0, std::ios::end);
+        const std::streamsize existing_size = existing.tellg();
+        if (existing_size < 0 || existing_size > kMaxCheckBytes) {
+            std::cerr << "確認対象の file が大きすぎるか読み取れない: " << check_path << '\n';
+            return EXIT_FAILURE;
+        }
+        existing.seekg(0, std::ios::beg);
         // istreambuf_iterator は libstdc++ の内部で -Wnull-dereference の
         // 誤検知を招くため、rdbuf 経由で読み込む。
         std::ostringstream buffer;
@@ -289,7 +300,13 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     output << generated;
+    // 書き込み失敗を成功として報告しない。途中で失敗した生成物を
+    // 正しいものとして commit してしまうことを防ぐ。
     output.close();
+    if (!output) {
+        std::cerr << "出力 file への書き込みに失敗した: " << output_path << '\n';
+        return EXIT_FAILURE;
+    }
 
     std::cout << "生成: " << output_path << '\n'
               << "  dictionary=" << dictionary_name << " codes=" << code_count

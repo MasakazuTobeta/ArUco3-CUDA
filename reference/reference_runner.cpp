@@ -11,10 +11,10 @@
 #include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <ios>
 #include <map>
 #include <ostream>
 #include <ratio>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -53,9 +53,9 @@ const std::map<std::string, int>& dictionary_table() {
 
 cv::aruco::DetectorParameters to_detector_parameters(const ReferenceConfig& config) {
     cv::aruco::DetectorParameters params;
-    params.adaptiveThreshWinSizeMin = config.adaptive_thresh_win_size_min_;
-    params.adaptiveThreshWinSizeMax = config.adaptive_thresh_win_size_max_;
-    params.adaptiveThreshWinSizeStep = config.adaptive_thresh_win_size_step_;
+    params.adaptiveThreshWinSizeMin = config.adaptive_thresh_win_size_min_px_;
+    params.adaptiveThreshWinSizeMax = config.adaptive_thresh_win_size_max_px_;
+    params.adaptiveThreshWinSizeStep = config.adaptive_thresh_win_size_step_px_;
     params.adaptiveThreshConstant = config.adaptive_thresh_constant_;
     params.minMarkerPerimeterRate = config.min_marker_perimeter_rate_;
     params.maxMarkerPerimeterRate = config.max_marker_perimeter_rate_;
@@ -92,17 +92,117 @@ double effective_fxfy(const ReferenceConfig& config, int width_px, int height_px
     return side / denominator;
 }
 
+/// 小さな設定 file を読み込む。上限を超える file は読まない。
+///
+/// 外部 file を無制限に memory へ読み込まないため、上限を明示する。
+/// 対象は image が持つ provenance JSON であり、数 KB に収まる。
 std::string read_file_text(const std::string& path) {
-    std::ifstream input(path);
+    constexpr std::streamsize kMaxFileBytes = 1 << 20;  // 1 MiB
+    std::ifstream input(path, std::ios::binary);
     if (!input) {
         return std::string();
     }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    return buffer.str();
+    input.seekg(0, std::ios::end);
+    const std::streamsize size = input.tellg();
+    if (size < 0 || size > kMaxFileBytes) {
+        return std::string();
+    }
+    input.seekg(0, std::ios::beg);
+    std::string content(static_cast<std::size_t>(size), '\0');
+    if (size > 0 && !input.read(content.data(), size)) {
+        return std::string();
+    }
+    return content;
 }
 
 }  // namespace
+
+bool validate_config(const ReferenceConfig& config, std::string* out_error) {
+    if (out_error == nullptr) {
+        return false;
+    }
+    // OpenCV が assert する条件と、値として意味を成さない範囲を検査する。
+    // 検査項目と条件は cv::aruco::DetectorParameters の仕様に対応する。
+    struct IntRange {
+        const char* name;
+        int value;
+        int minimum;
+        int maximum;
+    };
+    const IntRange int_ranges[] = {
+            {"adaptive_thresh_win_size_min", config.adaptive_thresh_win_size_min_px_, 3, 4096},
+            {"adaptive_thresh_win_size_max", config.adaptive_thresh_win_size_max_px_, 3, 4096},
+            {"adaptive_thresh_win_size_step", config.adaptive_thresh_win_size_step_px_, 1, 4096},
+            {"marker_border_bits", config.marker_border_bits_, 1, 16},
+            {"perspective_remove_pixel_per_cell", config.perspective_remove_pixel_per_cell_, 1,
+             256},
+            {"min_distance_to_border_px", config.min_distance_to_border_px_, 0, 4096},
+            {"min_side_length_canonical_img_px", config.min_side_length_canonical_img_px_, 0, 4096},
+            {"num_threads", config.num_threads_, 0, 1024},
+    };
+    for (const IntRange& range : int_ranges) {
+        if (range.value < range.minimum || range.value > range.maximum) {
+            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
+                         std::to_string(range.value) + " (有効範囲 " +
+                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+                         ")";
+            return false;
+        }
+    }
+    if (config.adaptive_thresh_win_size_max_px_ < config.adaptive_thresh_win_size_min_px_) {
+        *out_error = "設定値が矛盾: adaptive_thresh_win_size_max=" +
+                     std::to_string(config.adaptive_thresh_win_size_max_px_) +
+                     " が adaptive_thresh_win_size_min=" +
+                     std::to_string(config.adaptive_thresh_win_size_min_px_) + " より小さい";
+        return false;
+    }
+
+    struct DoubleRange {
+        const char* name;
+        double value;
+        double minimum;
+        double maximum;
+    };
+    const DoubleRange double_ranges[] = {
+            {"min_marker_perimeter_rate", config.min_marker_perimeter_rate_, 0.0, 8.0},
+            {"max_marker_perimeter_rate", config.max_marker_perimeter_rate_, 0.0, 64.0},
+            {"polygonal_approx_accuracy_rate", config.polygonal_approx_accuracy_rate_, 0.0, 1.0},
+            {"min_corner_distance_rate", config.min_corner_distance_rate_, 0.0, 1.0},
+            {"min_marker_distance_rate", config.min_marker_distance_rate_, 0.0, 4.0},
+            {"perspective_remove_ignored_margin_per_cell",
+             config.perspective_remove_ignored_margin_per_cell_, 0.0, 0.5},
+            {"max_erroneous_bits_in_border_rate", config.max_erroneous_bits_in_border_rate_, 0.0,
+             1.0},
+            {"min_otsu_std_dev", config.min_otsu_std_dev_, 0.0, 255.0},
+            {"error_correction_rate", config.error_correction_rate_, 0.0, 1.0},
+            {"adaptive_thresh_constant", config.adaptive_thresh_constant_, -255.0, 255.0},
+            {"min_marker_length_ratio_original_img",
+             static_cast<double>(config.min_marker_length_ratio_original_img_), 0.0, 1.0},
+    };
+    for (const DoubleRange& range : double_ranges) {
+        if (!(range.value >= range.minimum) || !(range.value <= range.maximum)) {
+            // NaN は比較が全て false になるため、この書き方で同時に弾ける。
+            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
+                         std::to_string(range.value) + " (有効範囲 " +
+                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+                         ")";
+            return false;
+        }
+    }
+    if (config.max_marker_perimeter_rate_ <= config.min_marker_perimeter_rate_) {
+        *out_error = "設定値が矛盾: max_marker_perimeter_rate が min_marker_perimeter_rate 以下";
+        return false;
+    }
+    // OpenCV は ArUco3 有効時にこの組み合わせを assert で拒否する。
+    if (config.use_aruco3_detection_ && config.min_side_length_canonical_img_px_ == 0 &&
+        config.min_marker_length_ratio_original_img_ == 0.0F) {
+        *out_error =
+                "設定値が矛盾: use_aruco3_detection が有効で "
+                "min_side_length_canonical_img と min_marker_length_ratio_original_img が共に 0";
+        return false;
+    }
+    return true;
+}
 
 bool is_known_dictionary(const std::string& name) {
     return dictionary_table().find(name) != dictionary_table().end();
@@ -120,6 +220,11 @@ std::vector<std::string> known_dictionary_names() {
 bool detect_image(const std::string& image_path, const ReferenceConfig& config,
                   ReferenceResult* out_result, std::string* out_error) {
     if (out_result == nullptr || out_error == nullptr) {
+        return false;
+    }
+    // 設定値を最初に検証する。範囲外の値を OpenCV へ渡すと cv::Exception が
+    // 送出され、bool と out_error で失敗を通知する契約を破る。
+    if (!validate_config(config, out_error)) {
         return false;
     }
     const auto dictionary_entry = dictionary_table().find(config.dictionary_name_);
@@ -220,9 +325,9 @@ void write_results_json(std::ostream& out, const ReferenceConfig& config,
     writer.key("detector");
     writer.begin_object();
     writer.member_string("dictionary", config.dictionary_name_);
-    writer.member_int("adaptiveThreshWinSizeMin", config.adaptive_thresh_win_size_min_);
-    writer.member_int("adaptiveThreshWinSizeMax", config.adaptive_thresh_win_size_max_);
-    writer.member_int("adaptiveThreshWinSizeStep", config.adaptive_thresh_win_size_step_);
+    writer.member_int("adaptiveThreshWinSizeMin", config.adaptive_thresh_win_size_min_px_);
+    writer.member_int("adaptiveThreshWinSizeMax", config.adaptive_thresh_win_size_max_px_);
+    writer.member_int("adaptiveThreshWinSizeStep", config.adaptive_thresh_win_size_step_px_);
     writer.member_double("adaptiveThreshConstant", config.adaptive_thresh_constant_, 6);
     writer.member_double("minMarkerPerimeterRate", config.min_marker_perimeter_rate_, 6);
     writer.member_double("maxMarkerPerimeterRate", config.max_marker_perimeter_rate_, 6);

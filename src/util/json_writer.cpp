@@ -2,6 +2,7 @@
 #include "aruco3cuda/util/json_writer.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <ostream>
 #include <string>
@@ -151,8 +152,14 @@ void JsonWriter::value_double(double value, int precision) {
         this->out_ << "null";
         return;
     }
+    // 桁数が大きいと固定長 buffer へ収まらない。切り詰めた値を書くと
+    // 実際の値と異なる数値を出力することになるため、収まらない場合は null とする。
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.*f", precision, value);
+    const int written = std::snprintf(buffer, sizeof(buffer), "%.*f", precision, value);
+    if (written < 0 || static_cast<std::size_t>(written) >= sizeof(buffer)) {
+        this->out_ << "null";
+        return;
+    }
     this->out_ << buffer;
 }
 

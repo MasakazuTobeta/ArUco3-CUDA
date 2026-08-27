@@ -7,6 +7,7 @@
 //   CPU 基準結果は互換性の基準であり ground truth ではないため、正確性評価には
 //   生成時に既知である真値が必要になる。
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <fstream>
@@ -31,6 +32,42 @@ void print_usage(std::ostream& out) {
         << "  --canonical-px <n>   マーカー描画の canonical 解像度。既定 512\n"
         << "  --list-presets       preset 名を表示して終了\n"
         << "  --help               この説明を表示して終了\n";
+}
+
+/// 文字列全体が整数として解釈できることを確認する。
+///
+/// std::stoi は末尾の余分な文字を無視するため、"512xyz" が 512 として
+/// 無言で受理される。外部入力である argv を信頼せず、全体一致を要求する。
+bool parse_int_strict(const std::string& text, int* out) {
+    try {
+        std::size_t consumed = 0;
+        const int value = std::stoi(text, &consumed);
+        if (consumed != text.size()) {
+            return false;
+        }
+        *out = value;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+/// 文字列全体が符号なし整数として解釈できることを確認する。
+bool parse_uint64_strict(const std::string& text, std::uint64_t* out) {
+    if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const unsigned long long value = std::stoull(text, &consumed);
+        if (consumed != text.size()) {
+            return false;
+        }
+        *out = static_cast<std::uint64_t>(value);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 }  // namespace
@@ -67,9 +104,24 @@ int main(int argc, char** argv) {
             } else if (option == "--dictionary") {
                 config.dictionary_name_ = value;
             } else if (option == "--seed") {
-                config.seed_ = std::stoull(value);
+                if (!parse_uint64_strict(value, &config.seed_)) {
+                    std::cerr << "--seed は符号なし整数である必要がある: " << value << '\n';
+                    return EXIT_FAILURE;
+                }
             } else if (option == "--canonical-px") {
-                config.canonical_marker_px_ = std::stoi(value);
+                int canonical_px = 0;
+                if (!parse_int_strict(value, &canonical_px)) {
+                    std::cerr << "--canonical-px は整数である必要がある: " << value << '\n';
+                    return EXIT_FAILURE;
+                }
+                // 上限は memory 使用量から決める。範囲は corpus_generator の
+                // validate_scene と一致させる。
+                if (canonical_px < 8 || canonical_px > 8192) {
+                    std::cerr << "--canonical-px は 8 以上 8192 以下である必要がある: "
+                              << canonical_px << '\n';
+                    return EXIT_FAILURE;
+                }
+                config.canonical_marker_px_ = canonical_px;
             } else {
                 std::cerr << "未知の option: " << option << '\n';
                 print_usage(std::cerr);
@@ -109,6 +161,13 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     aruco3cuda::corpusgen::write_manifest_json(manifest, config, preset, scenes);
+    // 書き込み失敗を成功として報告しない。manifest が欠けると corpus を
+    // 後から参照できなくなる。
+    manifest.close();
+    if (!manifest) {
+        std::cerr << "manifest への書き込みに失敗した: " << manifest_path << '\n';
+        return EXIT_FAILURE;
+    }
 
     std::size_t marker_total = 0;
     for (const auto& scene : scenes) {

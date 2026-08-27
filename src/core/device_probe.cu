@@ -11,7 +11,9 @@
 namespace aruco3cuda {
 namespace {
 
-constexpr int kSelfTestElementCount = 256;
+// block size の倍数にしない。倍数にすると kernel の範囲外判定
+// `index < count` が常に真になり、境界条件の分岐が一度も実行されない。
+constexpr int kSelfTestElementCount = 250;
 constexpr int kSelfTestBlockSize = 128;
 
 /// 自己診断用の最小 kernel。
@@ -90,6 +92,14 @@ Status run_device_self_test(int device_index) {
         return Status::kInvalidArgument;
     }
 
+    // 呼出 thread の current device を変更するため、終了時に元へ戻す。
+    // 戻さないと、この関数を呼んだだけで以降の CUDA 呼び出しの対象 device が変わる。
+    int previous_device = 0;
+    const Status get_status = detail::check_cuda(cudaGetDevice(&previous_device), "cudaGetDevice",
+                                                 "run_device_self_test", device_index);
+    if (get_status != Status::kOk) {
+        return get_status;
+    }
     const Status set_status = detail::check_cuda(cudaSetDevice(device_index), "cudaSetDevice",
                                                  "run_device_self_test", device_index);
     if (set_status != Status::kOk) {
@@ -131,6 +141,14 @@ Status run_device_self_test(int device_index) {
                                                   "run_device_self_test", device_index);
     if (result == Status::kOk) {
         result = free_status;
+    }
+
+    // current device を呼出前の値へ戻す。復元の失敗も元のエラーを上書きしない。
+    const Status restore_status =
+            detail::check_cuda(cudaSetDevice(previous_device), "cudaSetDevice",
+                               "run_device_self_test.restore", previous_device);
+    if (result == Status::kOk) {
+        result = restore_status;
     }
     return result;
 }

@@ -9,21 +9,24 @@ namespace aruco3cuda::detail {
 
 // status.cpp が保持する thread_local buffer へ記録する。
 void store_cuda_error_message(const char* api_name, const char* stage, int device_index,
-                              const char* cuda_error_name, const char* cuda_error_string);
+                              const void* stream, const char* cuda_error_name,
+                              const char* cuda_error_string);
 
-Status check_cuda(cudaError_t error, const char* api_name, const char* stage, int device_index) {
+Status check_cuda(cudaError_t error, const char* api_name, const char* stage, int device_index,
+                  cudaStream_t stream) {
     if (error == cudaSuccess) {
         return Status::kOk;
     }
-    store_cuda_error_message(api_name, stage, device_index, cudaGetErrorName(error),
-                             cudaGetErrorString(error));
+    store_cuda_error_message(api_name, stage, device_index, static_cast<const void*>(stream),
+                             cudaGetErrorName(error), cudaGetErrorString(error));
     return Status::kCudaError;
 }
 
-Status check_kernel_launch(const char* stage, int device_index, bool synchronize) {
+Status check_kernel_launch(const char* stage, int device_index, bool synchronize,
+                           cudaStream_t stream) {
     // 起動自体の失敗を先に確認する。ここで sticky でないエラーが解消される。
     const Status launch_status =
-            check_cuda(cudaGetLastError(), "cudaGetLastError", stage, device_index);
+            check_cuda(cudaGetLastError(), "cudaGetLastError", stage, device_index, stream);
     if (launch_status != Status::kOk) {
         return launch_status;
     }
@@ -31,7 +34,13 @@ Status check_kernel_launch(const char* stage, int device_index, bool synchronize
         return Status::kOk;
     }
     // 非同期実行中の失敗は同期しなければ検出できない。
-    return check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize", stage, device_index);
+    // stream が指定されていればその stream のみを、無ければ device 全体を待つ。
+    if (stream != nullptr) {
+        return check_cuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize", stage,
+                          device_index, stream);
+    }
+    return check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize", stage, device_index,
+                      nullptr);
 }
 
 }  // namespace aruco3cuda::detail

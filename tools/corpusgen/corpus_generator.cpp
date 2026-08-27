@@ -95,11 +95,11 @@ bool quad_inside_image(const std::array<cv::Point2d, 4>& quad, int width_px, int
 }
 
 /// 決定的な Gaussian noise を加える。OpenCV の大域 RNG を使わない。
-void add_noise(cv::Mat& image, std::mt19937_64& rng, double sigma) {
-    if (sigma <= 0.0) {
+void add_noise(cv::Mat& image, std::mt19937_64& rng, double sigma_levels) {
+    if (sigma_levels <= 0.0) {
         return;
     }
-    std::normal_distribution<double> distribution(0.0, sigma);
+    std::normal_distribution<double> distribution(0.0, sigma_levels);
     for (int row = 0; row < image.rows; ++row) {
         auto* pixels = image.ptr<std::uint8_t>(row);
         for (int col = 0; col < image.cols; ++col) {
@@ -130,6 +130,77 @@ void apply_illumination(cv::Mat& image, double strength) {
 }
 
 }  // namespace
+
+bool validate_scene(const CorpusConfig& config, const SceneSpec& spec, std::string* out_error) {
+    if (out_error == nullptr) {
+        return false;
+    }
+    struct IntRange {
+        const char* name;
+        int value;
+        int minimum;
+        int maximum;
+    };
+    // canonical 解像度の上限は memory 使用量から決める。1 marker あたり
+    // canonical_marker_px^2 byte を確保するため、8192 で 64 MiB になる。
+    const IntRange int_ranges[] = {
+            {"width_px", spec.width_px_, 1, 65536},
+            {"height_px", spec.height_px_, 1, 65536},
+            {"marker_count", spec.marker_count_, 0, 4096},
+            {"canonical_marker_px", config.canonical_marker_px_, 8, 8192},
+            {"marker_border_bits", config.marker_border_bits_, 1, 16},
+    };
+    for (const IntRange& range : int_ranges) {
+        if (range.value < range.minimum || range.value > range.maximum) {
+            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
+                         std::to_string(range.value) + " (有効範囲 " +
+                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+                         ")";
+            return false;
+        }
+    }
+    // OpenCV の generateImageMarker は辺長が border 込みの cell 数以上を要求する。
+    if (config.canonical_marker_px_ < config.marker_border_bits_ * 2 + 1) {
+        *out_error = "設定値が矛盾: canonical_marker_px が marker_border_bits に対して小さすぎる";
+        return false;
+    }
+
+    struct DoubleRange {
+        const char* name;
+        double value;
+        double minimum;
+        double maximum;
+    };
+    const DoubleRange double_ranges[] = {
+            {"marker_side_px", spec.marker_side_px_, 1.0, 65536.0},
+            {"rotation_deg", spec.rotation_deg_, -360.0, 360.0},
+            {"perspective_strength", spec.perspective_strength_, 0.0, 1.0},
+            {"blur_sigma_px", spec.blur_sigma_px_, 0.0, 256.0},
+            {"noise_sigma_levels", spec.noise_sigma_levels_, 0.0, 255.0},
+            {"illumination_strength", spec.illumination_strength_, 0.0, 1.0},
+            {"occlusion_ratio", spec.occlusion_ratio_, 0.0, 1.0},
+    };
+    for (const DoubleRange& range : double_ranges) {
+        // NaN は比較が全て false になるため、この書き方で同時に弾ける。
+        if (!(range.value >= range.minimum) || !(range.value <= range.maximum)) {
+            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
+                         std::to_string(range.value) + " (有効範囲 " +
+                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+                         ")";
+            return false;
+        }
+    }
+    if (spec.marker_count_ > 0 &&
+        (spec.marker_side_px_ > spec.width_px_ || spec.marker_side_px_ > spec.height_px_)) {
+        *out_error = "設定値が矛盾: marker_side_px が画像寸法を超えている";
+        return false;
+    }
+    if (spec.name_.empty()) {
+        *out_error = "scene 名が空である。出力 file 名を決められない";
+        return false;
+    }
+    return true;
+}
 
 double minimum_detectable_side_px(int min_side_length_canonical_img_px, int longest_image_side_px,
                                   double min_marker_length_ratio_original_img) {
@@ -176,8 +247,8 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
         degraded.marker_side_px_ = 128;
         degraded.rotation_deg_ = 23.0;
         degraded.perspective_strength_ = 0.3;
-        degraded.blur_sigma_ = 1.2;
-        degraded.noise_sigma_ = 5.0;
+        degraded.blur_sigma_px_ = 1.2;
+        degraded.noise_sigma_levels_ = 5.0;
         degraded.illumination_strength_ = 0.4;
         specs.push_back(degraded);
     } else if (preset == "basic" || preset == "full") {
@@ -207,8 +278,8 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
             const char* name;
             double rotation_deg;
             double perspective;
-            double blur;
-            double noise;
+            double blur_sigma_px;
+            double noise_sigma_levels;
             double illumination;
             double occlusion;
             bool border_clip;
@@ -235,8 +306,8 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
                 spec.marker_side_px_ = 96;
                 spec.rotation_deg_ = degradation.rotation_deg;
                 spec.perspective_strength_ = degradation.perspective;
-                spec.blur_sigma_ = degradation.blur;
-                spec.noise_sigma_ = degradation.noise;
+                spec.blur_sigma_px_ = degradation.blur_sigma_px;
+                spec.noise_sigma_levels_ = degradation.noise_sigma_levels;
                 spec.illumination_strength_ = degradation.illumination;
                 spec.occlusion_ratio_ = degradation.occlusion;
                 spec.allow_border_clip_ = degradation.border_clip;
@@ -261,8 +332,7 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
         *out_error = "未対応の Dictionary: " + config.dictionary_name_;
         return false;
     }
-    if (spec.width_px_ <= 0 || spec.height_px_ <= 0 || spec.marker_count_ < 0) {
-        *out_error = "scene spec の寸法または個数が不正: " + spec.name_;
+    if (!validate_scene(config, spec, out_error)) {
         return false;
     }
 
@@ -361,12 +431,12 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
     }
 
     // 劣化は配置の後に画像全体へ適用する。順序を固定して再現性を保つ。
-    if (spec.blur_sigma_ > 0.0) {
-        cv::GaussianBlur(scene, scene, cv::Size(0, 0), spec.blur_sigma_, spec.blur_sigma_,
+    if (spec.blur_sigma_px_ > 0.0) {
+        cv::GaussianBlur(scene, scene, cv::Size(0, 0), spec.blur_sigma_px_, spec.blur_sigma_px_,
                          cv::BORDER_REPLICATE);
     }
     apply_illumination(scene, spec.illumination_strength_);
-    add_noise(scene, rng, spec.noise_sigma_);
+    add_noise(scene, rng, spec.noise_sigma_levels_);
 
     // 出力先が無ければ作る。imwrite は directory を作らない。
     std::error_code directory_error;
@@ -420,8 +490,8 @@ void write_manifest_json(std::ostream& out, const CorpusConfig& config, const st
         writer.member_double("marker_side_px", scene.spec_.marker_side_px_, 3);
         writer.member_double("rotation_deg", scene.spec_.rotation_deg_, 3);
         writer.member_double("perspective_strength", scene.spec_.perspective_strength_, 3);
-        writer.member_double("blur_sigma", scene.spec_.blur_sigma_, 3);
-        writer.member_double("noise_sigma", scene.spec_.noise_sigma_, 3);
+        writer.member_double("blur_sigma_px", scene.spec_.blur_sigma_px_, 3);
+        writer.member_double("noise_sigma_levels", scene.spec_.noise_sigma_levels_, 3);
         writer.member_double("illumination_strength", scene.spec_.illumination_strength_, 3);
         writer.member_double("occlusion_ratio", scene.spec_.occlusion_ratio_, 3);
         writer.member_bool("allow_border_clip", scene.spec_.allow_border_clip_);

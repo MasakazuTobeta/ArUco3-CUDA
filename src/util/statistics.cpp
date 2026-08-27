@@ -14,7 +14,12 @@ double percentile_nearest_rank(const std::vector<double>& sorted_samples, double
     }
     const double count = static_cast<double>(sorted_samples.size());
     // nearest-rank 法。順位は 1 起点であるため index へ変換する際に 1 を引く。
-    const auto rank = static_cast<std::size_t>(std::ceil(percentile / 100.0 * count));
+    //
+    // percentile > 0 かつ count >= 1 であれば rank は 1 以上になるが、
+    // 極端に小さい percentile での丸めに備えて下限を明示する。符号なしの
+    // 減算であり、0 から 1 を引くと wrap around して範囲外参照になるため。
+    const auto raw_rank = static_cast<std::size_t>(std::ceil(percentile / 100.0 * count));
+    const std::size_t rank = std::max<std::size_t>(raw_rank, 1U);
     const std::size_t index = std::min(rank, sorted_samples.size()) - 1U;
     return sorted_samples[index];
 }

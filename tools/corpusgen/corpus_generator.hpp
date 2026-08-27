@@ -25,10 +25,10 @@ struct SceneSpec {
     double rotation_deg_ = 0.0;
     /// 射影歪みの強さ。0 で歪みなし、1 で辺長の 25% まで四隅をずらす。
     double perspective_strength_ = 0.0;
-    /// Gaussian ぼけの標準偏差 (pixel)。0 で無効。
-    double blur_sigma_ = 0.0;
-    /// 加算 Gaussian noise の標準偏差 (階調)。0 で無効。
-    double noise_sigma_ = 0.0;
+    /// Gaussian ぼけの標準偏差。単位は pixel。0 で無効。
+    double blur_sigma_px_ = 0.0;
+    /// 加算 Gaussian noise の標準偏差。単位は階調 (0 から 255)。0 で無効。
+    double noise_sigma_levels_ = 0.0;
     /// 照度勾配の強さ。0 で均一、1 で画像端が 50% まで暗くなる。
     double illumination_strength_ = 0.0;
     /// マーカーを覆う遮蔽の面積比。0 で遮蔽なし。
@@ -73,6 +73,20 @@ struct CorpusConfig {
     int canonical_marker_px_ = 512;
     int marker_border_bits_ = 1;
 };
+
+/// corpus 設定と scene spec が有効な範囲にあるかを検証する。
+///
+/// 範囲外の値は OpenCV の assert を踏むか、巨大な memory 確保を招く。
+/// generate_scene は最初にこの検証を行う。
+///
+/// @param config corpus 全体の設定。
+/// @param spec 対象 scene の条件。
+/// @param out_error 失敗時に「項目名=値」を含む理由を格納する。nullptr は不可。
+/// @return 全ての項目が有効なら true。
+///
+/// 入力例: canonical_marker_px_ = 0 の config
+/// 出力例: false、out_error に "canonical_marker_px=0" を含む文字列
+bool validate_scene(const CorpusConfig& config, const SceneSpec& spec, std::string* out_error);
 
 /// ArUco3 設定のもとで検出対象となる最小の辺長 (pixel) を返す。
 ///

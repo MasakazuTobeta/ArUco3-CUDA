@@ -58,10 +58,13 @@ namespace detail {
 
 /// CUDA エラーの説明を記録する。cuda_check.cpp から使用する。
 void store_cuda_error_message(const char* api_name, const char* stage, int device_index,
-                              const char* cuda_error_name, const char* cuda_error_string) {
+                              const void* stream, const char* cuda_error_name,
+                              const char* cuda_error_string) {
+    // stream も文脈へ含める。複数 stream を並行して使う段階で、
+    // どの stream の失敗かを特定できないと原因を絞り込めない。
     std::snprintf(g_cuda_error_message, kCudaErrorMessageCapacity,
-                  "api=%s stage=%s device=%d error=%s (%s)", api_name, stage, device_index,
-                  cuda_error_name, cuda_error_string);
+                  "api=%s stage=%s device=%d stream=%p error=%s (%s)", api_name, stage,
+                  device_index, stream, cuda_error_name, cuda_error_string);
 }
 
 }  // namespace detail

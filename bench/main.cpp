@@ -7,6 +7,7 @@
 //   結果は JSONL で出力し、1 行目に環境情報、以降に測定結果を並べる。
 #include <cstdlib>
 #include <exception>
+#include <string>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -57,6 +58,18 @@ bool parse_route(const std::string& name, Route* out) {
     return false;
 }
 
+/// 解析した整数が指定範囲にあることを確認する。
+///
+/// 外部入力である argv を信頼せず、範囲外の値を測定条件へ書き込まない。
+bool check_range(const std::string& option, int value, int minimum, int maximum) {
+    if (value < minimum || value > maximum) {
+        std::cerr << option << " は " << minimum << " 以上 " << maximum << " 以下である必要がある: "
+                  << value << '\n';
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -90,22 +103,50 @@ int main(int argc, char** argv) {
                     return EXIT_FAILURE;
                 }
             } else if (option == "--warmup") {
-                config.warmup_iterations_ = std::stoi(value);
+                const int parsed = std::stoi(value);
+                if (!check_range(option, parsed, 0, 100000)) {
+                    return EXIT_FAILURE;
+                }
+                config.warmup_iterations_ = parsed;
             } else if (option == "--latency-iterations") {
-                config.latency_iterations_ = std::stoi(value);
+                const int parsed = std::stoi(value);
+                if (!check_range(option, parsed, 1, 1000000)) {
+                    return EXIT_FAILURE;
+                }
+                config.latency_iterations_ = parsed;
             } else if (option == "--throughput-frames") {
-                config.throughput_frames_ = std::stoi(value);
+                const int parsed = std::stoi(value);
+                if (!check_range(option, parsed, 0, 1000000)) {
+                    return EXIT_FAILURE;
+                }
+                config.throughput_frames_ = parsed;
             } else if (option == "--dictionary") {
                 config.detector_.dictionary_name_ = value;
             } else if (option == "--threads") {
-                config.detector_.num_threads_ = std::stoi(value);
+                const int parsed = std::stoi(value);
+                if (!check_range(option, parsed, 0, 1024)) {
+                    return EXIT_FAILURE;
+                }
+                config.detector_.num_threads_ = parsed;
             } else if (option == "--use-aruco3") {
-                config.detector_.use_aruco3_detection_ = std::stoi(value) != 0;
+                const int parsed = std::stoi(value);
+                if (!check_range(option, parsed, 0, 1)) {
+                    return EXIT_FAILURE;
+                }
+                config.detector_.use_aruco3_detection_ = parsed != 0;
             } else if (option == "--min-marker-length-ratio") {
-                config.detector_.min_marker_length_ratio_original_img_ =
-                        std::stof(value);
+                const float parsed = std::stof(value);
+                if (!(parsed >= 0.0F) || !(parsed <= 1.0F)) {
+                    std::cerr << option << " は 0 以上 1 以下である必要がある: " << parsed << '\n';
+                    return EXIT_FAILURE;
+                }
+                config.detector_.min_marker_length_ratio_original_img_ = parsed;
             } else if (option == "--min-side-length-canonical") {
-                config.detector_.min_side_length_canonical_img_px_ = std::stoi(value);
+                const int parsed = std::stoi(value);
+                if (!check_range(option, parsed, 0, 4096)) {
+                    return EXIT_FAILURE;
+                }
+                config.detector_.min_side_length_canonical_img_px_ = parsed;
             } else {
                 std::cerr << "未知の option: " << option << '\n';
                 print_usage(std::cerr);
@@ -148,6 +189,21 @@ int main(int argc, char** argv) {
         std::cerr << input << ": p50=" << record.end_to_end_ms_.p50_
                   << " ms p95=" << record.end_to_end_ms_.p95_
                   << " ms p99=" << record.end_to_end_ms_.p99_ << " ms\n";
+    }
+
+    // 書き込み失敗を成功として報告しない。測定結果の欠落は後から気付けない。
+    if (output_path.empty()) {
+        std::cout.flush();
+        if (!std::cout) {
+            std::cerr << "標準出力への書き込みに失敗した\n";
+            return EXIT_FAILURE;
+        }
+    } else {
+        file_output.close();
+        if (!file_output) {
+            std::cerr << "出力 file への書き込みに失敗した: " << output_path << '\n';
+            return EXIT_FAILURE;
+        }
     }
     return EXIT_SUCCESS;
 }

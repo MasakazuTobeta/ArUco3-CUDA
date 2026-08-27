@@ -16,9 +16,10 @@ namespace aruco3cuda::reference {
 struct ReferenceConfig {
     std::string dictionary_name_ = "DICT_ARUCO_MIP_36h12";
 
-    int adaptive_thresh_win_size_min_ = 3;
-    int adaptive_thresh_win_size_max_ = 23;
-    int adaptive_thresh_win_size_step_ = 10;
+    /// 適応的二値化の window 辺長。単位は pixel。
+    int adaptive_thresh_win_size_min_px_ = 3;
+    int adaptive_thresh_win_size_max_px_ = 23;
+    int adaptive_thresh_win_size_step_px_ = 10;
     double adaptive_thresh_constant_ = 7.0;
     double min_marker_perimeter_rate_ = 0.03;
     double max_marker_perimeter_rate_ = 4.0;
@@ -77,6 +78,20 @@ struct ReferenceEnvironment {
     int opencv_threads_ = 0;
     std::string opencv_provenance_json_;  ///< image 内 provenance の生の JSON。空なら未取得
 };
+
+/// 検出設定が有効な範囲にあるかを検証する。
+///
+/// 範囲外の値をそのまま OpenCV へ渡すと cv::Exception が送出され、
+/// bool と out_error で失敗を通知する契約を破って呼出側へ抜ける。
+/// detect_image は最初にこの検証を行う。
+///
+/// @param config 検証対象。
+/// @param out_error 失敗時に「項目名=値」を含む理由を格納する。nullptr は不可。
+/// @return 全ての項目が有効なら true。
+///
+/// 入力例: adaptive_thresh_win_size_min_ = 2 の config
+/// 出力例: false、out_error に "adaptive_thresh_win_size_min=2" を含む文字列
+bool validate_config(const ReferenceConfig& config, std::string* out_error);
 
 /// 名前から OpenCV の定義済み Dictionary を解決できるか確認する。
 ///

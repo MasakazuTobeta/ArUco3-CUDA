@@ -46,12 +46,27 @@ struct DictionaryMatch {
 /// 収録されている定義済み Dictionary の数を返す。
 std::size_t builtin_dictionary_count();
 
-/// index 番目の定義済み Dictionary を返す。範囲外では nullptr を返す。
+/// index 番目の定義済み Dictionary を返す。
+///
+/// @param index 0 以上 builtin_dictionary_count() 未満。範囲外では nullptr を返す。
+/// @return 静的記憶域を持つ table への pointer。呼出側は解放しない。
+///
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: 0
+/// 出力例: name_ が "DICT_ARUCO_MIP_36h12" の table
 const DictionaryTable* builtin_dictionary_at(std::size_t index);
 
-/// 名前から定義済み Dictionary を探す。見つからない場合は nullptr を返す。
+/// 名前から定義済み Dictionary を探す。
+///
+/// @param name 探す名前。nullptr を渡してよく、その場合は nullptr を返す。
+/// @return 静的記憶域を持つ table への pointer。見つからない場合は nullptr。
+///         呼出側は解放しない。
+///
+/// 同期動作: host 専用であり同期点を持たない。
 ///
 /// 入力例: "DICT_ARUCO_MIP_36h12"
+/// 出力例: marker_size_ = 6、code_count_ = 250 の table
 const DictionaryTable* find_builtin_dictionary(const char* name);
 
 /// 候補の bit 列を Dictionary と照合する。
@@ -96,6 +111,17 @@ Status minimum_hamming_distance(const DictionaryTable& table, int* out_distance)
 Status pack_marker_code(const std::uint8_t* bits, int marker_size, MarkerCode* out);
 
 /// MarkerCode を bit 配列へ展開する。pack_marker_code の逆変換。
+///
+/// @param code 展開対象。
+/// @param marker_size 1 辺の bit 数。1 以上 7 以下。
+/// @param out_bits 展開先。marker_size * marker_size 要素以上の領域が必要であり、
+///                 領域の確保と解放は呼出側の責務である。各要素へ 0 または 1 を書く。
+/// @return kOk。out_bits が nullptr、または marker_size が範囲外なら kInvalidArgument。
+///
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: code = 0b101、marker_size = 2
+/// 出力例: out_bits = {1, 0, 1, 0}
 Status unpack_marker_code(MarkerCode code, int marker_size, std::uint8_t* out_bits);
 
 /// bit 配列を反時計回りに 90 度回転した MarkerCode を返す。
