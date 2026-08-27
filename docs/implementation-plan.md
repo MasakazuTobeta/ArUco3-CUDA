@@ -69,7 +69,8 @@ ArUco3-CUDA/
 ├── tools/
 │   ├── dictgen/               作成済み。OpenCV から packed codeword を生成する
 │   ├── corpusgen/             作成済み。ground truth 付き合成画像生成器
-│   └── report/                差異分類と集計 script
+│   └── report/                作成済み。差異分類と集計
+├── hybrid/                    作成済み。案 C のハイブリッド経路
 ├── reference/                 作成済み。OpenCV CPU 基準 runner
 ├── bench/                     作成済み。測定 harness と集計 script
 ├── test/
@@ -192,6 +193,8 @@ ArUco3 が検出対象とする最小辺長は `tau_i` そのものではなく 
 
 #### Phase 1: ハイブリッド最小成立版
 
+WP-1.6 の差分レポート tool は、CPU 基準と評価対象を同じ画像へ適用し、差異を未検出・過検出・ID 不一致・rotation 不一致・四隅ずれの 5 種類へ分類します。対応付けは ID ではなく重心の近さで行います。ID で対応を取ると、ID を読み違えた場合に未検出と過検出が 1 件ずつ計上され、実際に起きたこと (同じマーカーの ID を誤った) が読み取れなくなるためです。rotation 不一致は、四隅の並びを巡回させると許容差内に収まる場合として判定します。OpenCV の `detectMarkers` は回転量を返さず、回転を四隅の並びへ畳み込むため、この判定が回転の差を見る唯一の手段になります。
+
 WP-1.5 の案 C ハイブリッド経路は、GPU で pyramid・segmentation・適応的二値化を行い、二値化画像と pyramid を host へ戻して、候補抽出から decode までを CPU で行います。合成 12 場面 x 設定 3 通り (ArUco3 有効、OpenCV 既定、OpenCV 既定 + subpixel 補正) の計 36 比較で、CPU 基準との差は未検出 0、過検出 0、四隅の最大差 0.0000 pixel でした。DGX Spark と Jetson AGX Orin の双方で同じ結果です。
 
 四隅が一致するには、近接候補の grouping を OpenCV と同じにする必要がありました。適応的二値化は window を 3 通り試すため、同じマーカーから少しずつ違う候補が得られます。OpenCV は識別の前に候補を周長の降順へ並べ、近接するものを 1 グループにまとめ、グループ内で最大周長の候補を代表に選びます。当初はこの grouping を省き識別後に ID と位置で重複を落としていましたが、最小 window 由来の小さい候補が残るため四隅が内側へ寄り、原寸へ戻した時点で 7.9 pixel の差になりました。OpenCV と同じ grouping、包含関係の木、親候補の識別打ち切りまで実装した結果、差は 0 になりました。この作業は当初 WP-2.5 に置いていたものを前倒ししたものです。
@@ -217,9 +220,9 @@ WP-1.2 の workspace は bump pointer 方式の arena です。段階ごとの b
 | WP-1.3 | S1 pyramid と S2 segmentation の kernel | `src/core/preprocess.{hpp,cu}` | OpenCV の縮小結果との差が定めた許容内に収まる。達成済み | WP-1.2 | M |
 | WP-1.4 | S3 適応的二値化 kernel | `src/core/threshold.{hpp,cu}` | 3 通りの window size で CPU 基準の二値化と一致率が許容内。完全一致を達成 | WP-1.3 | M |
 | WP-1.5 | 案 C ハイブリッド経路 | `hybrid/hybrid_detector.{hpp,cpp}` | 合成画像の基本条件で ID と四隅を取得できる。36 比較で四隅の差 0.0000 pixel を達成 | WP-1.4、WP-0.3 | M |
-| WP-1.6 | 差分レポート tool | `tools/report` | 差異を未検出・過検出・ID 不一致・rotation 不一致・四隅ずれへ分類できる | WP-1.5 | S |
+| WP-1.6 | 差分レポート tool | `tools/report` | 差異を未検出・過検出・ID 不一致・rotation 不一致・四隅ずれへ分類できる。達成済み | WP-1.5 | S |
 
-G1 の完了条件: 合成画像の基本条件で ID と四隅を取得でき、CPU 基準結果との差異が分類できること。
+G1 の完了条件: 合成画像の基本条件で ID と四隅を取得でき、CPU 基準結果との差異が分類できること。**達成済み**。ID と四隅は WP-1.5 で取得でき、差異の分類は WP-1.6 の `aruco3cuda_report` が行います。合成 corpus に対する一致は `cli.report.matches_reference` として ctest へ登録し、差異が出れば test が失敗します。
 
 #### Phase 2: GPU 候補抽出
 
@@ -311,11 +314,11 @@ CUDA device code は host coverage と別に、入力分割と境界値で実行
 
 | 指標 | 現状 | 目標 |
 | --- | --- | --- |
-| C0 (line) | 89.8% (2515 / 2802) | 100% |
-| C1 (decision) | 81.8% (737 / 901) | 100% |
-| function | 99.4% (155 / 156) | 100% |
+| C0 (line) | 90.0% (2885 / 3205) | 100% |
+| C1 (decision) | 82.5% (813 / 986) | 100% |
+| function | 99.4% (173 / 174) | 100% |
 
-規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 287 行の内訳は次のとおりです。
+規約は 100% を目標とし、未達の場合は対象外理由の記録を求めます。未到達 320 行の内訳は次のとおりです。
 
 | 分類 | 内容 | 扱い |
 | --- | --- | --- |
@@ -329,7 +332,7 @@ CUDA device code は host coverage と別に、入力分割と境界値で実行
 
 `main.cpp` の CLI 層は `test/cli/` の ctest から実行 file を起動して測定に含めています。未到達分は上記の外部資源の失敗経路が中心です。
 
-CUDA 経路の実装が入る Phase 1 以降、この表を更新します。
+この表は Phase の完了ごとに更新します。上の値は Phase 1 完了時点のものです。
 
 ### 評価計画へ反映した変更
 
