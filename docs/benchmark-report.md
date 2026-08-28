@@ -258,4 +258,5 @@ python3 bench/aggregate.py results.jsonl
 - [実装計画](implementation-plan.md)
 - [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
 - [ADR-0003: 四角形候補抽出は案 A を主案とする](adr/0003-candidate-extraction-approach.md)
+- [host と device の間の memory 受け渡し](design/memory-transfer.md)
 - [測定 harness](../bench/benchmark_harness.md)

@@ -75,6 +75,7 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 - [検出パイプライン設計](docs/design/detector-pipeline.md)
 - [公開 API 草案](docs/design/public-api.md)
 - [Docker 環境設計](docs/design/docker-environment.md)
+- [host と device の間の memory 受け渡し](docs/design/memory-transfer.md)
 - [実装計画](docs/implementation-plan.md)
 - [評価計画](docs/evaluation-plan.md)
 - [Benchmark 報告](docs/benchmark-report.md)
