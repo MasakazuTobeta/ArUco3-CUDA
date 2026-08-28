@@ -81,6 +81,13 @@ struct DetectorConfig {
     double max_erroneous_bits_in_border_rate_ = 0.35;
     double min_otsu_std_dev_ = 5.0;
     double error_correction_rate_ = 0.6;
+    /// セル比を bit とみなす閾値。
+    ///
+    /// border の検証では比がこの値を超えたセルを誤りとみなす。Dictionary 照合
+    /// では期待する bit との差がこの値を超えたセルを不一致とみなす。CPU 基準は
+    /// OpenCV の DetectorParameters の既定 (0.49) を暗黙に使っているため、
+    /// 同じ値を明示的に持つ。
+    double valid_bit_threshold_ = 0.49;
 
     // --- 四隅補正 ---
     CornerRefineMethod corner_refine_method_ = CornerRefineMethod::kSubpix;

@@ -105,6 +105,7 @@ Status DetectorConfig::validate(std::string* out_message) const {
              1.0},
             {"min_otsu_std_dev", this->min_otsu_std_dev_, 0.0, 255.0},
             {"error_correction_rate", this->error_correction_rate_, 0.0, 1.0},
+            {"valid_bit_threshold", this->valid_bit_threshold_, 0.0, 1.0},
             {"corner_refinement_min_accuracy_px", this->corner_refinement_min_accuracy_px_, 0.0,
              16.0},
             {"min_marker_length_ratio_original_img",

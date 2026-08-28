@@ -15,6 +15,7 @@ add_executable(aruco3cuda_reference_tests
   test_candidate_group.cpp
   test_candidate_comparison.cpp
   test_cell_sample.cpp
+  test_cell_decode.cpp
   test_hybrid_detector.cpp
   test_device_image.cpp
   test_report_diff.cpp)

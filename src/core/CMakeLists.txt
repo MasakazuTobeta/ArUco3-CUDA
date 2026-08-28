@@ -15,6 +15,7 @@ add_library(aruco3cuda_core
   candidate_filter.cu
   candidate_group.cu
   cell_sample.cu
+  cell_decode.cu
   cuda_check.cpp
   device_probe.cu)
 
@@ -36,7 +37,8 @@ set_target_properties(aruco3cuda_core PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   OUTPUT_NAME aruco3cuda)
 
-# cell_sample.cu は OpenCV の warpPerspective と丸めまで一致させる。積和を
-# 融合すると 1 ULP ずれ、丸め境界で参照画素が 1 つずれる。この翻訳単位だけ
-# 融合を止める。
-set_source_files_properties(cell_sample.cu PROPERTIES COMPILE_OPTIONS "-fmad=false")
+# cell_sample.cu と cell_decode.cu は OpenCV と丸めまで一致させる。積和を
+# 融合すると 1 ULP ずれ、参照画素や分散の閾値判定が変わる。この 2 つの翻訳
+# 単位だけ融合を止める。
+set_source_files_properties(cell_sample.cu cell_decode.cu
+  PROPERTIES COMPILE_OPTIONS "-fmad=false")

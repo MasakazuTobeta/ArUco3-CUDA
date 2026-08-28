@@ -10,7 +10,7 @@ detector core の段階分解、各段階の GPU 適性評価、四角形候補�
 
 ## 現状
 
-S1 から S6 (前処理、二値化、連結成分ラベリング、四隅推定、候補の篩と統合) を CUDA で実装済みです。S7 以降の decode は案 C のハイブリッド経路として CPU で実装しており、GPU 化は Phase 3 です。
+S1 から S6 (前処理、二値化、連結成分ラベリング、四隅推定、候補の篩と統合) と、S7 (射影変換とセル sampling)、S8 前半 (Otsu と border 検証) を CUDA で実装済みです。S8 後半の Dictionary 照合以降は案 C のハイブリッド経路として CPU で実装しており、GPU 化は Phase 3 の続きです。
 
 互換対象である OpenCV 4.x の ArUco3 検出戦略については、Apache-2.0 の公開 header と source から次の観測仕様を確認しています。取得元と hash は [Code Provenance 記録](../code-provenance.md) を参照してください。
 
@@ -118,6 +118,26 @@ GeForce RTX 5070 Ti (x86)  b60c6c57a26e0910ba6d9cba
 
 融合する側へ合わせる選択もありえますが、その場合 x86_64 と一致しなくなります。どちらを選んでも片方とは合いません。融合しない側を選んだのは、scalar 経路が OpenCV の意味論の基準であり、SIMD の有無に依存しないためです。
 
+### S8 前半 Otsu と border 検証
+
+WP-3.2 で canonical 画像からセル比を求め、外周セルの誤り数で候補を篩う部分を実装しました。3 機すべてで CPU 基準と完全に一致します (比 0 / 4096 セル、誤り数 0 / 64 候補)。
+
+S7 と違い機種差が出ませんでした。この段の計算は次の 3 つで、いずれも SIMD の積和融合が結果へ届きません。
+
+| 計算 | 型 | 融合の影響 |
+| --- | --- | --- |
+| 256 階調の histogram | 整数の計数 | なし |
+| 内側領域の和と二乗和 | `int` の加算 (8-bit 画素なので厳密) | なし |
+| Otsu の漸化式 | `double` | OpenCV も scalar で計算する |
+
+`cv::meanStdDev` は母分散 (N で割る) を使い、平均を `S * (1/N)` と求めます。`S / N` ではありません。順序を変えると最終桁が変わるため、同じ順序で書いています。Otsu の閾値更新は厳密な大なりで、同値なら小さい階調が残ります。二値化は「画素 > 閾値」であり、等しい画素は 0 側です。
+
+`cell_decode.cu` も `-fmad=false` で compile します。融合を許すと分散が `minOtsuStdDev` の境界でずれ、低分散の分岐 (全セルを 1.0 か 0.0 で埋める経路) へ入るかどうかが変わります。
+
+CPU 基準が暗黙に使っていた「セル比を bit とみなす閾値 0.49」は、`DetectorConfig::valid_bit_threshold_` として明示しました。border 検証と Dictionary 照合の両方が同じ値を使います。
+
+外周誤り数の上限は外周セル数ではなく `markerSize` の 2 乗に `maxErroneousBitsInBorderRate` を掛けた値です。既定 (36h12、border 1、rate 0.35) では 12 で、12 は通り 13 で落ちます。
+
 #### 一致に効く細部
 
 実装で守る必要がある点です。いずれも外すと丸め境界で参照画素が 1 つずれます。
@@ -159,7 +179,8 @@ flowchart TD
 | S4 ラベリング | pixel と label | block 単位 union-find と block 間 merge | 中 | Phase 2 |
 | S5 候補抽出 | label | 極点探索による四隅推定 | 中 | Phase 2 |
 | S6 フィルタ | 候補 | 述語評価と stream compaction | 高 | Phase 2 |
-| S7 warp と sampling | 候補 | 1 候補 1 block、セル単位 sampling | 高 | Phase 3 |
+| S7 warp と sampling | 候補 | 1 候補 1 block、セル単位 sampling | 高 | 実装済み (WP-3.1) |
+| S8 border 検証 | 候補 | 1 候補 1 block、共有 memory の histogram と整数の和 | 高 | 実装済み (WP-3.2) |
 | S8 Dictionary 照合 | 候補と codeword | packed codeword に対する popcount と最小値 reduction | 高 | Phase 3 |
 | S9 重複整理 | 候補対 | sort と近接判定、compaction | 中 | Phase 3 |
 | S10 四隅補正 | 四隅 | 1 corner 1 block の勾配法反復 | 中 | Phase 3 |

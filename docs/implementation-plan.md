@@ -279,12 +279,26 @@ WP-3.1 で S7 を実装しました。OpenCV との一致を確かめる過程�
 
 GPU 段のうち kernel 実行は DGX Spark で 0.099 ms、GPU 段全体は 0.206 ms です。残り半分は依然として転送であり、Phase 3 で decode を GPU へ移せば消えます。
 
+#### WP-3.2 の実測
+
+セル比と border 検証を GPU へ移しました。判定は Otsu の閾値と標準偏差の境界で CPU と一致します。
+
+| 機体 | HAL | 比の不一致セル | border 誤り数の不一致 |
+| --- | --- | --- | --- |
+| DGX Spark GB10 | carotene + KleidiCV | 0 / 4096 | 0 / 64 |
+| Jetson AGX Orin | carotene + KleidiCV | 0 / 4096 | 0 / 64 |
+| RTX 5070 Ti | IPP | 0 / 4096 | 0 / 64 |
+
+WP-3.1 の射影変換と違い、機種差が出ませんでした。Otsu の入力は 8-bit の histogram であり、平均と分散も整数の和から求めるため、SIMD 経路の積和融合が結果へ届く場所がないためです。丸めが効くのは histogram から閾値を求める倍精度の漸化式だけで、ここは OpenCV も scalar で計算します。
+
+同じ理由で `cell_decode.cu` も `-fmad=false` で compile しています。融合を許すと分散が `minOtsuStdDev` の境界でずれ、低分散の分岐へ入るかどうかが変わります。
+
 #### Phase 3: GPU decode
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
 | WP-3.1 | S7 射影変換とセル sampling | `src/core/cell_sample.{hpp,cu}` | 既知 homography で正しいセル値を得られる。x86_64 の OpenCV と byte 単位で一致、aarch64 では 40960 画素中 1 画素が異なる。達成済み | WP-2.6 | M |
-| WP-3.2 | S8 前半 Otsu と border 検証 | `src/core` | `minOtsuStdDev` と `maxErroneousBitsInBorderRate` の境界で CPU と判定が一致する | WP-3.1 | M |
+| WP-3.2 | S8 前半 Otsu と border 検証 | `src/core/cell_decode.{hpp,cu}` | `minOtsuStdDev` と `maxErroneousBitsInBorderRate` の境界で CPU と判定が一致する。3 機すべてで比の不一致 0 セル、誤り数の不一致 0 件。達成済み | WP-3.1 | M |
 | WP-3.3 | S8 後半 Dictionary 照合 | `src/core` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す | WP-3.2、WP-0.5 | M |
 | WP-3.4 | S9 重複整理 | `src/core` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる | WP-3.3 | M |
 | WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core` | 四隅 RMSE が CPU 基準に対する許容内に収まる | WP-3.4 | L |
@@ -417,7 +431,6 @@ OpenCV Issue #27118 の報告者は、CPU 実装の処理時間として 640x480
 - CUDA Toolkit の最低 version。[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じ。
 - CI を実行する環境。開発機、Jetson 実機、外部 runner のどれを使うか。
 - corpus に実画像を含める時期と、その入手・配布条件。
-- Jetson Orin で ctest を並列実行したとき、12 回中 1 回だけ 1 件が失敗した。8 回続けて再現せず、失敗した test 名を捕捉できていない。再現したら特定する。
 
 ## 関連
 

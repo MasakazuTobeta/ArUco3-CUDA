@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <limits>
 #include <ratio>
 #include <sstream>
 #include <string>
@@ -117,8 +118,11 @@ TEST_F(BenchmarkHarnessTest, records_startup_cost) {
     EXPECT_GT(record.first_frame_ms_, 0.0);
     // 1 枚目までの時間は 1 枚目の検出を含むため、それ以上になる。
     EXPECT_GE(record.time_to_first_result_ms_, record.first_frame_ms_);
-    // 1 枚目は cache が冷えているため、定常より遅い。
-    EXPECT_GE(record.first_frame_ms_, record.end_to_end_ms_.p50_);
+    // 「1 枚目は cache が冷えているため定常より遅い」は主張しない。CPU 経路の
+    // 起動の費用は数 ms しかなく、機の負荷で容易に逆転する。実際 Jetson で
+    // ctest -j 8 のとき 6 回中 3 回この向きが崩れた。負荷の影響を受けない
+    // 定義上の関係だけを検査し、値そのものは下に表示して目視できるようにする。
+    EXPECT_GT(record.end_to_end_ms_.p50_, 0.0);
     std::printf("[bench] CPU 1 枚目まで %.3f ms (検出 %.3f ms) 定常 %.3f ms\n",
                 record.time_to_first_result_ms_, record.first_frame_ms_,
                 record.end_to_end_ms_.p50_);
@@ -205,28 +209,44 @@ TEST_F(BenchmarkHarnessTest, hybrid_rejects_unsupported_memory_mode) {
 // PNG の復号になる。検出時間の比較にならないため、区間から外している。
 // 同じ画像を detect_image で回した場合との差でそれを確かめる。
 TEST_F(BenchmarkHarnessTest, cpu_route_excludes_image_loading) {
+    // 読み込みを含む経路を測る。測定の前後で 2 度取り、harness の測定を時刻で
+    // 挟む。Jetson のように負荷で clock が大きく動く機では、先に取った標本と
+    // 後に取った標本の速さが 2 倍ほど違う。片側だけで比べると、経路の違いでは
+    // なく clock の違いを見てしまう。挟んだ両方の最小値を基準にすれば、
+    // どちらへ動いても取りこぼさない。
+    BenchmarkConfig config = this->config_;
+    // 標本 5 個では最小値が偶然に左右される。この test だけ数を増やす。
+    config.latency_iterations_ = 15;
+
+    const auto measure_with_loading = [&]() {
+        double smallest = std::numeric_limits<double>::max();
+        for (int i = 0; i < config.latency_iterations_; ++i) {
+            aruco3cuda::reference::ReferenceResult result;
+            std::string loop_error;
+            const auto start = std::chrono::steady_clock::now();
+            const bool ok = aruco3cuda::reference::detect_image(this->image_path_, config.detector_,
+                                                                &result, &loop_error);
+            const auto finish = std::chrono::steady_clock::now();
+            EXPECT_TRUE(ok) << loop_error;
+            smallest = std::min(smallest,
+                                std::chrono::duration<double, std::milli>(finish - start).count());
+        }
+        return smallest;
+    };
+
+    const double before = measure_with_loading();
     MeasurementRecord record;
     std::string error;
-    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, this->config_, &record, &error))
+    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, config, &record, &error))
             << error;
+    const double after = measure_with_loading();
 
-    // 読み込みを含む経路を同じ回数だけ回し、中央値を比べる。
-    std::vector<double> with_loading;
-    with_loading.reserve(static_cast<std::size_t>(this->config_.latency_iterations_));
-    for (int i = 0; i < this->config_.latency_iterations_; ++i) {
-        aruco3cuda::reference::ReferenceResult result;
-        const auto start = std::chrono::steady_clock::now();
-        ASSERT_TRUE(aruco3cuda::reference::detect_image(this->image_path_, this->config_.detector_,
-                                                        &result, &error))
-                << error;
-        const auto finish = std::chrono::steady_clock::now();
-        with_loading.push_back(std::chrono::duration<double, std::milli>(finish - start).count());
-    }
-    std::sort(with_loading.begin(), with_loading.end());
-    const double loading_median = with_loading[with_loading.size() / 2];
-    std::printf("[bench] 検出のみ %.3f ms / 読み込み込み %.3f ms\n", record.end_to_end_ms_.p50_,
-                loading_median);
-    EXPECT_LT(record.end_to_end_ms_.p50_, loading_median);
+    const double loading_min = std::min(before, after);
+    std::printf("[bench] 検出のみ 最小 %.3f ms / 読み込み込み 最小 %.3f ms (前 %.3f 後 %.3f)\n",
+                record.end_to_end_ms_.min_, loading_min, before, after);
+    // 最小値で比べる。中央値は負荷の山を拾い、経路の差より大きく振れる。
+    // PNG の復号は必ず加算されるため、同じ clock で比べる限り向きは変わらない。
+    EXPECT_LT(record.end_to_end_ms_.min_, loading_min);
 }
 
 // 異常系: 不正な入力と引数を拒否する。

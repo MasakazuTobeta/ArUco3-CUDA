@@ -8,6 +8,7 @@
 #include "hybrid_detector.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <cuda_runtime_api.h>
 
@@ -91,7 +92,8 @@ private:
 cv::Mat make_scene_from_spec(const aruco3cuda::corpusgen::SceneSpec& spec,
                              aruco3cuda::corpusgen::GeneratedScene* out_scene) {
     aruco3cuda::corpusgen::CorpusConfig config;
-    config.output_dir_ = "/tmp/aruco3cuda_hybrid_test";
+    // 同じ binary を並行実行しても衝突しないよう process ごとに分ける。
+    config.output_dir_ = "/tmp/aruco3cuda_hybrid_test_" + std::to_string(::getpid());
     config.seed_ = 20260827U;
     std::string error;
     EXPECT_TRUE(aruco3cuda::corpusgen::generate_scene(config, spec, 0, out_scene, &error)) << error;
@@ -480,7 +482,7 @@ TEST(HybridDetectorTest, matches_cpu_reference_for_nested_quads) {
                               marker_rect.height + 80);
     cv::rectangle(scene, frame_rect, cv::Scalar(0), 12);
 
-    const std::string path = "/tmp/aruco3cuda_hybrid_nested.png";
+    const std::string path = "/tmp/aruco3cuda_hybrid_nested_" + std::to_string(::getpid()) + ".png";
     ASSERT_TRUE(cv::imwrite(path, scene));
 
     DeviceImage device;

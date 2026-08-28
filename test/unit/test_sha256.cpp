@@ -4,6 +4,7 @@
 #include "aruco3cuda/util/sha256.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <fstream>
@@ -59,7 +60,8 @@ TEST(Sha256Test, file_hash_rejects_null_output) {
 
 // 正常系: file の内容と memory 上の内容で同じ結果になる。
 TEST(Sha256Test, file_hash_matches_memory_hash) {
-    const std::string path = "/tmp/aruco3cuda_sha256_test.bin";
+    // 同じ binary を並行実行しても衝突しないよう process ごとに分ける。
+    const std::string path = "/tmp/aruco3cuda_sha256_test_" + std::to_string(::getpid()) + ".bin";
     const std::string content = "aruco3-cuda reference corpus";
     {
         std::ofstream output(path, std::ios::binary);

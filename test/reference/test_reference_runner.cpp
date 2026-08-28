@@ -7,6 +7,7 @@
 #include "reference_runner.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -40,7 +41,8 @@ std::string write_synthetic_image(const std::string& name, int width_px, int hei
     cv::Mat scene(height_px, width_px, CV_8UC1, cv::Scalar(255));
     marker.copyTo(scene(cv::Rect(kMarkerOriginX, kMarkerOriginY, kMarkerSidePx, kMarkerSidePx)));
 
-    const std::string path = "/tmp/" + name;
+    // 同じ binary を並行実行しても衝突しないよう process ごとに分ける。
+    const std::string path = "/tmp/" + std::to_string(::getpid()) + "_" + name;
     EXPECT_TRUE(cv::imwrite(path, scene));
     return path;
 }
