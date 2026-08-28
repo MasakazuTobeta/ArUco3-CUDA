@@ -232,7 +232,7 @@ Phase 3 へ進む前に、hybrid 経路を測定 harness へ配線して CPU 基
 
 測定に使う CPU core の種別も取り違えていました。DGX Spark の CPU 0 は効率 core (Cortex-A725) であり、性能 core (Cortex-X925) で測り直すと CPU 経路は約 2 倍速くなります。効率 core で測ると GPU 側の優位が実際より大きく見えます。3840x2160 で 2.17 倍と 1.45 倍の差があり、結論の印象が変わります。
 
-3 機を性能 core で測った結果、hybrid の優位は限定的でした。DGX Spark と RTX 5070 Ti はいずれも比 0.69 から 0.99 で、最良でも 1.45 倍です。転送を測定区間へ含めるとほぼ消えます。Jetson Orin では全条件で CPU が速く、比は 1.19 から 2.00 です。GPU 段は解像度にほとんど依らず、kernel 起動の固定費が支配的です。詳細と判断は [benchmark 報告](benchmark-report.md) にあります。
+3 機を性能 core で測った結果、hybrid の優位は限定的でした。DGX Spark と RTX 5070 Ti はいずれも比 0.69 から 0.99 で、最良でも 1.45 倍です。転送を測定区間へ含めるとほぼ消えます。Jetson Orin では全条件で CPU が速く、比は 1.19 から 2.00 です。GPU 段を kernel 実行と host への転送へ分けて測ると、転送が 58% から 92% を占めます。1499 KB を 8 回の同期転送で戻しており、decode が CPU にあるためだけに発生する費用です。kernel 実行そのものは DGX Spark で 0.083 ms、RTX 5070 Ti で 0.033 ms しかありません。現在の測定は hybrid という中間形態に支配されており、GPU 経路の実力を示していません。Phase 3 で decode を GPU へ移すことを優先します。詳細と判断は [benchmark 報告](benchmark-report.md) にあります。
 
 #### Phase 2: GPU 候補抽出
 
