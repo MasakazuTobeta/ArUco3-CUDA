@@ -14,12 +14,15 @@ ArUco3-CUDA は、ArUco3 の高速検出戦略を CUDA で実装し、NVIDIA DGX
 
 ## 対象環境
 
-| 環境 | GPU アーキテクチャ | CUDA Compute Capability | 主な役割 |
-| --- | --- | --- | --- |
-| NVIDIA Jetson Orin | Ampere | 8.7 | 実運用を想定した遅延・電力・メモリ評価 |
-| NVIDIA DGX Spark GB10 | Blackwell | 12.1 | 開発、解析、性能上限および移植性評価 |
+| 環境 | GPU アーキテクチャ | CUDA Compute Capability | GPU の種別 | 主な役割 |
+| --- | --- | --- | --- | --- |
+| NVIDIA Jetson Orin | Ampere | 8.7 | 統合 | 実運用を想定した遅延・電力・メモリ評価 |
+| NVIDIA DGX Spark GB10 | Blackwell | 12.1 | 統合 | 開発、解析、性能上限および移植性評価 |
+| GeForce RTX 5070 Ti (GB203) | Blackwell | 12.0 | 単体 | discrete GPU での評価。転送費用と memory 種別の差を測る |
 
 Jetson は当面 Orin 系を対象とします。Jetson Nano、Xavier、Thor の対応は未確定です。
+
+統合 GPU の 2 機は host と device が同一物理 memory を共有するため、転送費用が discrete GPU と大きく異なります。単体 GPU を 1 機加えることで、測定結果を統合 GPU 固有のものと一般に成り立つものへ分けられるようにしています。
 
 ## 目標とする処理
 

@@ -66,7 +66,7 @@ flowchart TD
 
 ### Hardware portability
 
-- Jetson Orin は `sm_87`、DGX Spark GB10 は `sm_121` として別々に build する。実機の Compute Capability は 12.1 です。詳細は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) を参照してください。
+- Jetson Orin は `sm_87`、DGX Spark GB10 は `sm_121`、GeForce RTX 5070 Ti (GB203) は `sm_120` として別々に build する。GB10 の実機が報告する Compute Capability は 12.1 であり、GB203 の 12.0 とは別 target になります。詳細は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) を参照してください。
 - algorithm とデータ表現は共通化する。
 - Blackwell 固有機能は compile-time option または局所化した kernel specialization とする。
 - common path を基準とし、機種固有経路には同じ正確性テストを適用する。

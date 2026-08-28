@@ -25,9 +25,9 @@
     {
       "name": "portability",
       "inherits": "base",
-      "displayName": "両 architecture 向け (sm_87 と sm_121)",
+      "displayName": "全対象 architecture 向け (sm_87、sm_120、sm_121)",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "87;121"
+        "CMAKE_CUDA_ARCHITECTURES": "87;120;121"
       }
     },
     {
@@ -36,6 +36,14 @@
       "displayName": "DGX Spark GB10 のみ (sm_121)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "121"
+      }
+    },
+    {
+      "name": "rtx-blackwell",
+      "inherits": "base",
+      "displayName": "RTX Blackwell GB203 のみ (sm_120)",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "120"
       }
     },
     {
@@ -94,6 +102,10 @@
       "configurePreset": "dgx-spark"
     },
     {
+      "name": "rtx-blackwell",
+      "configurePreset": "rtx-blackwell"
+    },
+    {
       "name": "native",
       "configurePreset": "native"
     },
@@ -128,6 +140,16 @@
     {
       "name": "dgx-spark",
       "configurePreset": "dgx-spark",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "rtx-blackwell",
+      "configurePreset": "rtx-blackwell",
       "output": {
         "outputOnFailure": true
       },

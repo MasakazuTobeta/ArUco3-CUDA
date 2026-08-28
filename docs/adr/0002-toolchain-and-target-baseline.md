@@ -69,8 +69,8 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 
 ## 決定
 
-1. 対象 CUDA architecture を `sm_87` と `sm_121` とする。`CMAKE_CUDA_ARCHITECTURES` へ `87;121` を既定で指定し、必要に応じて上書きできるようにする。
-2. `sm_120` を既定 target にしない。GB10 は 12.1 を報告するため、`sm_120` 向け binary は PTX からの JIT へ依存する。
+1. 対象 CUDA architecture を `sm_87`、`sm_120`、`sm_121` とする。`CMAKE_CUDA_ARCHITECTURES` へ `87;120;121` を既定で指定し、必要に応じて上書きできるようにする。2026-08-28 に `sm_120` を追加した。経緯は [2026-08-28 の更新](#2026-08-28-の更新-対象-architecture-へ-sm_120-を追加) を参照。
+2. 対象機が報告する Compute Capability のみを target とする。JIT へ依存させない。
 3. C++ 標準を C++17、CUDA 言語標準も C++17 とする。
 4. CMake の最低 version を 3.24 とする。`CUDA_ARCHITECTURES` の扱いが安定する最初の version であり、開発機と JetPack 6 系のどちらも満たす。
 5. CPU 基準実装は OpenCV 4.14.0 に固定する。tag と build option を script へ記録し、測定結果へ埋め込む。
@@ -83,7 +83,7 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 ## 理由
 
 - 実機が報告する Compute Capability に合わせることで、JIT 待ちと機種差の切り分けが不要になる。
-- `sm_87` と `sm_121` の 2 target に絞ることで、[アーキテクチャ](../architecture.md) の「共通アルゴリズム、機種固有最適化は分離」という方針を build 構成で表現できる。
+- 対象機が実際に報告する Compute Capability だけを target とすることで、[アーキテクチャ](../architecture.md) の「共通アルゴリズム、機種固有最適化は分離」という方針を build 構成で表現できる。
 - OpenCV 4.14.0 は `useAruco3Detection` を含む 4.x 系の最新であり、[Dictionary 方針](../dictionaries.md) が正本とする `predefined_dictionaries.hpp` を含む。
 - CUDA Toolkit の最低 version を開発機の 13.0 に固定すると Jetson 側の JetPack に依存するため、ここでは決めない。
 
@@ -105,9 +105,43 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 - Jetson Orin 向けを cross-compile とするか実機 build とするか。
 - `clang-format` の style 設定を OpenCV 準拠にするか独自にするか。暫定として、OpenCV へのコントリビュートを想定し Google style を基礎に indent 4、桁数 100 とした `.clang-format` を置いている。決定後に本 ADR を更新する。
 
+## 2026-08-28 の更新: 対象 architecture へ sm_120 を追加
+
+### 背景
+
+評価対象へ 3 機目を加えました。x86_64 の workstation に載せた ZOTAC GAMING GeForce RTX 5070 Ti 16GB (GB203) です。
+
+既存 2 機はいずれも統合 GPU であり、host と device が同一物理 memory を共有します。[評価計画](../evaluation-plan.md) と [benchmark 報告](../benchmark-report.md) は「統合 GPU の結果であり discrete GPU へ一般化できない」ことを制約として明記しており、この制約を実測で埋められる機体がありませんでした。転送費用が効くため、memory 種別 (`M-Pageable`、`M-Pinned`、`M-Managed`、`M-Device`) の差もこの機で初めて意味を持ちます。
+
+| 項目 | 値 |
+| --- | --- |
+| GPU | ZOTAC GAMING GeForce RTX 5070 Ti 16GB GDDR7 (GB203) |
+| Compute Capability | 12.0 (暫定。実機での確認は下記) |
+| CPU | Intel Core Ultra 7 265 (20 core) |
+| system memory | 62 GB |
+| OS / arch | Ubuntu 22.04.5 LTS / x86_64 |
+| CUDA Toolkit (host) | 13.2 |
+
+### 決定の変更
+
+対象 CUDA architecture を `sm_87` と `sm_121` の 2 つから、`sm_87`、`sm_120`、`sm_121` の 3 つへ広げます。`portability` preset の既定を `87;120;121` とし、`rtx-blackwell` preset を追加します。
+
+当初 `sm_120` を「既定 target にしない」と決めていました。理由は GB10 が 12.1 を報告するため `sm_120` 向け binary が JIT へ依存する、というものでした。この理由は GB10 に対しては今も正しく、GB203 という 12.0 を報告する実機が加わったことで前提が変わりました。決定の向きは変えていません。「対象機が報告する Compute Capability のみを target とする」という原則をそのまま適用した結果です。
+
+### container の構成
+
+`rtx-blackwell` profile の base image と CUDA package は `dgx-spark` と同一にします (ubuntu:24.04、CUDA 13.0)。container 側を揃えておけば、両者の測定差は hardware の差だけになります。host の CUDA が 13.2 である点は pinned mode では影響しません。
+
+### 未確認の点
+
+Compute Capability 12.0 は製品仕様からの推定であり、実機では未確認です。本 ADR の初版で DGX Spark GB10 を 12.0 と記載し、実機が 12.1 を報告して訂正した経緯があります。同じ取り違えを避けるため、`nvidia-smi --query-gpu=compute_cap` の実測値で確定させます。異なっていた場合は本節を訂正します。
+
 ## 関連
 
 - [ADR-0001: 独立リポジトリで CUDA 実装を先行する](0001-independent-implementation.md)
+- [ADR-0003: 四角形候補抽出は案 A を主案とする](0003-candidate-extraction-approach.md)
 - [実装計画](../implementation-plan.md)
+- [評価計画](../evaluation-plan.md)
+- [Benchmark 報告](../benchmark-report.md)
 - [Docker 環境設計](../design/docker-environment.md)
 - [アーキテクチャ](../architecture.md)

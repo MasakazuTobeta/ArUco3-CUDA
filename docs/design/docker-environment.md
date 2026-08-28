@@ -2,7 +2,7 @@
 
 ## 目的
 
-DGX Spark と Jetson Orin で同じ手順の build、test、評価を行える container 環境を定義し、測定結果の再現に必要な環境情報を機械可読形式で残せるようにします。
+DGX Spark、Jetson Orin、RTX Blackwell で同じ手順の build、test、評価を行える container 環境を定義し、測定結果の再現に必要な環境情報を機械可読形式で残せるようにします。
 
 ## 対象範囲
 
@@ -33,6 +33,10 @@ DGX Spark と Jetson Orin で同じ手順の build、test、評価を行える c
 | OpenCV | 4.14.0 (`0654a42e1921`)、`WITH_CUDA=OFF` |
 
 `pinned` と `mounted` の両方で環境検査と smoke test が合格することを確認しています。CUDA Toolkit 全体を含む `nvidia/cuda` の devel image を base にした場合、base だけで 5 GB を超えます。
+
+`rtx-blackwell` profile は構築中です。実機に NVIDIA driver、Docker、NVIDIA Container Toolkit を導入する作業が残っています。
+
+この profile の base image と CUDA package は `dgx-spark` と同一にします。container 側を揃えておけば、両者の測定差は hardware の差だけになります。`ARUCO3_CUDA_REPO_ARCH` のみ `x86_64` へ変えます。既存 2 機は `sbsa` (aarch64) です。
 
 `jetson-orin` profile も実機で構築と検証を完了しています。
 
@@ -107,6 +111,7 @@ install された package の正確な version は image 内の `/opt/aruco3cuda
 | --- | --- | --- | --- | --- |
 | `dgx-spark` | `ubuntu:24.04` | DGX Spark GB10 | 121 | 含む |
 | `jetson-orin` | `nvcr.io/nvidia/l4t-cuda:11.4.19-devel`（既定、上書き可） | Jetson AGX Orin | 87 | 含まない |
+| `rtx-blackwell` | `ubuntu:24.04` | GeForce RTX 5070 Ti (GB203) | 120 | 含む |
 
 Jetson は `pinned` mode でも NVIDIA の CUDA apt repository を使わず、CUDA を含む `l4t-cuda` を base image とします。`install-cuda-toolkit.sh` は base image に CUDA が存在する場合 install を省略します。base image の tag は実機の JetPack へ合わせて `docker/.env` で指定します。
 
