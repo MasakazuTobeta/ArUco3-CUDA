@@ -182,11 +182,73 @@ int count_border_errors(const cv::Mat& ratio, int marker_size, int border_bits,
 }
 
 
+/// host 側の受け取りに必要な pinned memory の量を求める。
+///
+/// 二値化画像は window ごとに segmentation の大きさ、pyramid は level ごとに
+/// 半分ずつ小さくなる。level 0 は原寸であり、ここが最大を占める。
+/// 桁溢れや設定不正では 0 を返す。
+std::size_t host_receive_bytes(const DetectorConfig& config, const detail::ScalePlan& plan,
+                               int max_width_px, int max_height_px) {
+    if (max_width_px < 1 || max_height_px < 1) {
+        return 0U;
+    }
+    int window_sizes[kMaxAdaptiveThresholdWindows] = {};
+    int window_count = 0;
+    if (detail::threshold_window_sizes(config, window_sizes, kMaxAdaptiveThresholdWindows,
+                                       &window_count) != Status::kOk) {
+        return 0U;
+    }
+    // 行ごとに整列させるため、1 平面あたり少し余裕を積む。
+    constexpr std::size_t kRowAlignment = 512U;
+    const auto plane_bytes = [](int width, int height) {
+        return align_up(static_cast<std::size_t>(width), kRowAlignment) *
+               static_cast<std::size_t>(height);
+    };
+    std::size_t total = plane_bytes(plan.segmentation_width_px_, plan.segmentation_height_px_) *
+                        static_cast<std::size_t>(window_count);
+    int level_width = max_width_px;
+    int level_height = max_height_px;
+    for (int level = 0; level < plan.level_count_; ++level) {
+        total += plane_bytes(level_width, level_height);
+        level_width = std::max(1, (level_width + 1) / 2);
+        level_height = std::max(1, (level_height + 1) / 2);
+    }
+    // 端数の整列で不足しないよう 1 平面分の余裕を持たせる。
+    return total + plane_bytes(max_width_px, 1);
+}
+
+/// pinned arena から 1 平面を切り出し、cv::Mat として参照する。
+///
+/// cv::Mat は外部 memory を指すだけで所有しない。arena を reset すると
+/// 参照先が無効になるため、frame の途中で reset しないこと。
+Status reserve_host_plane(Workspace& workspace, int width_px, int height_px, cv::Mat* out) {
+    constexpr std::size_t kRowAlignment = 512U;
+    const std::size_t step = align_up(static_cast<std::size_t>(width_px), kRowAlignment);
+    void* pointer = nullptr;
+    const Status status =
+            workspace.allocate(step * static_cast<std::size_t>(height_px), kRowAlignment,
+                               &pointer);
+    if (status != Status::kOk) {
+        return status;
+    }
+    *out = cv::Mat(height_px, width_px, CV_8UC1, pointer, step);
+    return Status::kOk;
+}
+
 }  // namespace
 
 /// 実装本体。公開 header が OpenCV へ依存しないよう pimpl とする。
 class HybridDetector::Impl {
 public:
+    Impl() = default;
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    ~Impl() {
+        if (this->stream_ != nullptr) {
+            static_cast<void>(cudaStreamDestroy(this->stream_));
+        }
+    }
+
     Status initialize(const DetectorConfig& config, const std::string& dictionary_name,
                       int max_width_px, int max_height_px, std::string* out_message);
     Status detect(const ImageViewU8& image, HybridResult* out, std::string* out_message);
@@ -203,6 +265,16 @@ private:
     cv::aruco::Dictionary dictionary_;
     cv::aruco::DetectorParameters parameters_;
     Workspace workspace_;
+    /// host 側の受け取り先。pinned memory を arena として確保する。
+    ///
+    /// 非同期転送は pinned memory を要求する。pageable memory を指定すると
+    /// driver が内部で一時 buffer へ複製するため、同期転送と変わらない。
+    Workspace host_workspace_;
+    /// 転送と kernel を載せる stream。
+    ///
+    /// 既定 stream を使うと、同一 process 内の他の作業と直列化する。
+    /// また転送を 1 つずつ blocking すると、8 回分の呼び出し費用が積み上がる。
+    cudaStream_t stream_ = nullptr;
     detail::ScalePlan plan_;
     detail::PreprocessBuffers preprocess_;
     detail::ThresholdBuffers threshold_;
@@ -256,6 +328,31 @@ Status HybridDetector::Impl::initialize(const DetectorConfig& config,
     if (capacity_status != Status::kOk) {
         return capacity_status;
     }
+
+    // host 側の受け取り先も初期化時に確保する。frame ごとの確保を避けるため。
+    const std::size_t host_bytes = host_receive_bytes(config, plan, max_width_px, max_height_px);
+    if (host_bytes == 0U) {
+        if (out_message != nullptr) {
+            *out_message = "host 側 buffer の必要量を算出できない";
+        }
+        return Status::kInvalidConfig;
+    }
+    const Status host_status =
+            this->host_workspace_.ensure_capacity(host_bytes, MemorySpace::kHostPinned,
+                                                  out_message);
+    if (host_status != Status::kOk) {
+        return host_status;
+    }
+
+    if (this->stream_ == nullptr) {
+        const cudaError_t created = cudaStreamCreate(&this->stream_);
+        if (created != cudaSuccess) {
+            if (out_message != nullptr) {
+                *out_message = std::string("stream を作れない: ") + cudaGetErrorString(created);
+            }
+            return Status::kCudaError;
+        }
+    }
     this->initialized_ = true;
     return Status::kOk;
 }
@@ -287,12 +384,12 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
         return threshold_reserve;
     }
 
-    Status status = detail::build_pyramid_async(&this->preprocess_, this->config_, nullptr);
+    Status status = detail::build_pyramid_async(&this->preprocess_, this->config_, this->stream_);
     if (status != Status::kOk) {
         return status;
     }
     status = detail::build_segmentation_async(this->plan_, &this->preprocess_, this->config_,
-                                              nullptr);
+                                              this->stream_);
     if (status != Status::kOk) {
         return status;
     }
@@ -301,31 +398,32 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
                                    this->preprocess_.segmentation_.height_px_,
                                    this->preprocess_.segmentation_.pitch_bytes_, image.space_};
     status = detail::build_threshold_async(segmentation, &this->threshold_, this->config_,
-                                           nullptr);
+                                           this->stream_);
     if (status != Status::kOk) {
         return status;
     }
 
-    // 二値化画像を host へ戻すため、ここで同期する。案 C の構造上避けられない。
-    const cudaError_t sync = cudaDeviceSynchronize();
-    if (sync != cudaSuccess) {
-        if (out_message != nullptr) {
-            *out_message = std::string("GPU の同期に失敗した: ") + cudaGetErrorString(sync);
-        }
-        return Status::kCudaError;
-    }
-
-    // 二値化画像と pyramid を host へ取り出す。
+    // 転送を stream へ積んでから 1 度だけ同期する。1 つずつ blocking すると
+    // 8 回分の呼び出し費用が積み上がり、DGX Spark では複製そのものの 3 倍以上に
+    // なる。受け取り先は pinned memory であり、非同期転送が成立する。
+    this->host_workspace_.reset();
     this->binary_images_.resize(static_cast<std::size_t>(this->threshold_.window_count_));
     for (int i = 0; i < this->threshold_.window_count_; ++i) {
         const detail::ImagePlaneU8& plane = this->threshold_.binary_[i];
         cv::Mat& destination = this->binary_images_[static_cast<std::size_t>(i)];
-        destination.create(plane.height_px_, plane.width_px_, CV_8UC1);
-        if (cudaMemcpy2D(destination.data, static_cast<std::size_t>(destination.step),
-                         plane.data_, plane.pitch_bytes_,
-                         static_cast<std::size_t>(plane.width_px_),
-                         static_cast<std::size_t>(plane.height_px_),
-                         cudaMemcpyDeviceToHost) != cudaSuccess) {
+        const Status reserved = reserve_host_plane(this->host_workspace_, plane.width_px_,
+                                                   plane.height_px_, &destination);
+        if (reserved != Status::kOk) {
+            if (out_message != nullptr) {
+                *out_message = "二値化画像の受け取り先を確保できない";
+            }
+            return reserved;
+        }
+        if (cudaMemcpy2DAsync(destination.data, static_cast<std::size_t>(destination.step),
+                              plane.data_, plane.pitch_bytes_,
+                              static_cast<std::size_t>(plane.width_px_),
+                              static_cast<std::size_t>(plane.height_px_),
+                              cudaMemcpyDeviceToHost, this->stream_) != cudaSuccess) {
             if (out_message != nullptr) {
                 *out_message = "二値化画像を host へ戻せない";
             }
@@ -337,16 +435,33 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
     for (int level = 0; level < this->preprocess_.level_count_; ++level) {
         const ImageViewU8 view = detail::level_view(this->preprocess_, level);
         cv::Mat& destination = this->pyramid_[static_cast<std::size_t>(level)];
-        destination.create(view.height_px_, view.width_px_, CV_8UC1);
-        if (cudaMemcpy2D(destination.data, static_cast<std::size_t>(destination.step), view.data_,
-                         view.pitch_bytes_, static_cast<std::size_t>(view.width_px_),
-                         static_cast<std::size_t>(view.height_px_),
-                         cudaMemcpyDeviceToHost) != cudaSuccess) {
+        const Status reserved = reserve_host_plane(this->host_workspace_, view.width_px_,
+                                                   view.height_px_, &destination);
+        if (reserved != Status::kOk) {
+            if (out_message != nullptr) {
+                *out_message = "pyramid の受け取り先を確保できない";
+            }
+            return reserved;
+        }
+        if (cudaMemcpy2DAsync(destination.data, static_cast<std::size_t>(destination.step),
+                              view.data_, view.pitch_bytes_,
+                              static_cast<std::size_t>(view.width_px_),
+                              static_cast<std::size_t>(view.height_px_),
+                              cudaMemcpyDeviceToHost, this->stream_) != cudaSuccess) {
             if (out_message != nullptr) {
                 *out_message = "pyramid を host へ戻せない";
             }
             return Status::kCudaError;
         }
+    }
+
+    // kernel と転送の完了をここで 1 度だけ待つ。
+    const cudaError_t sync = cudaStreamSynchronize(this->stream_);
+    if (sync != cudaSuccess) {
+        if (out_message != nullptr) {
+            *out_message = std::string("GPU の同期に失敗した: ") + cudaGetErrorString(sync);
+        }
+        return Status::kCudaError;
     }
     return Status::kOk;
 }

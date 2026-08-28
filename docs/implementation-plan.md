@@ -257,6 +257,22 @@ WP-2.6 の比較では、ArUco3 有効時に案 A と案 C の候補集合が完
 
 G2 の完了条件: 候補抽出まで GPU 常駐で完結し、CPU 基準との差異を分類でき、案の選択が ADR に記録されていること。**達成済み**。候補抽出は二値化画像を host へ戻さずに完結します。差異は `CandidateComparisonTest.plan_a_versus_plan_c` が場面ごとに分類して表へ出します。案の選択は [ADR-0003](adr/0003-candidate-extraction-approach.md) に記録しました。
 
+#### Phase 3 の前に前倒しした最適化 (WP-4.1 の一部)
+
+転送が GPU 段の 58% から 92% を占めるという測定を受け、hybrid 経路の転送を先に最適化しました。8 回の同期転送を stream 上の非同期転送へ変え、受け取り先を pinned memory にしています。
+
+計画では WP-4.1 を WP-3.6 依存としていました。完全 GPU 経路を前提にした依存であり、hybrid 経路の転送には当てはまりません。
+
+正確性は不変です (36 比較で四隅の差 0.0000 pixel)。1280x720 マーカー 4 枚での比は次のように変わりました。
+
+| 機体 | 最適化前 | 最適化後 |
+| --- | --- | --- |
+| DGX Spark GB10 | 0.91 | 0.54 |
+| RTX 5070 Ti | 0.92 | 0.48 |
+| Jetson AGX Orin | 2.00 | 1.22 |
+
+GPU 段のうち kernel 実行は DGX Spark で 0.099 ms、GPU 段全体は 0.206 ms です。残り半分は依然として転送であり、Phase 3 で decode を GPU へ移せば消えます。
+
 #### Phase 3: GPU decode
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
@@ -274,8 +290,8 @@ G3 の完了条件: ID と四隅の出力まで GPU 経路で完結し、`CUDA-R
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
-| WP-4.1 | kernel 起動数と stream の最適化 | `src/core` | 最適化前後で正確性が不変であり、変化を測定値で示せる | WP-3.6 | M |
-| WP-4.2 | memory 経路 4 種の実装と測定 | `src/core`、`bench` | pageable、pinned、managed、device 常駐を別結果として記録できる | WP-3.6 | M |
+| WP-4.1 | kernel 起動数と stream の最適化 | `src/core`、`hybrid` | 最適化前後で正確性が不変であり、変化を測定値で示せる。転送の非同期化は達成済み。kernel 起動数の削減は Phase 3 後に再評価 | WP-3.6 (転送の非同期化は hybrid 経路で先行実施) | M |
+| WP-4.2 | memory 経路 4 種の実装と測定 | `src/core`、`bench` | pageable、pinned、managed、device 常駐を別結果として記録できる。pageable と device 常駐は測定済み。managed と pinned は Phase 3 で転送が消えるなら不要 | WP-3.6 | M |
 | WP-4.3 | 機種別 tuning の設定化 | 設定 file | block size 等が source の固定値でなく設定から上書きできる | WP-4.1 | S |
 | WP-4.4 | Jetson Orin での全評価 | 測定結果 | 同一 corpus が通り、環境情報と power mode が記録されている | B2、WP-4.3 | L |
 | WP-4.5 | crossover point の報告 | benchmark report | CPU が有利な条件を含めて境界を示せる | WP-4.4 | M |
