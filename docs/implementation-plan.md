@@ -257,6 +257,12 @@ WP-2.6 の比較では、ArUco3 有効時に案 A と案 C の候補集合が完
 
 G2 の完了条件: 候補抽出まで GPU 常駐で完結し、CPU 基準との差異を分類でき、案の選択が ADR に記録されていること。**達成済み**。候補抽出は二値化画像を host へ戻さずに完結します。差異は `CandidateComparisonTest.plan_a_versus_plan_c` が場面ごとに分類して表へ出します。案の選択は [ADR-0003](adr/0003-candidate-extraction-approach.md) に記録しました。
 
+#### Phase 3: 射影変換の一致度
+
+WP-3.1 で S7 を実装しました。OpenCV との一致を確かめる過程で、**OpenCV 自身が機種間でビット一致しない**ことが分かりました。`warpPerspective` の `INTER_NEAREST` には経路が 3 つあり、aarch64 では NEON の積和融合を使う SIMD 経路、x86_64 では融合しない SSE4.1 経路が選ばれます。同じ入力に対する canonical 画像の SHA256 が 2 機で異なることを実測しました。
+
+本実装は融合しない側へ合わせています。x86_64 の OpenCV とは 40960 画素中 0 画素、aarch64 の OpenCV とは 1 画素が異なります。詳細は [検出パイプライン設計](design/detector-pipeline.md) にあります。
+
 #### Phase 3 の前に前倒しした最適化 (WP-4.1 の一部)
 
 転送が GPU 段の 58% から 92% を占めるという測定を受け、hybrid 経路の転送を先に最適化しました。8 回の同期転送を stream 上の非同期転送へ変え、受け取り先を pinned memory にしています。
@@ -277,7 +283,7 @@ GPU 段のうち kernel 実行は DGX Spark で 0.099 ms、GPU 段全体は 0.20
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
-| WP-3.1 | S7 射影変換とセル sampling | `src/core` | 既知 homography で正しいセル値を得られる | WP-2.6 | M |
+| WP-3.1 | S7 射影変換とセル sampling | `src/core/cell_sample.{hpp,cu}` | 既知 homography で正しいセル値を得られる。x86_64 の OpenCV と byte 単位で一致、aarch64 では 40960 画素中 1 画素が異なる。達成済み | WP-2.6 | M |
 | WP-3.2 | S8 前半 Otsu と border 検証 | `src/core` | `minOtsuStdDev` と `maxErroneousBitsInBorderRate` の境界で CPU と判定が一致する | WP-3.1 | M |
 | WP-3.3 | S8 後半 Dictionary 照合 | `src/core` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す | WP-3.2、WP-0.5 | M |
 | WP-3.4 | S9 重複整理 | `src/core` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる | WP-3.3 | M |
@@ -411,6 +417,7 @@ OpenCV Issue #27118 の報告者は、CPU 実装の処理時間として 640x480
 - CUDA Toolkit の最低 version。[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じ。
 - CI を実行する環境。開発機、Jetson 実機、外部 runner のどれを使うか。
 - corpus に実画像を含める時期と、その入手・配布条件。
+- Jetson Orin で ctest を並列実行したとき、12 回中 1 回だけ 1 件が失敗した。8 回続けて再現せず、失敗した test 名を捕捉できていない。再現したら特定する。
 
 ## 関連
 
