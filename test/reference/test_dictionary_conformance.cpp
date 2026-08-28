@@ -9,6 +9,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <random>
 #include <vector>
 
 #include "aruco3cuda/dictionary.hpp"
@@ -160,6 +162,75 @@ TEST(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
             }
         }
     }
+}
+
+// 検証 4b: セル比から直接照合しても OpenCV と一致する。
+//
+// 検証 4 は bit 列 (0 か 1) を入力にしている。実際の検出では比は中間値を取り、
+// 閾値のごく近くでは「黒でも白でもない」という第 3 の状態になる。この状態は
+// 1 つの bit 列へ潰すと表現できないため、比のまま突き合わせる。
+TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
+    const cv::aruco::Dictionary dictionary = opencv_dictionary();
+    const aruco3cuda::DictionaryTable& table = generated_table();
+    constexpr double kMaxCorrectionRate = 0.6;
+    constexpr float kValidBitThreshold = 0.49F;
+
+    // 比の候補。閾値 0.49 と上限 0.51 の両側および境界そのものを含める。
+    const std::vector<float> ratio_values = {0.0F,  0.25F, 0.48F, 0.49F, 0.50F,
+                                             0.51F, 0.52F, 0.75F, 1.0F};
+    std::mt19937_64 rng(20260828U);
+    std::uniform_int_distribution<std::size_t> pick(0U, ratio_values.size() - 1U);
+
+    const std::vector<int> ids_under_test = {0, 1, 42, 128, table.code_count_ - 1};
+    std::size_t ambiguous_cases = 0;
+    for (const int id : ids_under_test) {
+        for (int trial = 0; trial < 200; ++trial) {
+            // ID の codeword を土台にし、一部のセルだけ比を崩す。全て乱数では
+            // どの ID にも遠くなり、accept 側の経路を通らない。
+            cv::Mat bits = cv::aruco::Dictionary::getBitsFromByteList(
+                    dictionary.bytesList.rowRange(id, id + 1), dictionary.markerSize, 0);
+            cv::Mat ratios(dictionary.markerSize, dictionary.markerSize, CV_32FC1);
+            const int perturbed = trial % 5;
+            for (int r = 0; r < dictionary.markerSize; ++r) {
+                for (int c = 0; c < dictionary.markerSize; ++c) {
+                    ratios.at<float>(r, c) = bits.at<std::uint8_t>(r, c) != 0 ? 1.0F : 0.0F;
+                }
+            }
+            for (int k = 0; k < perturbed; ++k) {
+                const int cell = static_cast<int>(pick(rng) * 7U + static_cast<std::size_t>(k)) %
+                                 (dictionary.markerSize * dictionary.markerSize);
+                ratios.at<float>(cell / dictionary.markerSize, cell % dictionary.markerSize) =
+                        ratio_values[pick(rng)];
+            }
+
+            int opencv_id = -1;
+            int opencv_rotation = -1;
+            const bool opencv_accepted = dictionary.identify(
+                    ratios, opencv_id, opencv_rotation, kMaxCorrectionRate, kValidBitThreshold);
+
+            aruco3cuda::CellMasks masks;
+            ASSERT_EQ(aruco3cuda::build_cell_masks(ratios.ptr<float>(0), table.marker_size_,
+                                                   kValidBitThreshold, &masks),
+                      aruco3cuda::Status::kOk);
+            // 両方の mask に立った bit は「黒でも白でもない」セルである。
+            if ((masks.not_black_ & masks.not_white_) != 0U) {
+                ++ambiguous_cases;
+            }
+            aruco3cuda::DictionaryMatch match;
+            ASSERT_EQ(aruco3cuda::identify_marker(table, masks, kMaxCorrectionRate, &match),
+                      aruco3cuda::Status::kOk);
+
+            EXPECT_EQ(match.id_ >= 0, opencv_accepted) << "id=" << id << " trial=" << trial;
+            if (opencv_accepted && match.id_ >= 0) {
+                EXPECT_EQ(match.id_, opencv_id) << "id=" << id << " trial=" << trial;
+                EXPECT_EQ(match.rotation_, opencv_rotation) << "id=" << id << " trial=" << trial;
+            }
+        }
+    }
+    // 曖昧なセルを含む場合を実際に通ったことを確かめる。通っていなければ
+    // この test は bit 列の場合しか見ておらず、検証 4 と変わらない。
+    std::printf("[dict] 曖昧なセルを含む場合 %zu 件\n", ambiguous_cases);
+    EXPECT_GT(ambiguous_cases, 0U);
 }
 
 // 検証 5: 最小 Hamming 距離を再計算し、公称値と一致する。

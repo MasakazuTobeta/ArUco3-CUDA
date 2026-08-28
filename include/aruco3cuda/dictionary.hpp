@@ -51,6 +51,28 @@ struct DictionaryMatch {
     int distance_ = 0;  ///< 最小 Hamming 距離
 };
 
+/// セル比から作る 2 つの bit mask。
+///
+/// 目的:
+///   セル比は 0 か 1 とは限らない。OpenCV は 1 つの bit 列ではなく、
+///   「黒ではない」と「白ではない」の 2 つの mask で候補を表す。閾値の
+///   近くにある比はどちらの mask にも立ち、bit が 0 でも 1 でも誤りとして
+///   数えられる。1 つの bit 列に潰すとこの区別が失われる。
+///
+/// 所有権:
+///   値のみを持つ。
+/// 同期動作:
+///   値のみを持ち同期点を持たない。device 側へそのまま渡してよい。
+///
+/// 入力例: 閾値 0.49、比が {1.0, 0.0, 0.5, 1.0} の 2x2
+/// 出力例: not_black_ = 0b1101、not_white_ = 0b0110
+struct CellMasks {
+    /// 比が閾値を超えたセル。bit 0 が (row 0, col 0) で row-major。
+    MarkerCode not_black_ = 0;
+    /// 比が 1 から閾値を引いた値を下回ったセル。並びは not_black_ と同じ。
+    MarkerCode not_white_ = 0;
+};
+
 /// 収録されている定義済み Dictionary の数を返す。
 ///
 /// @return 収録数。0 にはならない。
@@ -114,6 +136,60 @@ const DictionaryTable* find_builtin_dictionary(const char* name);
 /// 出力例: out->id_ = -1
 Status match_dictionary(const DictionaryTable& table, MarkerCode candidate,
                         int max_correction_errors, DictionaryMatch* out);
+
+/// セル比から CellMasks を組み立てる。
+///
+/// OpenCV の `CellBitMasks` と同じ規則で、比を 2 つの mask へ振り分ける。
+/// 比が閾値を超えれば not_black_ に、1 から閾値を引いた値を下回れば
+/// not_white_ に bit を立てる。既定の閾値 0.49 では 0.49 より大きく
+/// 0.51 より小さい比が両方に立ち、bit が 0 でも 1 でも誤りになる。
+///
+/// @param ratios セル比。長さは marker_size * marker_size 以上で row-major。
+///               領域の所有権は呼出側にあり、この関数は複製も保持もしない。
+/// @param marker_size 1 辺のセル数。1 以上 7 以下。border は含まない。
+/// @param valid_bit_threshold 比を bit とみなす閾値。OpenCV の
+///                            `validBitIdThreshold` に対応する。
+/// @param out 成功時に mask を格納する。領域の所有権は呼出側にある。
+/// @return kOk。ratios か out が nullptr、または marker_size が範囲外なら
+///         kInvalidArgument。
+///
+/// 所有権: 引数の領域を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。
+///
+/// 入力例: ratios = {1.0, 0.0, 0.0, 1.0}、marker_size = 2、閾値 0.49
+/// 出力例: out->not_black_ = 0b1001、out->not_white_ = 0b0110
+Status build_cell_masks(const float* ratios, int marker_size, float valid_bit_threshold,
+                        CellMasks* out);
+
+/// OpenCV の `Dictionary::identify` と同じ規則で候補を識別する。
+///
+/// match_dictionary との違いは 2 つある。第 1 に、比の曖昧さを 2 つの mask で
+/// 扱う。第 2 に、全 ID の最小距離を求めるのではなく、**ID の昇順に見て許容
+/// 距離を満たした最初の ID で打ち切る**。収録間の最小距離が許容距離の 2 倍を
+/// 超える Dictionary では両者は一致するが、そうでない場合は結果が変わりうる。
+/// OpenCV との一致を優先してこちらを検出経路で使う。
+///
+/// 許容距離は `int(max_correction_bits_ * error_correction_rate)` である。
+/// 小数は 0 方向へ切り捨てる。
+///
+/// @param table 対象 Dictionary。
+/// @param masks 候補のセル比から作った mask。
+/// @param error_correction_rate OpenCV の `errorCorrectionRate`。0 以上 1 以下。
+/// @param out 照合結果を格納する。一致しなかった場合は id_ に -1 を入れ、
+///            distance_ には全 ID を通した最小距離を入れる。
+///            領域の所有権は呼出側にある。
+/// @return 照合を実行できた場合は kOk。引数が不正な場合は kInvalidArgument。
+///
+/// 所有権: table が指す codes_ は参照するだけで保持しない。
+/// 同期動作: host 専用であり同期点を持たない。CUDA 実装は同じ規則を
+///           device 側で再実装する。
+///
+/// 入力例: 6x6 Dictionary、ID 42 の codeword そのままの比から作った mask
+/// 出力例: out->id_ = 42、out->rotation_ = 0、out->distance_ = 0
+/// 入力例: どの codeword とも遠い mask
+/// 出力例: out->id_ = -1
+Status identify_marker(const DictionaryTable& table, const CellMasks& masks,
+                       double error_correction_rate, DictionaryMatch* out);
 
 /// Dictionary 内の最小 Hamming 距離を計算する。
 ///

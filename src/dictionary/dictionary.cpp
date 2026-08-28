@@ -77,6 +77,79 @@ Status rotate_marker_code(MarkerCode code, int marker_size, MarkerCode* out) {
     return pack_marker_code(rotated, marker_size, out);
 }
 
+Status build_cell_masks(const float* ratios, int marker_size, float valid_bit_threshold,
+                        CellMasks* out) {
+    if (ratios == nullptr || out == nullptr || !is_valid_marker_size(marker_size)) {
+        return Status::kInvalidArgument;
+    }
+    // 上限は float で求める。OpenCV は `1 - validBitIdThreshold` を float で
+    // 評価する。倍精度で求めると閾値そのものが 1 ULP 動く。
+    const float upper = 1.0F - valid_bit_threshold;
+    const int bit_count = marker_size * marker_size;
+    CellMasks masks;
+    for (int i = 0; i < bit_count; ++i) {
+        const MarkerCode bit = static_cast<MarkerCode>(1) << i;
+        if (ratios[i] > valid_bit_threshold) {
+            masks.not_black_ |= bit;
+        }
+        if (ratios[i] < upper) {
+            masks.not_white_ |= bit;
+        }
+    }
+    *out = masks;
+    return Status::kOk;
+}
+
+Status identify_marker(const DictionaryTable& table, const CellMasks& masks,
+                       double error_correction_rate, DictionaryMatch* out) {
+    if (out == nullptr || table.codes_ == nullptr || table.code_count_ <= 0 ||
+        !is_valid_marker_size(table.marker_size_) || !(error_correction_rate >= 0.0) ||
+        !(error_correction_rate <= 1.0)) {
+        return Status::kInvalidArgument;
+    }
+    // 0 方向への切り捨て。OpenCV の maxCorrectionRecalculed と同じ。
+    const int max_errors = static_cast<int>(static_cast<double>(table.max_correction_bits_) *
+                                            error_correction_rate);
+    // 「bit が 0 なら黒でないことが誤り、1 なら白でないことが誤り」を
+    // 分岐なしに書く。not_black_ ^ ((not_black_ ^ not_white_) & code) が
+    // その式であり、OpenCV が hal の and と xor で計算しているものと等しい。
+    const MarkerCode selector = masks.not_black_ ^ masks.not_white_;
+
+    int smallest = table.bit_count() + 1;
+    out->id_ = -1;
+    out->rotation_ = 0;
+    for (int id = 0; id < table.code_count_; ++id) {
+        int id_distance = table.bit_count() + 1;
+        int id_rotation = 0;
+        for (int rotation = 0; rotation < 4; ++rotation) {
+            const MarkerCode code = table.codes_[static_cast<std::size_t>(id) * 4U +
+                                                 static_cast<std::size_t>(rotation)];
+            const int distance = popcount64(masks.not_black_ ^ (selector & code));
+            if (distance < id_distance) {
+                id_distance = distance;
+                id_rotation = rotation;
+                // 0 は最小であり、これ以上見ても回転は更新されない。
+                if (distance == 0) {
+                    break;
+                }
+            }
+        }
+        if (id_distance < smallest) {
+            smallest = id_distance;
+        }
+        // 最小の ID ではなく、条件を満たした最初の ID を採る。OpenCV の
+        // identify がここで break するため、同じ位置で打ち切る。
+        if (id_distance <= max_errors) {
+            out->id_ = id;
+            out->rotation_ = id_rotation;
+            out->distance_ = id_distance;
+            return Status::kOk;
+        }
+    }
+    out->distance_ = smallest;
+    return Status::kOk;
+}
+
 Status match_dictionary(const DictionaryTable& table, MarkerCode candidate,
                         int max_correction_errors, DictionaryMatch* out) {
     if (out == nullptr || table.codes_ == nullptr || table.code_count_ <= 0 ||

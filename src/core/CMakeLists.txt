@@ -16,6 +16,7 @@ add_library(aruco3cuda_core
   candidate_group.cu
   cell_sample.cu
   cell_decode.cu
+  dictionary_match.cu
   cuda_check.cpp
   device_probe.cu)
 

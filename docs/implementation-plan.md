@@ -293,13 +293,29 @@ WP-3.1 の射影変換と違い、機種差が出ませんでした。Otsu の�
 
 同じ理由で `cell_decode.cu` も `-fmad=false` で compile しています。融合を許すと分散が `minOtsuStdDev` の境界でずれ、低分散の分岐へ入るかどうかが変わります。
 
+#### WP-3.3 の実測
+
+Dictionary 照合を GPU へ移しました。全 250 ID の 4 回転 (1000 件) で、CPU 基準とも OpenCV とも ID・回転・距離が完全に一致します。3 機すべてで同じ結果です。
+
+比が閾値の近くにある場合を別に検証しました。1000 件のうち 233 件が「黒とも白とも決まらないセル」を含み、61 件が不採用になります。ここも不一致 0 です。
+
+実装にあたり、OpenCV の `Dictionary::identify` に 2 つの見落としやすい規則があることが分かりました。
+
+**セル比は 1 つの bit 列へ潰せません。** OpenCV は「黒ではない」(比 > 閾値) と「白ではない」(比 < 1 - 閾値) の 2 つの mask を作ります。既定の閾値 0.49 では、0.49 より大きく 0.51 より小さい比が両方に立ち、bit が 0 でも 1 でも誤りとして数えられます。1 つの bit 列へ潰すとこの第 3 の状態が消えます。誤り数は次の式で分岐なしに求まります。
+
+```
+誤り = not_black ^ ((not_black ^ not_white) & codeword)
+```
+
+**最小距離の ID ではなく、条件を満たした最初の ID を採ります。** OpenCV は ID の昇順に見て、許容距離を満たした時点で `break` します。DICT_ARUCO_MIP_36h12 は収録間の最小距離が 12、許容距離が 3 なので両者は一致しますが、規則としては別物です。既存の `match_dictionary` は最小距離を返すため、検出経路には新しい `identify_marker` を使います。GPU 側は満たした ID の `atomicMin` で同じ結果を得ます。
+
 #### Phase 3: GPU decode
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
 | WP-3.1 | S7 射影変換とセル sampling | `src/core/cell_sample.{hpp,cu}` | 既知 homography で正しいセル値を得られる。x86_64 の OpenCV と byte 単位で一致、aarch64 では 40960 画素中 1 画素が異なる。達成済み | WP-2.6 | M |
 | WP-3.2 | S8 前半 Otsu と border 検証 | `src/core/cell_decode.{hpp,cu}` | `minOtsuStdDev` と `maxErroneousBitsInBorderRate` の境界で CPU と判定が一致する。3 機すべてで比の不一致 0 セル、誤り数の不一致 0 件。達成済み | WP-3.1 | M |
-| WP-3.3 | S8 後半 Dictionary 照合 | `src/core` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す | WP-3.2、WP-0.5 | M |
+| WP-3.3 | S8 後半 Dictionary 照合 | `src/core/dictionary_match.{hpp,cu}` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す。3 機すべてで 1000 件の不一致 0。達成済み | WP-3.2、WP-0.5 | M |
 | WP-3.4 | S9 重複整理 | `src/core` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる | WP-3.3 | M |
 | WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core` | 四隅 RMSE が CPU 基準に対する許容内に収まる | WP-3.4 | L |
 | WP-3.6 | device 常駐出力 API | `DeviceDetections` | host 同期なしで検出結果を参照できることをテストで確認できる | WP-3.5 | S |

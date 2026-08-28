@@ -10,7 +10,7 @@
 
 ## 現状
 
-Phase 1 まで実装済みです。GPU 側の前処理と二値化、および案 C のハイブリッド経路 (候補抽出と decode を CPU で行う経路) が記録の対象に含まれます。
+Phase 3 の途中まで実装済みです。GPU 側は前処理、二値化、候補抽出、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合までが記録の対象に含まれます。残りの段 (重複整理、四隅の subpixel 補正) は案 C のハイブリッド経路として CPU で実装しており、これも対象です。
 
 ## 記録
 
@@ -105,6 +105,45 @@ image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を 
 出力の同一性を要求する以上、判定式と適用順序は一致させる以外にありません。一方で、同一にしたのは観測可能な振る舞いであり、source code の表現は複製していません。参照した file と取得時 hash は PR-000 と同じです。
 
 OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対応しますが、本 project は現時点でどちらも実装していません。`filter_too_close_candidates` は `detectInvertedMarker` が偽の場合の分岐のみを持ちます。
+
+公式 ArUco の GPLv3 source code は参照していません。
+
+### PR-005: GPU decode 段 (S7 から S8)
+
+| 項目 | 内容 |
+| --- | --- |
+| Implementation | `src/core/cell_sample.{hpp,cu}`、`src/core/cell_decode.{hpp,cu}`、`src/core/dictionary_match.{hpp,cu}`、`src/dictionary/dictionary.cpp` の `build_cell_masks` と `identify_marker` |
+| Basis | OpenCV `objdetect` の ArUco 検出器と `Dictionary::identify`、および `imgproc` の `warpPerspective`、`getPerspectiveTransform`、`threshold` の Otsu 経路、`core` の `meanStdDev` |
+| Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7`（2026-08-28 取得） |
+| License | Apache-2.0 |
+| Reused expression | 振る舞いの再実装。判定式、演算の順序、丸めの規則、打ち切りの位置は OpenCV と同一にした。識別子、コメント、関数分割、data 構造は本 project の規約に従って独自に書いた |
+| Patent review | 未実施 |
+
+対応関係は次のとおりです。
+
+| 本 project | OpenCV |
+| --- | --- |
+| `cell_sample.cu` の `solve_lu8` | `getPerspectiveTransform` が使う `LUImpl` |
+| `cell_sample.cu` の `warp_canonical_kernel` | `warpPerspective` の `INTER_NEAREST` 経路 |
+| `cell_decode.cu` の `otsu_threshold` | `getThreshVal_Otsu_8u` |
+| `cell_decode.cu` の内側の和と二乗和 | `cv::meanStdDev` |
+| `cell_decode.cu` の外周走査 | `_getBorderErrors` |
+| `build_cell_masks` | `CellBitMasks` の構築部 |
+| `identify_marker`、`dictionary_match.cu` の `distance_to_id` | `Dictionary::identify`、`CellBitMasks::hammingDistanceToId` |
+
+出力の同一性を要求する以上、判定式と演算の順序は一致させる以外にありません。一方で、同一にしたのは観測可能な振る舞いであり、source code の表現は複製していません。とくに OpenCV が `hal::and8u` と `hal::normHamming` を byte 列に対して呼ぶところを、本 project は 64 bit の packed 表現に対する `__popcll` 1 回で書いています。
+
+参照した file と取得時 hash は次のとおりです。
+
+| File | SHA-256 |
+| --- | --- |
+| `modules/objdetect/src/aruco/aruco_dictionary.cpp` | `9fd90d079e62239683300625ad001f437278b75fce6523368ffa3e5a64198ac8` |
+| `modules/objdetect/include/opencv2/objdetect/aruco_dictionary.hpp` | `6b14b87c13dd3629d3fcfd82e63829e41f01f7cc60c166216e0ae99851f6f42e` |
+| `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` |
+| `modules/imgproc/src/imgwarp.cpp` | `d953cdd11db1bf7b562ba7cfb8b36f2aba3198f15714e5deb40840b01ae77912` |
+| `modules/imgproc/src/thresh.cpp` | `ec40ffd08c842c946213cdd46c2b8036e43770445a4c4b797017c96fd3f91117` |
+| `modules/core/src/mean.dispatch.cpp` | `8e52e41c7bf7f1942a5c366683d2742040f6d82db770f253b7d61cb18205133a` |
+| `modules/core/src/matrix_decomp.cpp` | `887deb3905e1f4fbcab426be4346b4ada863051579f19e3011721704dd2ac596` |
 
 公式 ArUco の GPLv3 source code は参照していません。
 
