@@ -19,6 +19,7 @@ add_executable(aruco3cuda_reference_tests
   test_dictionary_match.cpp
   test_candidate_tree.cpp
   test_detection_emit.cpp
+  test_corner_refine.cpp
   test_hybrid_detector.cpp
   test_device_image.cpp
   test_report_diff.cpp)
@@ -53,3 +54,9 @@ gtest_discover_tests(aruco3cuda_reference_tests
 # ハイブリッド経路は GPU kernel を実行するため、Compute Sanitizer の対象へ
 # 含める。unit test だけでは前処理と二値化の kernel が検査されない。
 aruco3cuda_add_sanitizer_tests(aruco3cuda_reference_tests)
+
+# test_corner_refine.cpp は cv::cornerSubPix を逐語で写した oracle を持つ。
+# GPU 側は -fmad=false で積和を融合しないため、host 側も融合を止めないと
+# 比較にならない。compiler は既定で融合してよいことになっている。
+set_source_files_properties(test_corner_refine.cpp
+  PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")

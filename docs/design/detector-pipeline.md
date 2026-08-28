@@ -10,7 +10,7 @@ detector core の段階分解、各段階の GPU 適性評価、四角形候補�
 
 ## 現状
 
-S1 から S9 (前処理、二値化、連結成分ラベリング、四隅推定、候補の篩と統合、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction) を CUDA で実装済みです。S10 以降 (四隅の subpixel 補正、結果出力) は案 C のハイブリッド経路として CPU で実装しており、GPU 化は Phase 3 の続きです。
+S1 から S10 (前処理、二値化、連結成分ラベリング、四隅推定、候補の篩と統合、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction、四隅の subpixel 補正と原寸への復元) を CUDA で実装済みです。残るのは S11 の結果出力 (device 常駐 API) です。
 
 互換対象である OpenCV 4.x の ArUco3 検出戦略については、Apache-2.0 の公開 header と source から次の観測仕様を確認しています。取得元と hash は [Code Provenance 記録](../code-provenance.md) を参照してください。
 
@@ -250,6 +250,52 @@ new[i] = old[(i + 4 - rotation) % 4]
 
 出力の並びは候補の並びをそのまま保ちます。統合後の候補は周長の降順なので、検出も周長の降順になります。最終的な並べ替えは S11 の責務であり、S9 では行いません。CPU 経路の並べ替えは subpixel 補正の後に走るため、S9 で並べ替えると補正が四隅を動かした後に順序が変わりえます。
 
+### S10 四隅の subpixel 補正と原寸への復元
+
+WP-3.5 で GPU へ移しました。OpenCV の `findCornerInPyrImage` と `cv::cornerSubPix` を再現します。
+
+#### 段を登る手順
+
+```
+四隅 *= scale_init                     // scale_init = 開始段の幅 / segmentation の幅
+for (level = 開始段 - 1; level >= 0; --level) {
+    四隅 *= 2
+    cornerSubPix(pyramid[level], 四隅, 窓)
+}
+```
+
+**pyramid は縮小前の原寸から作ります。** `buildPyramid` は segmentation 画像へ縮小する前の画像に対して呼ばれるため、段 0 は原寸です。登り切った時点で四隅は原寸の座標になっており、`fxfy` の逆数を別に掛けてはいけません。逆スケールの分岐は ArUco3 の有無どちらでも到達しないためです。
+
+**窓の半径は設定ではなく段の大きさで決まります。** `max(段の幅, 段の高さ) > 1080 ? 5 : 3` です。`cornerRefinementWinSize` と `relativeCornerRefinmentWinSize` は ArUco3 が無効な経路でしか使われません。
+
+#### 1 反復
+
+重みは `exp(-((i-r)/r)^2) * exp(-((j-r)/r)^2)` を単精度で評価したものです。`zeroZone` は `Size(-1, -1)` で呼ばれるため中央を 0 にする分岐へは入りません。
+
+patch は `getRectSubPix` で切り出します。**素直な双一次補間ではありません。** 1 行を左から右へ辿り、直前の項に `(1-a)/a` を掛けて持ち回ります。
+
+```
+prev = (1-a) * (b1*src[0] + b2*src[step])
+for j:
+    t = a12*src[j+1] + a22*src[j+1+step]
+    dst[j] = prev + t
+    prev = (float)(t * s)          // s = (1-a)/a を倍精度で
+```
+
+数学的には双一次と同じですが丸めが積み上がるため、双一次の式で置き換えると値が変わります。窓が画像からはみ出す場合は別の経路 (`adjustRect`) になり、矩形の外は端の値を縦方向にだけ補間して埋めます。
+
+正規方程式は倍精度で、row-major に 1 要素ずつ積みます。**並列に畳み込むと丸めが変わり、反復回数や打ち切りの採否まで変わります。** そのため 1 thread が 1 隅を担当し、内側は逐次にしています。隅は検出あたり 4 つ、検出は多くても 1024 なので、隅の間の並列だけで十分です。
+
+誤差は単精度で求めてから倍精度へ広げます。`err = (dx*dx) + (dy*dy)` は float 演算であり、その結果が `double err` へ入ります。
+
+#### 反復解法をどう検証したか
+
+これまでの段と違い、1 ULP の差が離散的な差になります。反復回数が 1 回変わり、収束不良で初期位置へ戻す分岐が反転すると窓の半径だけ四隅が動きます。そのため検証を 2 段に分けました。
+
+**第 1 に、写し間違いが無いこと。** `cv::cornerSubPix` と `cv::getRectSubPix` を host へ逐語で写した oracle を test 内に置き、bit 一致を要求します。oracle は `-ffp-contract=off` で compile し、GPU 側の `-fmad=false` と同じ意味論にします。退化した入力を含めて 3 機すべてで 128/128 が一致しました。
+
+**第 2 に、OpenCV との差。** 実際の `cv::cornerSubPix` との差は機種で変わります。実運用に近い入力では 3 機とも RMSE 0.000012 px 以下ですが、行列式が 0 に近くなる退化した入力では aarch64 で最大 6.72 px の差が出ます。収束不良の判定が反転し、段を登るときに 2 倍されるためです。実装の誤りではなく、丸めの差が離散的な分岐へ増幅された結果です。
+
 ### 段階分解
 
 ```mermaid
@@ -282,7 +328,7 @@ flowchart TD
 | S8 border 検証 | 候補 | 1 候補 1 block、共有 memory の histogram と整数の和 | 高 | 実装済み (WP-3.2) |
 | S8 Dictionary 照合 | 候補と codeword | packed codeword に対する popcount と最小値 reduction | 高 | 実装済み (WP-3.3) |
 | S9 打ち切りと compaction | 候補 | 包含判定は候補ごと、走査は 1 block の逐次、詰め直しは scan | 中 | 実装済み (WP-3.4) |
-| S10 四隅補正 | 四隅 | 1 corner 1 block の勾配法反復 | 中 | Phase 3 |
+| S10 四隅補正 | 隅 | 1 thread が 1 隅。反復は逐次にする | 中 | 実装済み (WP-3.5) |
 | S11 出力 | - | device buffer または host 転送 | - | Phase 1 |
 
 S3 は既定で 3 通りの window size を評価します。CPU 実装では window ごとに輪郭抽出まで実行して結果を結合しますが、CUDA では S3 から S5 までを window 方向の 3 次元目として同時に処理し、S6 で統合する構成を初期案とします。

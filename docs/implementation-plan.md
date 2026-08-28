@@ -330,6 +330,34 @@ Dictionary 照合を GPU へ移しました。全 250 ID の 4 回転 (1000 件)
 
 実装後に 4 観点の敵対的レビューを掛け、23 件の指摘のうち 11 件を確定として反映しました。主なものは workspace 必要量の doc が実際と 768 から 8192 byte 違っていたこと、および上記 4 規則のうち 2 つが「わざと壊しても test が通る」状態だったことです。**7 種類の変異を実際に注入し、すべてが test で捕まることを確認しています。**
 
+#### WP-3.5 の実測と、反復解法をどう検証したか
+
+S10 は `cv::cornerSubPix` の反復解法をそのまま再現する段です。これまでの段と違い、**浮動小数の演算順序が結果へ離散的に効きます**。1 ULP の差が反復回数を 1 回変え、収束不良で初期位置へ戻す分岐の採否を反転させます。後者は窓の半径 (5) だけ四隅を動かします。
+
+そのため検証を 2 段に分けました。
+
+**第 1 の gate: 写し間違いが無いこと。** `cv::cornerSubPix` と `cv::getRectSubPix` を host へ逐語で写した oracle を test 内に置き、GPU がそれと bit 一致することを要求します。oracle は `-ffp-contract=off` で compile し、GPU 側の `-fmad=false` と同じ意味論にします。行列式が 0 に近くなる退化した入力を含めて **3 機すべてで 128/128 が bit 一致**しました。
+
+**第 2 の gate: OpenCV との差。** 実際の `cv::cornerSubPix` との差は機種で変わります。
+
+| 入力 | DGX Spark GB10 (aarch64) | Jetson AGX Orin (aarch64) | RTX 5070 Ti (x86_64) |
+| --- | --- | --- | --- |
+| 実運用に近い場面 (16 隅) | 16/16 一致 | 16/16 一致 | 12/16、最大 0.000031 px |
+| 初期位置を ±1 ずらす (96 隅) | 96/96 一致 | 96/96 一致 | 96/96 一致 |
+| 退化を含む ±6 (128 隅) | 91/128、最大 6.72 px | 91/128、最大 6.72 px | 123/128、最大 0.012 px |
+
+退化した入力で aarch64 の最大差が 6.72 px に達するのは、収束不良の判定が反転したためです。窓の半径 5 の段で戻すか戻さないかが分かれ、段を 1 つ登るときに 2 倍されます。これは丸めの差が離散的な分岐へ増幅された結果であり、実装の誤りではありません。同じ入力で oracle とは bit 一致しています。
+
+実運用に近い入力では 3 機とも RMSE 0.000012 px 以下であり、完了条件を満たします。
+
+#### 仕様のうち見落としやすい点
+
+- **窓の半径は設定ではなく段の大きさで決まります。** OpenCV は ArUco3 経路で `max(段の幅, 段の高さ) > 1080 ? 5 : 3` とします。`cornerRefinementWinSize` と `relativeCornerRefinmentWinSize` は ArUco3 が無効な経路でしか使われません。
+- **pyramid は縮小前の原寸から作ります。** `buildPyramid` は segmentation 画像へ縮小する**前**の画像に対して呼ばれます。段 0 が原寸であるため、段を登り切った時点で四隅は原寸の座標になります。
+- **`fxfy` の逆数を掛けてはいけません。** 逆スケールの分岐 (`cornerRefinementMethod != CORNER_REFINE_SUBPIX && fxfy != 1.f`) は、ArUco3 有効なら第 1 項が偽、無効なら `fxfy` が厳密に 1 なので第 2 項が偽であり、到達しません。
+- **`getRectSubPix` は素直な双一次補間ではありません。** 1 行を左から右へ辿り、直前の項に `(1-a)/a` を掛けて持ち回ります。数学的には同じですが丸めが積み上がるため、双一次の式で置き換えると値が変わります。
+- **誤差は単精度で求めてから倍精度へ広げます。** `err = (cI2.x-cI.x)*(cI2.x-cI.x) + ...` は float 演算であり、その結果が `double err` へ入ります。
+
 #### Phase 3: GPU decode
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
@@ -338,7 +366,7 @@ Dictionary 照合を GPU へ移しました。全 250 ID の 4 回転 (1000 件)
 | WP-3.2 | S8 前半 Otsu と border 検証 | `src/core/cell_decode.{hpp,cu}` | `minOtsuStdDev` と `maxErroneousBitsInBorderRate` の境界で CPU と判定が一致する。3 機すべてで比の不一致 0 セル、誤り数の不一致 0 件。達成済み | WP-3.1 | M |
 | WP-3.3 | S8 後半 Dictionary 照合 | `src/core/dictionary_match.{hpp,cu}` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す。3 機すべてで 1000 件の不一致 0。達成済み | WP-3.2、WP-0.5 | M |
 | WP-3.4 | S9 重複整理と compaction | `src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる。包含判定は `cv::pointPolygonTest` と 400 組で一致、打ち切りは乱数の森 80 通りで一致。達成済み | WP-3.3 | M |
-| WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core` | 四隅 RMSE が CPU 基準に対する許容内に収まる | WP-3.4 | L |
+| WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core/corner_refine.{hpp,cu}` | 四隅 RMSE が CPU 基準に対する許容内に収まる。実運用に近い入力では RMSE 0.000012 px 以下、逐語 oracle とは 3 機すべてで bit 一致。達成済み | WP-3.4 | L |
 | WP-3.6 | device 常駐出力 API | `DeviceDetections` | host 同期なしで検出結果を参照できることをテストで確認できる | WP-3.5 | S |
 
 G3 の完了条件: ID と四隅の出力まで GPU 経路で完結し、`CUDA-Resident` 経路が測定可能であること。

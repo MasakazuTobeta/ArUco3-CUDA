@@ -58,6 +58,27 @@ struct ImagePlaneU8 {
     std::size_t pitch_bytes_ = 0;
 };
 
+/// pyramid の各 level を kernel へ渡すための参照。
+///
+/// level ごとに pitch が異なるため、一律に扱ってはならない。level 0 は
+/// 呼出側の入力画像を指し、pitch も呼出側のものである。
+///
+/// 値渡しできる POD にしてある。kernel の引数へそのまま置ける。
+///
+/// 所有権: data_ が指す領域の所有権は呼出側と workspace にある。この構造体は
+///         参照のみを持ち、複製も解放も行わない。
+/// 同期動作: 単なる参照の集合であり同期点を持たない。
+///
+/// 入力例: 1280x720 に対する PreprocessBuffers
+/// 出力例: level_count_ = 5、width_[0] = 1280、width_[1] = 640
+struct PyramidRef {
+    const std::uint8_t* data_[kMaxPyramidLevels] = {};
+    int width_[kMaxPyramidLevels] = {};
+    int height_[kMaxPyramidLevels] = {};
+    std::size_t pitch_[kMaxPyramidLevels] = {};
+    int level_count_ = 0;
+};
+
 /// 前処理が使用する buffer 一式。
 ///
 /// level 0 は入力そのものを指し、複製しない。複製は 1 フレームあたり
@@ -175,6 +196,23 @@ Status build_segmentation_async(const ScalePlan& plan, PreprocessBuffers* buffer
 /// 入力例: level = 0
 /// 出力例: 入力そのものを指す view
 ImageViewU8 level_view(const PreprocessBuffers& buffers, int level);
+
+/// PreprocessBuffers から kernel へ渡す参照を組み立てる。
+///
+/// 段ごとに level_view() を呼んで詰め直すだけである。同じ組み立てを段を
+/// 使う kernel ごとに書くと、level 0 が入力そのものを指すという約束が
+/// 散らばるため、1 箇所にまとめる。
+///
+/// @param buffers 前処理の buffer 一式。
+/// @param out 成功時に参照を格納する。領域の所有権は呼出側にある。
+/// @return kOk。out が nullptr、または段数が範囲外なら kInvalidArgument。
+///
+/// 所有権: buffers が指す領域を保持しない。out は参照だけを持つ。
+/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+///
+/// 入力例: level_count_ = 5 の PreprocessBuffers
+/// 出力例: kOk。out->level_count_ = 5
+Status make_pyramid_ref(const PreprocessBuffers& buffers, PyramidRef* out);
 
 }  // namespace aruco3cuda::detail
 

@@ -24,18 +24,6 @@ constexpr int kCanonicalThreads = 256;
 /// LU の特異判定に使う閾値。OpenCV の DBL_EPSILON * 100 と同じ。
 constexpr double kLuEpsilon = 2.2204460492503131e-14;
 
-/// pyramid の各 level を kernel へ渡すための参照。
-///
-/// level 0 は呼出側の入力画像を指し、pitch も呼出側のものである。
-/// level ごとに pitch が異なるため、一律に扱ってはならない。
-struct PyramidRef {
-    const std::uint8_t* data_[kMaxPyramidLevels];
-    int width_[kMaxPyramidLevels];
-    int height_[kMaxPyramidLevels];
-    std::size_t pitch_[kMaxPyramidLevels];
-    int level_count_;
-};
-
 /// 候補の四隅から、canonical への写像を解くための係数行列を組む。
 ///
 /// OpenCV の getPerspectiveTransform と同じ並びにする。src は canonical の
@@ -340,13 +328,9 @@ Status build_canonical_async(const PreprocessBuffers& preprocess, const ScalePla
     }
 
     PyramidRef pyramid{};
-    pyramid.level_count_ = preprocess.level_count_;
-    for (int level = 0; level < preprocess.level_count_; ++level) {
-        const ImageViewU8 view = level_view(preprocess, level);
-        pyramid.data_[level] = view.data_;
-        pyramid.width_[level] = view.width_px_;
-        pyramid.height_[level] = view.height_px_;
-        pyramid.pitch_[level] = view.pitch_bytes_;
+    const Status assembled = make_pyramid_ref(preprocess, &pyramid);
+    if (assembled != Status::kOk) {
+        return assembled;
     }
 
     const int min_perimeter = 4 * config.min_side_length_canonical_img_px_;

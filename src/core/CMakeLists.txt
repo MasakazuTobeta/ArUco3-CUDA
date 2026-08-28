@@ -19,6 +19,7 @@ add_library(aruco3cuda_core
   dictionary_match.cu
   candidate_tree.cu
   detection_emit.cu
+  corner_refine.cu
   cuda_check.cpp
   device_probe.cu)
 
@@ -43,5 +44,5 @@ set_target_properties(aruco3cuda_core PROPERTIES
 # cell_sample.cu と cell_decode.cu は OpenCV と丸めまで一致させる。積和を
 # 融合すると 1 ULP ずれ、参照画素や分散の閾値判定が変わる。この 2 つの翻訳
 # 単位だけ融合を止める。
-set_source_files_properties(cell_sample.cu cell_decode.cu
+set_source_files_properties(cell_sample.cu cell_decode.cu corner_refine.cu
   PROPERTIES COMPILE_OPTIONS "-fmad=false")

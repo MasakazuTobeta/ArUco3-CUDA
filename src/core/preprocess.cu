@@ -388,6 +388,23 @@ ImageViewU8 level_view(const PreprocessBuffers& buffers, int level) {
     return view;
 }
 
+Status make_pyramid_ref(const PreprocessBuffers& buffers, PyramidRef* out) {
+    if (out == nullptr || buffers.level_count_ < 1 || buffers.level_count_ > kMaxPyramidLevels) {
+        return Status::kInvalidArgument;
+    }
+    PyramidRef pyramid{};
+    pyramid.level_count_ = buffers.level_count_;
+    for (int level = 0; level < buffers.level_count_; ++level) {
+        const ImageViewU8 view = level_view(buffers, level);
+        pyramid.data_[level] = view.data_;
+        pyramid.width_[level] = view.width_px_;
+        pyramid.height_[level] = view.height_px_;
+        pyramid.pitch_[level] = view.pitch_bytes_;
+    }
+    *out = pyramid;
+    return Status::kOk;
+}
+
 Status build_pyramid_async(PreprocessBuffers* buffers, const DetectorConfig& config,
                            cudaStream_t stream) {
     if (buffers == nullptr || buffers->level_count_ < 1 ||
