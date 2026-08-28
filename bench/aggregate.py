@@ -18,7 +18,7 @@ from collections import defaultdict
 # 読める schema 版。version が違う結果を黙って混ぜると、同じ key が違う
 # 測定区間を指すことになる。version 3 で CPU 経路の測定区間から画像の
 # 読み込みと checksum を外したため、2 以前の値とは比較できない。
-SUPPORTED_SCHEMA_VERSIONS = {3}
+SUPPORTED_SCHEMA_VERSIONS = {4}
 
 
 def short_name(path):
@@ -110,6 +110,7 @@ def format_environment(environment):
         f"  cpu={environment.get('cpu_topology') or '-'}"
         f" affinity={environment.get('cpu_affinity') or '-'}"
         f" aslr={environment.get('address_randomization') or '-'}\n"
+        f"  cuda_context={environment.get('cuda_context_ms') or 0:.1f} ms (process ごとに 1 度)\n"
         f"  power_mode={environment.get('power_mode') or '(未取得)'}"
         f" clock={environment.get('gpu_max_clock_mhz') or '-'} MHz (max)"
         f" / {environment.get('gpu_current_clock_mhz') or '-'} MHz (現在)"
@@ -136,6 +137,9 @@ def measurement_rows(measurements):
                 "kernel_p50_ms": (kernel or {}).get("p50_ms") if kernel else None,
                 "gpu_stage_p50_ms": ((record.get("stages") or {}).get("gpu") or {}).get("p50_ms"),
                 "cpu_stage_p50_ms": ((record.get("stages") or {}).get("cpu") or {}).get("p50_ms"),
+                "first_result_ms": (record.get("startup") or {}).get("time_to_first_result_ms"),
+                "first_frame_ms": (record.get("startup") or {}).get("first_frame_ms"),
+                "_context_ms": (record.get("_environment") or {}).get("cuda_context_ms"),
                 "fps": record.get("throughput_fps"),
                 "image": record.get("image_path"),
             }
@@ -214,6 +218,58 @@ def print_crossover(rows):
             else:
                 verdict = "こちらが速い"
             print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  比={ratio:.3f}  {verdict}")
+
+
+def print_startup(rows):
+    """起動の費用を経路ごとに示す。
+
+    warm-up 後の分位点には現れない。単発の検出や短い burst では、定常状態の
+    差より起動の費用が支配する。定常との差から、元が取れる frame 数も出す。
+    """
+    grouped = defaultdict(dict)
+    for row in rows:
+        key = (row["machine"], row["image"], row["resolution"], row["markers"])
+        entry = grouped[key].setdefault((row["route"], row["memory_mode"]), [])
+        if row["first_result_ms"] is not None:
+            entry.append(row)
+
+    # CUDA の文脈生成は process ごとの費用であり、画像ごとには現れない。
+    context_ms = 0.0
+    for row in rows:
+        value = (row.get("_context_ms") or 0.0)
+        context_ms = max(context_ms, value)
+
+    printed = False
+    for key, routes in sorted(grouped.items(), key=lambda item: str(item[0])):
+        cpu_rows = routes.get(("CPU", "N/A"))
+        if not cpu_rows:
+            continue
+        cpu = cpu_rows[0]
+        for (route, memory), items in sorted(routes.items()):
+            if not items or route == "CPU":
+                continue
+            row = items[0]
+            if not printed:
+                print("\n=== 起動の費用 (warm-up 後の分位点には現れない) ===")
+                print("経路ごとに、1 枚目の結果が出るまでの時間と、定常との差で")
+                print("元が取れる frame 数を示す。")
+                printed = True
+            gain = cpu["p50_ms"] - row["p50_ms"]
+            # CUDA の文脈生成を CUDA 経路側にのみ加える。process ごとに 1 度
+            # 発生し、画像ごとの測定には現れないためである。
+            extra = (row["first_result_ms"] + context_ms) - cpu["first_result_ms"]
+            print(f"{key[0]} {short_name(key[1])} {key[2]} markers={key[3]}")
+            print(f"  CPU            1 枚目まで {cpu['first_result_ms']:8.3f} ms "
+                  f"(検出 {cpu['first_frame_ms']:.3f} ms)  定常 {cpu['p50_ms']:.3f} ms")
+            print(f"  {route:<14} 1 枚目まで {row['first_result_ms']:8.3f} ms "
+                  f"(検出 {row['first_frame_ms']:.3f} ms)  定常 {row['p50_ms']:.3f} ms  "
+                  f"[{memory}]")
+            print(f"    + CUDA 文脈生成 {context_ms:.1f} ms (process ごとに 1 度)")
+            if gain > 0:
+                print(f"    起動の追加費用 {extra:.1f} ms / 1 frame あたりの利得 "
+                      f"{gain:.3f} ms -> 約 {extra / gain:.0f} frame で相殺")
+            else:
+                print(f"    起動の追加費用 {extra:.1f} ms。定常でも速くならないため相殺しない")
 
 
 def print_run_variance(rows):
@@ -303,6 +359,7 @@ def main():
         print(format_environment(environment))
     print("\n=== 測定結果 ===")
     print_table(rows)
+    print_startup(rows)
     print_run_variance(rows)
     print_crossover(rows)
     print_machine_comparison(rows)

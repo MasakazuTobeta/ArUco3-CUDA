@@ -69,6 +69,7 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 - latency: p50、p95、p99
 - throughput: 連続処理時の frame/s
 - peak device memory とフレームごとの allocation 数
+- 1 枚目の結果が出るまでの時間と、CUDA の文脈生成にかかる時間
 - CPU 使用率、GPU 使用率、対象機で取得可能な消費電力
 
 ### 測定手順
@@ -76,7 +77,7 @@ OpenCV CPU 結果は互換性の基準ですが、必ずしも ground truth で�
 1. hardware、OS、CUDA、driver、compiler、OpenCV、power mode、clock を記録する。CPU の core 構成、測定に使用した core、ASLR の状態も記録する。
 1a. CPU を core 種別で固定する。DGX Spark GB10 は Cortex-X925 (性能) と Cortex-A725 (効率) の混成であり、固定しないと同じ条件で 1.64 倍の差が出る。`--cpu-list` で指定し、どの core を使ったかを結果へ残す。
 2. 同じ入力と detector parameters を固定する。ArUco3 検出戦略の設定は、縮小率 `fxfy` の実効値も併せて記録する。`minMarkerLengthRatioOriginalImg` の既定値は 0.0 であり、この場合 `useAruco3Detection` を有効にしても縮小は発生しない。
-3. 初期化と memory allocation を測定区間から分離する。
+3. 初期化と memory allocation を測定区間から分離する。分離するだけでなく、別項目として記録する。CUDA 経路は文脈の生成と kernel の読み込みで、定常状態の数百倍の費用が process ごとに 1 度発生する。warm-up 後の分位点だけを見るとこの費用が結果に現れず、単発の検出や短い burst での比較ができない。
 4. warm-up 後に十分な回数を測定する。
 5. 外れ値を削除せず、集計方法と全分布を保存する。
 5a. 同一条件を独立した process として複数回実行し、実行間ばらつきを報告する。1 回の実行内の分位点は process ごとの memory 配置による変動を捉えない。全解像度の CPU 経路では ASLR だけで p50 が 9% 動く。前後比較で変化を切り分けたい場合は `setarch -R` で ASLR を無効にし、その旨を記録する。

@@ -104,6 +104,26 @@ TEST_F(BenchmarkHarnessTest, refuses_unimplemented_routes) {
     }
 }
 
+// 正常系: 起動の費用が経路ごとに記録される。
+//
+// warm-up 後の分位点には現れないため、別に記録しないと単発の検出での
+// 比較ができない。CUDA 経路は文脈の生成と kernel の読み込みで、定常状態の
+// 数百倍になる。
+TEST_F(BenchmarkHarnessTest, records_startup_cost) {
+    MeasurementRecord record;
+    std::string error;
+    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, this->config_, &record, &error))
+            << error;
+    EXPECT_GT(record.first_frame_ms_, 0.0);
+    // 1 枚目までの時間は 1 枚目の検出を含むため、それ以上になる。
+    EXPECT_GE(record.time_to_first_result_ms_, record.first_frame_ms_);
+    // 1 枚目は cache が冷えているため、定常より遅い。
+    EXPECT_GE(record.first_frame_ms_, record.end_to_end_ms_.p50_);
+    std::printf("[bench] CPU 1 枚目まで %.3f ms (検出 %.3f ms) 定常 %.3f ms\n",
+                record.time_to_first_result_ms_, record.first_frame_ms_,
+                record.end_to_end_ms_.p50_);
+}
+
 // 正常系: hybrid 経路を測定でき、段階時間が記録される。
 TEST_F(BenchmarkHarnessTest, measures_hybrid_route) {
     if (!has_cuda_device()) {
@@ -129,6 +149,12 @@ TEST_F(BenchmarkHarnessTest, measures_hybrid_route) {
     // 中央値と一致せず、段階が互いに逆方向へ振れると大小が入れ替わる。
     // kernel 時間は CUDA event 由来のみとする。段階時間で埋めない。
     EXPECT_FALSE(record.kernel_time_available_);
+
+    // CUDA の文脈生成と kernel 読み込みは定常状態より桁違いに大きい。
+    EXPECT_GT(record.time_to_first_result_ms_, record.end_to_end_ms_.p50_);
+    std::printf("[bench] Hybrid 1 枚目まで %.3f ms (検出 %.3f ms) 定常 %.3f ms\n",
+                record.time_to_first_result_ms_, record.first_frame_ms_,
+                record.end_to_end_ms_.p50_);
 }
 
 // 正常系: host 入力の memory 種別でも測定でき、検出結果は同じになる。
@@ -273,6 +299,8 @@ TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
     EXPECT_NE(jsonl.find("\"p99_ms\""), std::string::npos);
     // CPU 経路の kernel は null であり 0 ではない。
     EXPECT_NE(jsonl.find("\"kernel\":null"), std::string::npos);
+    EXPECT_NE(jsonl.find("\"startup\""), std::string::npos);
+    EXPECT_NE(jsonl.find("\"time_to_first_result_ms\""), std::string::npos);
     EXPECT_NE(jsonl.find(record.image_sha256_), std::string::npos);
 }
 

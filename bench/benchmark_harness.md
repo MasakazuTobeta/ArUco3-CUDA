@@ -24,6 +24,14 @@
 
 この変更で `p50` の値は従来より小さくなります。`schema_version` を 3 へ上げ、version 2 以前の結果と混ぜて集計できないようにしています。
 
+### 起動の費用を別に記録する
+
+warm-up は測定区間から分離しますが、捨てはしません。1 枚目の結果が出るまでの時間 (`startup.time_to_first_result_ms`) と、1 枚目の検出だけの時間 (`startup.first_frame_ms`) を記録します。CUDA の文脈生成は process ごとに 1 度だけ起きるため、経路ごとの測定ではなく環境情報 (`cuda_context_ms`) へ入れます。
+
+DGX Spark で実測すると、CPU 経路は 1 枚目まで 3.2 ms、hybrid 経路は 202 ms です。定常状態の差は 0.13 ms であり、相殺には約 1600 frame を要します。warm-up 後の分位点だけを見ると、この差が結果に現れません。
+
+1 process で複数の画像を測る場合、文脈の生成と kernel の読み込みは最初の 1 枚だけが負担します。起動の費用を測る場合は 1 process 1 画像で実行してください。
+
 ### hybrid の memory 種別で測定区間を変える
 
 `M-Device` は画像が既に device にある想定で転送を測定区間の外へ置きます。camera から GPU へ直接入る構成の上限にあたります。`M-Pageable` は host の画像を毎 frame 転送し、転送を測定区間へ含めます。`CPU` 経路と同じく host の画像から始める場合の値です。

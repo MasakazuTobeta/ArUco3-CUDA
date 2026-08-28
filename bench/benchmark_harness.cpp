@@ -350,7 +350,8 @@ std::string read_os_pretty_name() {
 /// 3 での変更: measurement 行へ stages を追加した。あわせて CPU 経路の
 /// 測定区間から画像の読み込みと checksum を外した。version 2 以前の
 /// 結果と混ぜると、同じ key が違う区間を指すことになる。
-constexpr int kSchemaVersion = 3;
+/// 4 での変更: measurement 行へ startup を追加した。
+constexpr int kSchemaVersion = 4;
 
 void write_statistics(JsonWriter& writer, const std::string& name,
                       const SampleStatistics& stats) {
@@ -431,8 +432,17 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     // GPU 情報。device が無い環境でも測定自体は成立するため、失敗を致命的に扱わない。
     // ただし無言では継続しない。CUDA 側の失敗は記録し、環境情報から
     // GPU の項目が欠けている理由を後から追えるようにする。
+    // 最初の CUDA 呼び出しで文脈が暗黙に生成される。process ごとに 1 度だけ
+    // 発生し、経路ごとの測定には現れない。単発の検出では検出そのものの
+    // 数百倍になるため、環境情報として記録する。
     int device_count = 0;
+    const auto context_start = std::chrono::steady_clock::now();
     const aruco3cuda::Status count_status = aruco3cuda::device_count(&device_count);
+    const auto context_finish = std::chrono::steady_clock::now();
+    if (count_status == aruco3cuda::Status::kOk && device_count > 0) {
+        environment.cuda_context_ms_ =
+                std::chrono::duration<double, std::milli>(context_finish - context_start).count();
+    }
     if (count_status != aruco3cuda::Status::kOk) {
         environment.gpu_probe_error_ = std::string("device_count が失敗した: ") +
                                        aruco3cuda::to_string(count_status) + " " +
@@ -570,21 +580,29 @@ bool validate_iteration_counts(const BenchmarkConfig& config, std::string* out_e
 /// 8 割が PNG の復号になり、検出時間の比較にならない。
 bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
                  MeasurementRecord* record, std::string* out_error) {
+    // 起動の費用は 1 度しか現れない。instance を作り直して 1 枚目を測る。
+    const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::reference::ReferenceDetector detector;
     if (!detector.initialize(image_path, config.detector_, out_error)) {
         return false;
     }
+    const auto first_start = std::chrono::steady_clock::now();
+    aruco3cuda::reference::ReferenceResult result;
+    if (!detector.detect(&result, out_error)) {
+        return false;
+    }
+    const auto first_finish = std::chrono::steady_clock::now();
+    record->first_frame_ms_ =
+            std::chrono::duration<double, std::milli>(first_finish - first_start).count();
+    record->time_to_first_result_ms_ =
+            std::chrono::duration<double, std::milli>(first_finish - setup_start).count();
+
     const aruco3cuda::reference::ReferenceResult& metadata = detector.metadata();
     record->image_path_ = image_path;
     record->image_sha256_ = metadata.image_sha256_;
     record->width_px_ = metadata.width_px_;
     record->height_px_ = metadata.height_px_;
     record->fxfy_effective_ = metadata.fxfy_effective_;
-
-    aruco3cuda::reference::ReferenceResult result;
-    if (!detector.detect(&result, out_error)) {
-        return false;
-    }
     record->detection_count_ = result.detections_.size();
 
     return measure_iterations(
@@ -626,6 +644,9 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     record->height_px_ = image.rows;
     record->fxfy_effective_ = metadata.fxfy_effective_;
 
+    // 起動の費用を測る。CUDA の文脈生成は最初の CUDA 呼び出しで起きるため、
+    // device buffer の確保からを準備とみなす。
+    const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::hybrid::DeviceImage device;
     std::string message;
     if (device.reserve(image.cols, image.rows, &message) != aruco3cuda::Status::kOk) {
@@ -675,9 +696,15 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
         return true;
     };
 
+    const auto first_start = std::chrono::steady_clock::now();
     if (!step(Phase::kWarmup)) {
         return false;
     }
+    const auto first_finish = std::chrono::steady_clock::now();
+    record->first_frame_ms_ =
+            std::chrono::duration<double, std::milli>(first_finish - first_start).count();
+    record->time_to_first_result_ms_ =
+            std::chrono::duration<double, std::milli>(first_finish - setup_start).count();
     record->detection_count_ = result.detections_.size();
 
     if (!measure_iterations(config, step, record, out_error)) {
@@ -778,6 +805,7 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     writer.member_string("gpu_name", environment.gpu_name_);
     writer.member_string("gpu_compute_capability", environment.gpu_compute_capability_);
     writer.member_bool("gpu_integrated", environment.gpu_integrated_);
+    writer.member_double("cuda_context_ms", environment.cuda_context_ms_, 3);
     writer.member_string("driver_version", environment.driver_version_);
     writer.member_string("platform_release", environment.platform_release_);
     writer.member_string("platform_model", environment.platform_model_);
@@ -845,6 +873,13 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
         // CPU 経路には kernel 時間が存在しない。0 で埋めず未測定を明示する。
         writer.value_null();
     }
+
+    // 起動の費用。warm-up 後の分位点には現れないため、別に記録する。
+    writer.key("startup");
+    writer.begin_object();
+    writer.member_double("time_to_first_result_ms", record.time_to_first_result_ms_, 4);
+    writer.member_double("first_frame_ms", record.first_frame_ms_, 4);
+    writer.end_object();
 
     // 段階時間。CPU 経路には存在しないため未測定を明示する。
     writer.key("stages");

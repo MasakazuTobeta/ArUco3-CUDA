@@ -141,6 +141,18 @@ struct MeasurementRecord {
     aruco3cuda::util::SampleStatistics gpu_stage_ms_;
     aruco3cuda::util::SampleStatistics cpu_stage_ms_;
 
+    /// 画像が用意できた時点から 1 枚目の検出結果が出るまで。単位は ms。
+    ///
+    /// 経路の準備と 1 枚目の検出を含む。CUDA 経路では文脈の生成と kernel の
+    /// 読み込みがここへ入り、定常状態の数百倍になる。warm-up 後の分位点だけを
+    /// 見ると、この費用が結果に現れない。単発の検出や短い burst では、
+    /// 定常状態の差より起動の費用が支配する。
+    double time_to_first_result_ms_ = 0.0;
+    /// 1 枚目の検出だけにかかった時間。単位は ms。
+    ///
+    /// time_to_first_result_ms_ との差が経路の準備にあたる。
+    double first_frame_ms_ = 0.0;
+
     /// 連続処理時の frame/s。throughput_frames_ が 0 の場合は未測定。
     bool throughput_available_ = false;
     double throughput_fps_ = 0.0;
@@ -184,6 +196,12 @@ struct EnvironmentRecord {
     int gpu_max_clock_mhz_ = 0;
     int gpu_current_clock_mhz_ = 0;
     bool gpu_integrated_ = false;
+    /// CUDA の文脈生成にかかった時間。単位は ms。CUDA device が無い場合は 0。
+    ///
+    /// process ごとに 1 度だけ発生する。最初の CUDA API 呼び出しで暗黙に
+    /// 起きるため、経路ごとの測定には現れない。単発の検出では、この費用が
+    /// 検出そのものの数百倍になる。
+    double cuda_context_ms_ = 0.0;
     int cpu_online_cores_ = 0;
     /// GPU 情報を取得できなかった場合の理由。空なら取得に成功している。
     /// 無言で項目が欠けることを防ぎ、後から原因を追えるようにする。
