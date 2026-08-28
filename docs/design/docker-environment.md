@@ -34,7 +34,17 @@ DGX Spark、Jetson Orin、RTX Blackwell で同じ手順の build、test、評価
 
 `pinned` と `mounted` の両方で環境検査と smoke test が合格することを確認しています。CUDA Toolkit 全体を含む `nvidia/cuda` の devel image を base にした場合、base だけで 5 GB を超えます。
 
-`rtx-blackwell` profile は構築中です。実機に NVIDIA driver、Docker、NVIDIA Container Toolkit を導入する作業が残っています。
+`rtx-blackwell` profile の実機側の準備は完了しています。
+
+| 項目 | 値 |
+| --- | --- |
+| GPU | NVIDIA GeForce RTX 5070 Ti、Compute Capability 12.0、16303 MiB |
+| NVIDIA driver | 610.43.02 (`nvidia-driver-610-open`) |
+| kernel | 6.8.0-138-generic |
+| Docker | 29.7.2 (公式 repository) |
+| NVIDIA Container Toolkit | 1.20.0 |
+
+Secure Boot が有効なため、kernel module は Canonical 署名済みの prebuilt package (`linux-modules-nvidia-610-open-generic-hwe-22.04`) を使います。DKMS で build すると署名が無く再起動後に読み込まれません。この package は HWE の最新 kernel 向けに module を入れるため、導入後の再起動で kernel が切り替わります。
 
 この profile の base image と CUDA package は `dgx-spark` と同一にします。container 側を揃えておけば、両者の測定差は hardware の差だけになります。`ARUCO3_CUDA_REPO_ARCH` のみ `x86_64` へ変えます。既存 2 機は `sbsa` (aarch64) です。
 
@@ -104,6 +114,18 @@ CUDA Toolkit 全体は 4.7 GB ありますが、内訳を実測すると 3.2 GB 
 install された package の正確な version は image 内の `/opt/aruco3cuda/cuda-provenance.json` へ記録し、`record-environment.sh` が出力する環境情報 JSON へ埋め込みます。
 
 `mounted` mode は image が host 環境から独立しません。この依存を暗黙にしないため、`verify-environment.sh` は mode を表示し、`mounted` の場合は測定へ使用しないよう警告します。
+
+### 実機への同期
+
+3 機で同じ commit を build して測定するため、`tools/sync-to-host.sh` で同期します。
+
+```
+tools/sync-to-host.sh tobeta@<host>
+```
+
+除外 pattern は転送元 root からの相対で固定しています。`build*` のように書くと `docker/scripts/build-opencv.sh` まで一致して転送されず、image の build が「file が無い」で失敗します。rsync は除外した file を受信側で削除しないため、一度届いた古い file が残り続けて気付きにくくなります。実際にこの取り違えで 1 機の image build が失敗し、別の 1 機には古い file が残っていました。
+
+script は転送後に、git が追跡する全 file の checksum が同期先と一致することを確認します。除外 pattern の書き間違いは転送されない file を静かに生むため、件数と checksum の両方で確かめます。
 
 ### profile
 
