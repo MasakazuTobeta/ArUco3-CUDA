@@ -5,6 +5,9 @@
 #include <opencv2/imgcodecs.hpp>
 
 #include "aruco3cuda/config.hpp"
+#include "aruco3cuda/detections.hpp"
+#include "aruco3cuda/detector.hpp"
+#include "aruco3cuda/dictionary.hpp"
 #include "aruco3cuda/status.hpp"
 #include "device_image.hpp"
 #include "hybrid_detector.hpp"
@@ -716,6 +719,146 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     return true;
 }
 
+/// 完全 GPU 経路を測る。
+///
+/// 測定区間は経路で変える。
+///
+/// | 経路 | 測定区間 |
+/// | --- | --- |
+/// | kCudaResident | detect_async の発行と stream の同期 |
+/// | kCudaEndToEnd | host からの転送、発行、同期、結果の取り出し |
+///
+/// **どちらの区間にも stream の同期を含める。** detect_async は kernel を
+/// 発行するだけで戻るため、同期を含めないと発行の費用しか測らない。
+bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
+                  MeasurementRecord* record, std::string* out_error) {
+    const bool resident = config.route_ == Route::kCudaResident;
+    if (resident && config.memory_mode_ != MemoryMode::kDevice) {
+        *out_error = std::string("CUDA-Resident 経路が対応する memory 種別は M-Device。"
+                                 "指定された種別: ") +
+                     to_string(config.memory_mode_);
+        return false;
+    }
+    if (!resident && config.memory_mode_ != MemoryMode::kHostPageable &&
+        config.memory_mode_ != MemoryMode::kHostPinned) {
+        *out_error = std::string("CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable と "
+                                 "M-Pinned。指定された種別: ") +
+                     to_string(config.memory_mode_);
+        return false;
+    }
+
+    // 画像の読み込みと checksum は測定区間の外で 1 度だけ行う。
+    aruco3cuda::reference::ReferenceDetector loader;
+    if (!loader.initialize(image_path, config.detector_, out_error)) {
+        return false;
+    }
+    const aruco3cuda::reference::ReferenceResult& metadata = loader.metadata();
+    const cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
+    if (image.empty()) {
+        *out_error = "画像を読み込めない: " + image_path;
+        return false;
+    }
+
+    record->image_path_ = image_path;
+    record->image_sha256_ = metadata.image_sha256_;
+    record->width_px_ = image.cols;
+    record->height_px_ = image.rows;
+    record->fxfy_effective_ = metadata.fxfy_effective_;
+
+    const aruco3cuda::DictionaryTable* table =
+            aruco3cuda::find_builtin_dictionary(config.detector_.dictionary_name_.c_str());
+    if (table == nullptr) {
+        *out_error = "未対応の Dictionary: " + config.detector_.dictionary_name_;
+        return false;
+    }
+
+    // 確保量は画像に合わせる。既定の 3840x2160 のままだと、小さい画像でも
+    // 4K 相当の workspace を抱えたまま測ることになる。
+    aruco3cuda::DetectorConfig detector_config = config.cuda_detector_;
+    detector_config.max_width_px_ = image.cols;
+    detector_config.max_height_px_ = image.rows;
+
+    // 起動の費用を測る。CUDA の文脈生成は最初の CUDA 呼び出しで起きるため、
+    // device buffer の確保からを準備とみなす。
+    const auto setup_start = std::chrono::steady_clock::now();
+    aruco3cuda::hybrid::DeviceImage device;
+    std::string message;
+    if (device.reserve(image.cols, image.rows, &message) != aruco3cuda::Status::kOk) {
+        *out_error = message;
+        return false;
+    }
+    const auto upload = [&]() {
+        return device.upload(image.data, image.cols, image.rows,
+                             static_cast<std::size_t>(image.step), &message) ==
+               aruco3cuda::Status::kOk;
+    };
+    if (!upload()) {
+        *out_error = message;
+        return false;
+    }
+
+    aruco3cuda::Detector detector;
+    if (detector.initialize(*table, detector_config, &message) != aruco3cuda::Status::kOk) {
+        *out_error = "CUDA 検出器を初期化できない: " + message;
+        return false;
+    }
+
+    aruco3cuda::HostDetections detections;
+    const auto step = [&](Phase phase) {
+        (void)phase;
+        if (!resident && !upload()) {
+            *out_error = message;
+            return false;
+        }
+        const aruco3cuda::Status status = detector.detect_async(device.view(), nullptr, &message);
+        if (status != aruco3cuda::Status::kOk) {
+            *out_error = "CUDA 検出に失敗した: " + message;
+            return false;
+        }
+        if (resident) {
+            // device 常駐なので結果を host へ戻さない。ただし stream の同期は
+            // 区間に含める。含めないと発行の費用しか測らない。
+            const cudaError_t synchronized = cudaStreamSynchronize(nullptr);
+            if (synchronized != cudaSuccess) {
+                *out_error = std::string("stream を同期できない: ") +
+                             cudaGetErrorString(synchronized);
+                return false;
+            }
+            return true;
+        }
+        // download が stream を同期する。
+        const aruco3cuda::Status downloaded =
+                detector.download(&detections, nullptr, &message);
+        if (downloaded != aruco3cuda::Status::kOk &&
+            downloaded != aruco3cuda::Status::kMarkerOverflow) {
+            *out_error = "結果を取り出せない: " + message;
+            return false;
+        }
+        return true;
+    };
+
+    const auto first_start = std::chrono::steady_clock::now();
+    if (!step(Phase::kWarmup)) {
+        return false;
+    }
+    const auto first_finish = std::chrono::steady_clock::now();
+    record->first_frame_ms_ =
+            std::chrono::duration<double, std::milli>(first_finish - first_start).count();
+    record->time_to_first_result_ms_ =
+            std::chrono::duration<double, std::milli>(first_finish - setup_start).count();
+
+    // 検出数は測定区間の外で 1 度だけ読む。device 常駐の経路でも記録は要る。
+    const aruco3cuda::Status counted = detector.download(&detections, nullptr, &message);
+    if (counted != aruco3cuda::Status::kOk &&
+        counted != aruco3cuda::Status::kMarkerOverflow) {
+        *out_error = "検出数を読めない: " + message;
+        return false;
+    }
+    record->detection_count_ = detections.ids_.size();
+
+    return measure_iterations(config, step, record, out_error);
+}
+
 }  // namespace
 
 aruco3cuda::DetectorConfig cuda_config_from_reference(
@@ -741,13 +884,21 @@ aruco3cuda::DetectorConfig cuda_config_from_reference(
     result.use_aruco3_detection_ = config.use_aruco3_detection_;
     result.min_side_length_canonical_img_px_ = config.min_side_length_canonical_img_px_;
     result.min_marker_length_ratio_original_img_ = config.min_marker_length_ratio_original_img_;
-    result.corner_refine_method_ = config.use_corner_subpix_refinement_
+    // OpenCV は ArUco3 が有効なとき cornerRefinementMethod を SUBPIX へ
+    // 無条件に上書きする (aruco_detector.cpp の detectMarkers 冒頭)。縮小した
+    // 画像で検出した四隅を段を登って原寸へ戻す必要があるためである。
+    // したがって ArUco3 有効時は use_corner_subpix_refinement_ の指定に
+    // 関わらず CPU 基準も補正しており、写す側もそれに合わせる。
+    result.corner_refine_method_ = (config.use_aruco3_detection_ ||
+                                    config.use_corner_subpix_refinement_)
                                            ? aruco3cuda::CornerRefineMethod::kSubpix
                                            : aruco3cuda::CornerRefineMethod::kNone;
     result.corner_refinement_win_size_px_ = config.corner_refinement_win_size_px_;
     result.relative_corner_refinement_win_size_ = config.relative_corner_refinement_win_size_;
     result.corner_refinement_max_iterations_ = config.corner_refinement_max_iterations_;
     result.corner_refinement_min_accuracy_px_ = config.corner_refinement_min_accuracy_px_;
+    // 確保量に関わる項目は写さない。画像の寸法に合わせるのは呼出側の責務で
+    // あり、ここで既定 (3840x2160) を残すと測定条件が実際と食い違う。
     return result;
 }
 
@@ -769,12 +920,13 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
         case Route::kHybrid:
             ok = measure_hybrid(image_path, config, &record, out_error);
             break;
-        case Route::kCudaEndToEnd:
         case Route::kCudaResident:
+        case Route::kCudaEndToEnd:
+            ok = measure_cuda(image_path, config, &record, out_error);
+            break;
         default:
-            // 未実装の経路を CPU で代替すると、測定結果が経路名と食い違う。
-            *out_error = std::string("経路 ") + to_string(config.route_) +
-                         " は未実装。現在測定できるのは CPU 経路と Hybrid 経路";
+            // 未知の経路を CPU で代替すると、測定結果が経路名と食い違う。
+            *out_error = std::string("経路 ") + to_string(config.route_) + " は未実装";
             return false;
     }
     if (!ok) {

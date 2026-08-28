@@ -62,6 +62,33 @@ DGX Spark GB10 は Cortex-X925 (性能) と Cortex-A725 (効率) の混成です
 
 このため ASLR の状態を結果へ記録し、`aggregate.py` が同一条件の複数実行をまとめて実行間ばらつきを表示します。測定は独立した process として複数回行います。
 
+### 経路の差が雑音の下にあるときは大小を主張しない
+
+`CUDA-Resident` と `CUDA-EndToEnd` の違いは、host との転送と結果の取り出しだけです。
+640x480 では転送が 307 KB であり、統合 GPU の帯域では 10 us 未満です。検出の 1 ms に
+対して 1% に届きません。実測でも clock の立ち上がりによるばらつきの方が大きく、
+測る順序で大小が入れ替わりました。
+
+```
+最小 Resident 1.071 ms / EndToEnd(pageable) 1.493 ms / EndToEnd(pinned) 1.208 ms
+最小 Resident 1.228 ms / EndToEnd(pageable) 1.110 ms / EndToEnd(pinned) 2.262 ms
+最小 Resident 1.226 ms / EndToEnd(pageable) 1.242 ms / EndToEnd(pinned) 1.160 ms
+```
+
+そのため test では大小を主張せず、**3 経路が同じ検出結果を出すこと**だけを検査し、
+時間は表示します。差が見える大きさでの比較は実機の測定 (docs/measurements) の役目です。
+
+前節の「時刻で挟む」も効きません。挟むと基準側の最小値が最も暖まった時点のものに
+なり、逆向きの偏りが入ります。差そのものが雑音より小さい場合、測り方を工夫しても
+向きは決まりません。
+
+### 完全 GPU 経路の測定区間には stream の同期を含める
+
+`Detector::detect_async` は kernel を発行するだけで戻ります。同期を含めないと発行の
+費用しか測りません。`CUDA-Resident` では区間の末尾で `cudaStreamSynchronize` を呼び、
+`CUDA-EndToEnd` では `download` が同期します。どちらも「GPU 常駐画像から結果まで」を
+測っていることになります。
+
 ### 時間の大小を主張する test は測定を時刻で挟む
 
 「読み込みを含む方が遅い」「1 枚目は定常より遅い」のような主張を test に書くと、

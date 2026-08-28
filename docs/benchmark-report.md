@@ -140,6 +140,46 @@ warm-up 後の分位点には現れない費用です。1 process 1 画像で測
 
 CPU を固定した状態で、独立 process 3 回の `p50` の幅は 0.1% から 1.1% です。ASLR を無効化できていないにもかかわらず小さく収まりました。
 
+## 完全 GPU 経路 (WP-3.7 で追加)
+
+Phase 3 の完了により、S1 から S10 を GPU で完結する `CUDA-Resident` 経路を測定できるようになりました。測定区間は `detect_async` の発行と stream の同期です。**同期を含めないと kernel の発行費用しか測りません。**
+
+### CPU に対する比 (1 未満なら GPU が速い)
+
+| 場面 | 検出数 | DGX Spark GB10 | Jetson AGX Orin | RTX 5070 Ti |
+| --- | --- | --- | --- | --- |
+| 640x480 マーカー 4 | 4 | 2.22 | 1.32 | 1.85 |
+| 1280x720 マーカー 1 | 1 | 2.22 | 1.21 | 1.52 |
+| 1280x720 マーカー 4 | 4 | 1.93 | 1.08 | 1.32 |
+| 1280x720 マーカー 16 | 16 | 1.27 | 0.70 | 0.81 |
+| 1920x1080 マーカー 4 | 4 | 1.50 | 0.79 | 0.99 |
+| 3840x2160 マーカー 4 | 4 | 0.97 | 0.46 | 0.60 |
+| blur 1280x720 | 0 | 0.98 | 0.80 | 0.43 |
+| noise 1280x720 | 0 | 0.26 | 0.21 | 0.08 |
+| combined 1280x720 | 0 | 0.40 | 0.33 | 0.15 |
+
+**傾向は明確です。GPU は固定費が高く、仕事量に対して平坦です。** CPU は仕事量に比例します。したがって仕事が多い場面 (4K、候補が多い noise) では GPU が勝ち、小さくきれいな画像では負けます。RTX 5070 Ti の noise では **12.5 倍速い** (比 0.08) 一方、640x480 マーカー 4 枚では 1.85 倍遅くなります。
+
+### 固定費の正体は S10 の四隅補正
+
+検出数ごとに並べると、**最初の 1 件で跳ね上がり、以降ほぼ増えません**。
+
+| 機体 | 検出 0 件 | 検出 1 件 | 検出 4 件 | 検出 16 件 |
+| --- | --- | --- | --- | --- |
+| DGX Spark GB10 | 0.572 ms | 1.339 ms | 1.351 ms | 1.491 ms |
+| Jetson AGX Orin | 1.053 ms | 1.692 ms | 1.820 ms | 2.176 ms |
+| RTX 5070 Ti | 0.209 ms | 0.779 ms | 0.808 ms | 0.938 ms |
+
+検出 0 件から 1 件で 0.57 から 0.77 ms 増え、1 件から 16 件では 0.15 から 0.48 ms しか増えません。これは S10 の四隅補正が**待ち時間で決まっている**ことを意味します。実装は 1 thread が 1 隅を担当し、内側の反復を逐次で回します (CPU 基準と丸めまで一致させるため、正規方程式の累積を並列に畳み込めない)。4 隅でも 64 隅でも 1 warp か 2 warp に収まるため、隅の数が増えても時間はほとんど変わりません。代わりに 1 thread あたりの逐次な倍精度の連鎖 (2 段 x 最大 30 反復 x 121 要素) がそのまま待ち時間になります。
+
+**これは WP-4.1 で最初に手を付ける対象です。** 丸めの一致を保ちながら待ち時間を縮める方法として、patch の切り出しを block 内の thread へ分けることが考えられます (行ごとに独立しているため、行の中の持ち回りだけ逐次にすればよい)。累積の順序は変えられません。
+
+### Hybrid が依然として最も速い場面がある
+
+きれいな場面では Hybrid (GPU 前処理 + CPU decode) が最も速いままです。1280x720 マーカー 4 枚で DGX Spark は Hybrid 0.381 ms、CUDA-Resident 1.351 ms、CPU 0.701 ms でした。CPU 側の `cv::cornerSubPix` は隅が少なければ十分速く、GPU の固定費を払う価値がありません。逆に noise では Hybrid 2.448 ms に対し CUDA-Resident 0.700 ms であり、候補が増えると立場が入れ替わります。
+
+**したがって現時点で「常に最速の経路」はありません。** 場面によって 3 経路の順位が変わります。
+
 ## 読み取れること
 
 ### 1. 転送の最適化で優位が 2 倍近くになった
@@ -242,9 +282,10 @@ IMGS="--input /tmp/benchcorpus/clean_640x480_n4_s128.png \
       --input /tmp/benchcorpus/combined_1280x720.png"
 
 for run in 1 2 3; do
-  taskset -c <cpu> $B $IMGS $COMMON --route CPU    --memory-mode N/A        >> results.jsonl
-  taskset -c <cpu> $B $IMGS $COMMON --route Hybrid --memory-mode M-Device   >> results.jsonl
-  taskset -c <cpu> $B $IMGS $COMMON --route Hybrid --memory-mode M-Pageable >> results.jsonl
+  taskset -c <cpu> $B $IMGS $COMMON --route CPU           --memory-mode N/A        >> results.jsonl
+  taskset -c <cpu> $B $IMGS $COMMON --route CUDA-Resident --memory-mode M-Device   >> results.jsonl
+  taskset -c <cpu> $B $IMGS $COMMON --route Hybrid        --memory-mode M-Device   >> results.jsonl
+  taskset -c <cpu> $B $IMGS $COMMON --route Hybrid        --memory-mode M-Pageable >> results.jsonl
 done
 python3 bench/aggregate.py results.jsonl
 ```

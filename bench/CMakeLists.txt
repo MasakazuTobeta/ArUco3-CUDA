@@ -7,7 +7,7 @@ add_library(aruco3cuda::bench ALIAS aruco3cuda_bench)
 
 target_include_directories(aruco3cuda_bench PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aruco3cuda_bench
-  PUBLIC aruco3cuda::reference aruco3cuda::util aruco3cuda::core
+  PUBLIC aruco3cuda::reference aruco3cuda::util aruco3cuda::core aruco3cuda::dictionary
   PRIVATE aruco3cuda::hybrid aruco3cuda::warnings aruco3cuda::coverage ${OpenCV_LIBS})
 target_include_directories(aruco3cuda_bench SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 

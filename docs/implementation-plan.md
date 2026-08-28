@@ -399,9 +399,28 @@ S1 から S10 を 1 本に繋いだ公開 API の検出器を作りました。*
 | WP-3.4 | S9 重複整理と compaction | `src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる。包含判定は `cv::pointPolygonTest` と 400 組で一致、打ち切りは乱数の森 80 通りで一致。達成済み | WP-3.3 | M |
 | WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core/corner_refine.{hpp,cu}` | 四隅 RMSE が CPU 基準に対する許容内に収まる。実運用に近い入力では RMSE 0.000012 px 以下、逐語 oracle とは 3 機すべてで bit 一致。達成済み | WP-3.4 | L |
 | WP-3.6 | device 常駐出力 API と検出器 | `include/aruco3cuda/detections.hpp`、`detector.hpp`、`src/core/detector.cpp` | host 同期なしで検出結果を参照できることをテストで確認できる。占有 kernel を先に積み `cudaStreamQuery` が `cudaErrorNotReady` を返すことで実証。達成済み | WP-3.5 | M (当初 S) |
-| WP-3.7 | benchmark へ CUDA 経路を追加 | `bench` | `Route::kCudaResident` を測定でき、測定範囲と同期点が結果に残る | WP-3.6 | M |
+| WP-3.7 | benchmark へ CUDA 経路を追加 | `bench`、[benchmark 結果まとめ](benchmark-report.md) | `Route::kCudaResident` を測定でき、測定範囲と同期点が結果に残る。3 機で測定済み。達成済み | WP-3.6 | M |
 
-G3 の完了条件: ID と四隅の出力まで GPU 経路で完結し、`CUDA-Resident` 経路が測定可能であること。**前半は WP-3.6 で達成済み**です (3 機とも OpenCV との四隅の差 0.0000 px)。後半の測定は WP-3.7 で行います。
+G3 の完了条件: ID と四隅の出力まで GPU 経路で完結し、`CUDA-Resident` 経路が測定可能であること。**達成済み**です。前半は WP-3.6 (3 機とも OpenCV との四隅の差 0.0000 px)、後半は WP-3.7 (3 機で測定し [benchmark 結果まとめ](benchmark-report.md) に記録) で満たしました。
+
+#### WP-3.7 の実測: 完全 GPU 経路は固定費が高い
+
+CPU に対する比 (1 未満なら GPU が速い) は場面で大きく変わります。
+
+| 場面 | DGX Spark | Jetson Orin | RTX 5070 Ti |
+| --- | --- | --- | --- |
+| 640x480 マーカー 4 | 2.22 | 1.32 | 1.85 |
+| 1280x720 マーカー 4 | 1.93 | 1.08 | 1.32 |
+| 3840x2160 マーカー 4 | 0.97 | 0.46 | 0.60 |
+| noise 1280x720 | 0.26 | 0.21 | **0.08** |
+
+GPU は固定費が高く仕事量に対して平坦、CPU は仕事量に比例します。したがって仕事が多い場面で GPU が勝ちます。
+
+**固定費の正体は S10 の四隅補正です。** 検出 0 件では 0.21 から 1.05 ms、1 件で 0.78 から 1.69 ms へ跳ね、1 件から 16 件では 0.15 から 0.48 ms しか増えません。1 thread が 1 隅を担当し内側の反復を逐次で回す実装 (丸めの一致のため累積を並列に畳めない) が待ち時間を決めています。WP-4.1 で最初に手を付ける対象です。
+
+なお `cuda_config_from_reference` は `use_corner_subpix_refinement_` (既定 false) をそのまま `kNone` へ写していました。OpenCV は ArUco3 有効時に `cornerRefinementMethod` を SUBPIX へ無条件に上書きするため、CPU 基準は指定に関わらず補正しています。写す側も同じ上書きをするよう直しました。
+
+**過去の Hybrid の測定は影響を受けていません。** `HybridDetector` は同じ上書きを内部で持っており (`use_aruco3_detection_ || corner_refine_method_ == kSubpix`)、渡された `kNone` を無視して補正していました。今回の修正は、上書きを内部に隠さず設定へ現すためのものです。新しい `Detector` は組み合わせを検証するため、隠れた上書きを許しません。
 
 #### Phase 4: 最適化と評価
 

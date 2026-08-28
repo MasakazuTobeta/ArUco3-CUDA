@@ -189,7 +189,9 @@ TEST(DetectorTest, detects_marker_and_matches_opencv) {
 // stream を長く占有する kernel を先に積み、その後ろへ detect_async を積む。
 // host 同期していれば呼び出しから戻るまでに占有が終わっているはずであり、
 // stream は完了している。同期していなければ stream はまだ動いている。
-TEST(DetectorTest, detect_async_does_not_synchronize) {
+// suite 名に Timing を含める。Compute Sanitizer の下では占有 kernel の
+// 実時間が読めず、発行と占有の大小が崩れる。既定の除外規則に載せる。
+TEST(DetectorTimingTest, detect_async_does_not_synchronize) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";
     }

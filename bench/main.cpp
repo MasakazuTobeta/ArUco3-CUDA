@@ -27,10 +27,13 @@ void print_usage(std::ostream& out) {
         << "\n"
         << "  --input <path>                 入力画像。複数回指定できる\n"
         << "  --output <path>                結果 JSONL の出力先。既定は標準出力\n"
-        << "  --route <name>                 CPU または Hybrid。既定 CPU\n"
-        << "  --memory-mode <name>           N/A、M-Pageable、M-Device。既定は経路に応じて選ぶ\n"
-        << "                                 Hybrid では M-Device が転送を測定区間の外へ、\n"
-        << "                                 M-Pageable が毎 frame の転送を測定区間へ含める\n"
+        << "  --route <name>                 CPU、Hybrid、CUDA-Resident、CUDA-EndToEnd。既定 CPU\n"
+        << "  --memory-mode <name>           N/A、M-Pageable、M-Pinned、M-Managed、M-Device。\n"
+        << "                                 既定は経路に応じて選ぶ\n"
+        << "                                 M-Device は転送を測定区間の外へ置き、M-Pageable と\n"
+        << "                                 M-Pinned は毎 frame の転送を測定区間へ含める\n"
+        << "                                 CUDA-Resident は M-Device のみ、CUDA-EndToEnd は\n"
+        << "                                 M-Pageable と M-Pinned のみに対応する\n"
         << "  --warmup <n>                   準備実行の回数。既定 20\n"
         << "  --latency-iterations <n>       遅延測定の回数。既定 200\n"
         << "  --throughput-frames <n>        throughput 測定のフレーム数。0 で無効。既定 100\n"
@@ -243,9 +246,21 @@ int main(int argc, char** argv) {
     // 縮小率や ArUco3 の有無が食い違い、別の条件を比べることになる。
     config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
     if (!memory_mode_given) {
-        config.memory_mode_ = (config.route_ == aruco3cuda::bench::Route::kCpu)
-                                      ? aruco3cuda::bench::MemoryMode::kNotApplicable
-                                      : aruco3cuda::bench::MemoryMode::kDevice;
+        // 経路ごとに、その経路が対応する種別を既定にする。CUDA-EndToEnd は
+        // 転送を測定区間に含める経路であり、device 常駐を既定にできない。
+        switch (config.route_) {
+            case aruco3cuda::bench::Route::kCpu:
+                config.memory_mode_ = aruco3cuda::bench::MemoryMode::kNotApplicable;
+                break;
+            case aruco3cuda::bench::Route::kCudaEndToEnd:
+                config.memory_mode_ = aruco3cuda::bench::MemoryMode::kHostPageable;
+                break;
+            case aruco3cuda::bench::Route::kCudaResident:
+            case aruco3cuda::bench::Route::kHybrid:
+            default:
+                config.memory_mode_ = aruco3cuda::bench::MemoryMode::kDevice;
+                break;
+        }
     }
 
     std::ofstream file_output;
