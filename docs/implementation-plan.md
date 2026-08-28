@@ -230,7 +230,9 @@ Phase 3 へ進む前に、hybrid 経路を測定 harness へ配線して CPU 基
 
 このとき、既存の CPU 測定が検出時間を測っていないことが分かりました。`measure_image` が 1 反復ごとに `cv::imread` と `sha256_file` を呼んでおり、測定区間の 58% から 85% が PNG の復号でした。読み込みを初期化側へ移し、`schema_version` を 3 へ上げています。version 2 以前の結果は同じ key が違う区間を指すため、混ぜて集計できません。
 
-結果は DGX Spark と Jetson Orin で逆になりました。GB10 では 640x480 付近に crossover があり、1280x720 で 1.30 倍、3840x2160 で 2.16 倍 hybrid が速くなります。Orin では全条件で CPU が速く、比は 1.36 から 2.00 です。GPU 段が GB10 の 4 倍を要する一方、CPU 側の差は 1.2 倍しかないためです。詳細と判断は [benchmark 報告](benchmark-report.md) にあります。
+測定に使う CPU core の種別も取り違えていました。DGX Spark の CPU 0 は効率 core (Cortex-A725) であり、性能 core (Cortex-X925) で測り直すと CPU 経路は約 2 倍速くなります。効率 core で測ると GPU 側の優位が実際より大きく見えます。3840x2160 で 2.17 倍と 1.45 倍の差があり、結論の印象が変わります。
+
+3 機を性能 core で測った結果、hybrid の優位は限定的でした。DGX Spark と RTX 5070 Ti はいずれも比 0.69 から 0.99 で、最良でも 1.45 倍です。転送を測定区間へ含めるとほぼ消えます。Jetson Orin では全条件で CPU が速く、比は 1.19 から 2.00 です。GPU 段は解像度にほとんど依らず、kernel 起動の固定費が支配的です。詳細と判断は [benchmark 報告](benchmark-report.md) にあります。
 
 #### Phase 2: GPU 候補抽出
 

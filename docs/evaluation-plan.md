@@ -12,7 +12,9 @@ DGX Spark GB10、Jetson Orin、OpenCV ArUco3 CPU 実装、開発する CUDA 実�
 
 CPU 経路と hybrid 経路の測定 harness、合成 corpus 生成器、CPU 基準 runner は作成済みです。完全 GPU 経路 (`CUDA-E2E`、`CUDA-Resident`) の測定と実画像データセットは未作成です。
 
-評価対象へ 2026-08-28 に 3 機目 (GeForce RTX 5070 Ti、x86_64 の discrete GPU) を加えました。既存 2 機はいずれも統合 GPU であり、「統合 GPU の結果であり discrete GPU へ一般化できない」という制約を実測で埋める機体がありませんでした。転送費用が効くため、memory 種別ごとの差もこの機で初めて意味を持ちます。環境の構築は進行中で、測定はまだ行っていません。
+評価対象へ 2026-08-28 に 3 機目 (GeForce RTX 5070 Ti、x86_64 の discrete GPU) を加えました。既存 2 機はいずれも統合 GPU であり、「統合 GPU の結果であり discrete GPU へ一般化できない」という制約を実測で埋める機体がありませんでした。測定した結果、単体 GPU でも転送費用は小さく (1280x720 で 0.042 ms)、むしろ統合 GPU の DGX Spark の方が大きく出ました。理由は特定できていません。
+
+測定条件へ「固定する CPU core の種別」を加えました。性能 core と効率 core が混在する機では、番号だけで揃えると別種の core を比べることになります。DGX Spark の CPU 0 は効率 core、RTX 5070 Ti の機の CPU 0 は性能 core です。同じ番号でも種別が違い、CPU 経路の値は約 2 倍変わります。
 
 両経路を測った結果は [benchmark 報告](benchmark-report.md) にあります。測定区間は検出のみであり、画像の読み込みと checksum は含みません。1 反復ごとに読み込むと、合成 corpus の 1280x720 PNG では測定区間の 58% から 85% が PNG の復号になり、検出時間の比較として成立しないためです。
 
