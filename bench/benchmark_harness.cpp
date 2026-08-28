@@ -148,11 +148,60 @@ std::string field_or_empty(const std::map<std::string, std::string>& info,
     return entry == info.end() ? std::string() : entry->second;
 }
 
-/// /proc/cpuinfo から core 種別ごとの CPU 番号をまとめた文字列を作る。
+/// sysfs から CPU ごとの最大周波数を読み、種別の代わりに使う。
+///
+/// x86 の hybrid CPU は /proc/cpuinfo に aarch64 の "CPU part" にあたる
+/// 実装 ID を持たず、model name は全 core で同じになる。性能 core と効率
+/// core は最大周波数が異なるため、これを種別の代わりに使う。周波数から
+/// P-core や E-core という名前を推測して付けることはしない。
+///
+/// @param cpu_count 走査する CPU 数。
+/// @return 周波数 (kHz) ごとの CPU 番号。出現順を保つ。読めなければ空。
+std::vector<std::pair<long long, std::vector<int>>> read_frequency_groups(int cpu_count) {
+    std::vector<std::pair<long long, std::vector<int>>> groups;
+    for (int cpu = 0; cpu < cpu_count; ++cpu) {
+        const std::string path = "/sys/devices/system/cpu/cpu" + std::to_string(cpu) +
+                                 "/cpufreq/cpuinfo_max_freq";
+        std::ifstream file(path);
+        long long value = 0;
+        if (!file || !(file >> value) || value <= 0) {
+            continue;
+        }
+        auto entry = std::find_if(groups.begin(), groups.end(),
+                                  [value](const auto& g) { return g.first == value; });
+        if (entry == groups.end()) {
+            groups.emplace_back(value, std::vector<int>{cpu});
+        } else {
+            entry->second.push_back(cpu);
+        }
+    }
+    return groups;
+}
+
+/// kHz を GHz の文字列へ直す。小数第 2 位まで。
+std::string format_ghz(long long khz) {
+    // 小数第 2 位まで。四捨五入せず切り捨てる。表示の丸めで種別の区別が
+    // 消えないよう、桁を落としすぎない。
+    const long long hundredths = khz / 10000;
+    const long long integer_part = hundredths / 100;
+    const long long fraction = hundredths % 100;
+    std::string text = std::to_string(integer_part) + ".";
+    if (fraction < 10) {
+        text += "0";
+    }
+    return text + std::to_string(fraction) + "GHz";
+}
+
+/// core 種別ごとの CPU 番号をまとめた文字列を作る。
 ///
 /// 性能 core と効率 core が混在する機では、どの種別で測ったかが分からないと
-/// 測定値を比較できない。marketing 名は既知のものだけ補い、未知の実装 ID は
-/// そのまま記録する。推測で名前を付けない。
+/// 測定値を比較できない。aarch64 は /proc/cpuinfo の "CPU part" で分類し、
+/// marketing 名は既知のものだけ補う。未知の実装 ID はそのまま記録し、推測で
+/// 名前を付けない。
+///
+/// x86 には "CPU part" が無く、この経路だけでは空文字列になる。実際に
+/// GeForce RTX 5070 Ti を載せた Intel Core Ultra 7 265 の機で空になり、
+/// 環境情報の test が失敗した。x86 では最大周波数で分類へ切り替える。
 std::string read_cpu_topology() {
     static const std::map<std::string, std::string> kKnownParts = {
             {"0xd85", "Cortex-X925"}, {"0xd87", "Cortex-A725"}, {"0xd8e", "Cortex-A720"},
@@ -164,6 +213,7 @@ std::string read_cpu_topology() {
     }
     // 出現順を保つため vector で持つ。core 種別は数種類しかない。
     std::vector<std::pair<std::string, std::vector<int>>> groups;
+    std::string model_name;
     std::string line;
     int processor = -1;
     while (std::getline(info, line)) {
@@ -185,6 +235,8 @@ std::string read_cpu_topology() {
             } catch (const std::exception&) {
                 processor = -1;
             }
+        } else if (key == "model name" && model_name.empty()) {
+            model_name = value;
         } else if (key == "CPU part" && processor >= 0) {
             const auto known = kKnownParts.find(value);
             const std::string name = (known == kKnownParts.end()) ? value : known->second;
@@ -197,13 +249,30 @@ std::string read_cpu_topology() {
             }
         }
     }
-    std::string result;
-    for (const auto& group : groups) {
-        if (!result.empty()) {
-            result += ", ";
+    if (!groups.empty()) {
+        std::string result;
+        for (const auto& group : groups) {
+            if (!result.empty()) {
+                result += ", ";
+            }
+            result += group.first + " x" + std::to_string(group.second.size());
         }
-        result += group.first + " x" + std::to_string(group.second.size());
+        return result;
     }
+
+    // "CPU part" が無い環境。最大周波数で分類する。
+    const std::vector<std::pair<long long, std::vector<int>>> by_frequency =
+            read_frequency_groups(processor + 1);
+    if (by_frequency.empty()) {
+        // 周波数も読めない。せめて model name だけは残す。
+        return model_name;
+    }
+    std::string result = model_name.empty() ? std::string("(不明な CPU)") : model_name;
+    result += ":";
+    for (const auto& group : by_frequency) {
+        result += " " + format_ghz(group.first) + " x" + std::to_string(group.second.size()) + ",";
+    }
+    result.pop_back();
     return result;
 }
 
