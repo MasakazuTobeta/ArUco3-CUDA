@@ -116,11 +116,13 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 | 項目 | 値 |
 | --- | --- |
 | GPU | ZOTAC GAMING GeForce RTX 5070 Ti 16GB GDDR7 (GB203) |
-| Compute Capability | 12.0 (暫定。実機での確認は下記) |
+| device memory | 16303 MiB |
+| Compute Capability | 12.0 (実機で確認済み) |
 | CPU | Intel Core Ultra 7 265 (20 core) |
 | system memory | 62 GB |
 | OS / arch | Ubuntu 22.04.5 LTS / x86_64 |
 | CUDA Toolkit (host) | 13.2 |
+| NVIDIA driver | 610.43.02 (`nvidia-driver-610-open`) |
 
 ### 決定の変更
 
@@ -132,9 +134,28 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 
 `rtx-blackwell` profile の base image と CUDA package は `dgx-spark` と同一にします (ubuntu:24.04、CUDA 13.0)。container 側を揃えておけば、両者の測定差は hardware の差だけになります。host の CUDA が 13.2 である点は pinned mode では影響しません。
 
-### 未確認の点
+### Compute Capability の確認
 
-Compute Capability 12.0 は製品仕様からの推定であり、実機では未確認です。本 ADR の初版で DGX Spark GB10 を 12.0 と記載し、実機が 12.1 を報告して訂正した経緯があります。同じ取り違えを避けるため、`nvidia-smi --query-gpu=compute_cap` の実測値で確定させます。異なっていた場合は本節を訂正します。
+本 ADR の初版で DGX Spark GB10 を 12.0 と記載し、実機が 12.1 を報告して訂正した経緯があります。同じ取り違えを避けるため、製品仕様からの推定ではなく実測値で確定させました。
+
+```
+$ nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv
+name, compute_cap, memory.total [MiB], driver_version
+NVIDIA GeForce RTX 5070 Ti, 12.0, 16303 MiB, 610.43.02
+```
+
+推定どおり 12.0 でした。`sm_120` を target とします。
+
+### Secure Boot への対応
+
+対象機は Secure Boot が有効です。DKMS で kernel module を build すると署名が無く、再起動後に読み込まれません。Canonical が署名した prebuilt module (`linux-modules-nvidia-610-open-generic-hwe-22.04`) を使うことで、MOK 登録を伴わずに導入できます。
+
+```
+$ modinfo nvidia | grep signer
+signer:         Canonical Ltd. Kernel Module Signing
+```
+
+この package は稼働中の kernel ではなく HWE の最新 kernel 向けに module を入れるため、導入後に再起動して新しい kernel で起動する必要があります。
 
 ## 関連
 
