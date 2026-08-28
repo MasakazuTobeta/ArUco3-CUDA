@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <ratio>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -381,6 +382,194 @@ TEST(DetectorTest, handles_changed_input_size) {
     ASSERT_EQ(detector.detect_async(large_image.view(), nullptr, &message), Status::kOk) << message;
     ASSERT_EQ(detector.download(&detections, nullptr, &message), Status::kOk) << message;
     EXPECT_EQ(detections.ids_.size(), 1U);
+}
+
+/// 明示的な stream を作り、必ず破棄する。
+class OwnedStream {
+public:
+    OwnedStream() {
+        if (cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking) != cudaSuccess) {
+            this->stream_ = nullptr;
+        }
+    }
+    ~OwnedStream() {
+        if (this->stream_ != nullptr) {
+            static_cast<void>(cudaStreamDestroy(this->stream_));
+        }
+    }
+    OwnedStream(const OwnedStream&) = delete;
+    OwnedStream& operator=(const OwnedStream&) = delete;
+    cudaStream_t get() const { return this->stream_; }
+
+private:
+    cudaStream_t stream_ = nullptr;
+};
+
+/// 検出結果を比較できる形へ落とす。
+std::string digest_of(const HostDetections& detections) {
+    std::ostringstream out;
+    for (std::size_t i = 0; i < detections.ids_.size(); ++i) {
+        out << detections.ids_[i] << ':' << detections.rotations_[i] << '(';
+        for (int corner = 0; corner < 8; ++corner) {
+            out << detections.corners_[(i * 8U) + static_cast<std::size_t>(corner)] << ',';
+        }
+        out << ") ";
+    }
+    return out.str();
+}
+
+// 正常系: 発行列を畳んでも結果が変わらない。
+//
+// 明示的な stream を渡すと発行列が CUDA Graph へ畳まれます。graph は kernel の
+// 引数を焼き込むため、危険は丸めではなく**参照の陳腐化**です。既定 stream
+// (畳まない経路) と同じ結果になることを直接比べます。
+TEST(DetectorTest, graph_path_agrees_with_direct_dispatch) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
+    const DetectorConfig config = config_for(scene);
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    OwnedStream stream;
+    ASSERT_NE(stream.get(), nullptr);
+
+    Detector direct;
+    Detector graph;
+    std::string message;
+    ASSERT_EQ(direct.initialize(table(), config, &message), Status::kOk) << message;
+    ASSERT_EQ(graph.initialize(table(), config, &message), Status::kOk) << message;
+
+    HostDetections expected;
+    ASSERT_EQ(direct.detect_async(image.view(), nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(direct.download(&expected, nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(expected.ids_.size(), 1U);
+
+    // 3 frame 流す。1 回目で捕らえ、2 回目以降は畳んだ列を起動する。
+    for (int frame = 0; frame < 3; ++frame) {
+        HostDetections actual;
+        ASSERT_EQ(graph.detect_async(image.view(), stream.get(), &message), Status::kOk)
+                << "frame " << frame << " " << message;
+        ASSERT_EQ(graph.download(&actual, stream.get(), &message), Status::kOk) << message;
+        EXPECT_EQ(digest_of(actual), digest_of(expected)) << "frame " << frame;
+    }
+}
+
+// 境界値: 入力の寸法が変わったら発行列を捕らえ直す。
+//
+// 捕らえた列は workspace の pointer を焼き込みます。寸法が変わると配置が
+// 組み直されるため、捕らえ直さないと**静かに古い pointer を叩きます**。
+TEST(DetectorTest, graph_is_rebuilt_when_layout_changes) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    const cv::Mat large = make_scene(1280, 720, cv::Point(400, 260));
+    const cv::Mat small = make_scene(960, 540, cv::Point(300, 180), 7);
+    DetectorConfig config = config_for(large);
+    SceneImage large_image;
+    SceneImage small_image;
+    ASSERT_TRUE(large_image.upload(large));
+    ASSERT_TRUE(small_image.upload(small));
+    OwnedStream stream;
+    ASSERT_NE(stream.get(), nullptr);
+
+    // 畳まない経路で期待値を作る。
+    Detector direct;
+    std::string message;
+    ASSERT_EQ(direct.initialize(table(), config, &message), Status::kOk) << message;
+    HostDetections expected_large;
+    HostDetections expected_small;
+    ASSERT_EQ(direct.detect_async(large_image.view(), nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(direct.download(&expected_large, nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(direct.detect_async(small_image.view(), nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(direct.download(&expected_small, nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(expected_large.ids_.size(), 1U);
+    ASSERT_EQ(expected_small.ids_.size(), 1U);
+    ASSERT_NE(expected_large.ids_[0], expected_small.ids_[0]);
+
+    Detector graph;
+    ASSERT_EQ(graph.initialize(table(), config, &message), Status::kOk) << message;
+    // 大、小、大、小 と入れ替える。毎回捕らえ直しが起きる。
+    const std::vector<std::pair<const SceneImage*, const HostDetections*>> sequence = {
+            {&large_image, &expected_large},
+            {&small_image, &expected_small},
+            {&large_image, &expected_large},
+            {&small_image, &expected_small},
+    };
+    for (std::size_t step = 0; step < sequence.size(); ++step) {
+        HostDetections actual;
+        ASSERT_EQ(graph.detect_async(sequence[step].first->view(), stream.get(), &message),
+                  Status::kOk)
+                << "step " << step << " " << message;
+        ASSERT_EQ(graph.download(&actual, stream.get(), &message), Status::kOk) << message;
+        EXPECT_EQ(digest_of(actual), digest_of(*sequence[step].second)) << "step " << step;
+    }
+    // 配置の組み直しでも workspace を確保し直していない。
+    EXPECT_EQ(graph.workspace_statistics().allocation_count_, 1U);
+}
+
+// 境界値: stream を変えたら発行列を捕らえ直す。
+TEST(DetectorTest, graph_is_rebuilt_when_stream_changes) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    OwnedStream first;
+    OwnedStream second;
+    ASSERT_NE(first.get(), nullptr);
+    ASSERT_NE(second.get(), nullptr);
+
+    Detector detector;
+    std::string message;
+    ASSERT_EQ(detector.initialize(table(), config_for(scene), &message), Status::kOk) << message;
+
+    // 1 本目、2 本目、既定 stream、1 本目 と渡し替える。
+    const std::vector<cudaStream_t> streams = {first.get(), second.get(), nullptr, first.get()};
+    for (std::size_t step = 0; step < streams.size(); ++step) {
+        HostDetections actual;
+        ASSERT_EQ(detector.detect_async(image.view(), streams[step], &message), Status::kOk)
+                << "step " << step << " " << message;
+        ASSERT_EQ(detector.download(&actual, streams[step], &message), Status::kOk) << message;
+        ASSERT_EQ(actual.ids_.size(), 1U) << "step " << step;
+        EXPECT_EQ(actual.ids_[0], kMarkerId) << "step " << step;
+    }
+}
+
+// 境界値: 設定を変えて初期化し直したら発行列を捨てる。
+TEST(DetectorTest, graph_is_rebuilt_after_reinitialize) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    OwnedStream stream;
+    ASSERT_NE(stream.get(), nullptr);
+
+    Detector detector;
+    std::string message;
+    ASSERT_EQ(detector.initialize(table(), config_for(scene), &message), Status::kOk) << message;
+    HostDetections first;
+    ASSERT_EQ(detector.detect_async(image.view(), stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(detector.download(&first, stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(first.ids_.size(), 1U);
+
+    // 縮小をやめる設定へ変える。segmentation の寸法と pyramid の段数が変わる。
+    DetectorConfig changed = config_for(scene);
+    changed.min_marker_length_ratio_original_img_ = 0.0F;
+    changed.min_side_length_canonical_img_px_ = 32;
+    ASSERT_EQ(detector.initialize(table(), changed, &message), Status::kOk) << message;
+    HostDetections second;
+    ASSERT_EQ(detector.detect_async(image.view(), stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(detector.download(&second, stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(second.ids_.size(), 1U);
+    EXPECT_EQ(second.ids_[0], kMarkerId);
+    // 縮小しないので四隅は原寸のまま求まる。前の設定と同じ位置になるとは
+    // 限らないが、マーカーの位置から離れてはならない。
+    EXPECT_NEAR(static_cast<double>(second.corners_[0]), 400.0, 3.0);
+    EXPECT_NEAR(static_cast<double>(second.corners_[1]), 260.0, 3.0);
 }
 
 // 境界値: 検出上限を超えたら kMarkerOverflow を返す。

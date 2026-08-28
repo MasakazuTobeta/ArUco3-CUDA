@@ -719,6 +719,18 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     return true;
 }
 
+/// stream を必ず破棄する。早期 return が多いため RAII にする。
+struct StreamGuard {
+    cudaStream_t stream_;
+    StreamGuard(const StreamGuard&) = delete;
+    StreamGuard& operator=(const StreamGuard&) = delete;
+    ~StreamGuard() {
+        if (this->stream_ != nullptr) {
+            static_cast<void>(cudaStreamDestroy(this->stream_));
+        }
+    }
+};
+
 /// 完全 GPU 経路を測る。
 ///
 /// 測定区間は経路で変える。
@@ -803,6 +815,17 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
         return false;
     }
 
+    // 明示的な stream を渡す。既定 stream は CUDA が捕獲を許さないため、
+    // 発行列を CUDA Graph へ畳む経路に入らない。実運用では専用の stream を
+    // 使うのが自然であり、測定もその形に合わせる。
+    cudaStream_t stream = nullptr;
+    if (cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) != cudaSuccess) {
+        *out_error = "stream を作れない";
+        return false;
+    }
+    // 早期 return でも必ず破棄する。
+    const StreamGuard guard{stream};
+
     aruco3cuda::HostDetections detections;
     const auto step = [&](Phase phase) {
         (void)phase;
@@ -810,7 +833,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
             *out_error = message;
             return false;
         }
-        const aruco3cuda::Status status = detector.detect_async(device.view(), nullptr, &message);
+        const aruco3cuda::Status status = detector.detect_async(device.view(), stream, &message);
         if (status != aruco3cuda::Status::kOk) {
             *out_error = "CUDA 検出に失敗した: " + message;
             return false;
@@ -818,7 +841,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
         if (resident) {
             // device 常駐なので結果を host へ戻さない。ただし stream の同期は
             // 区間に含める。含めないと発行の費用しか測らない。
-            const cudaError_t synchronized = cudaStreamSynchronize(nullptr);
+            const cudaError_t synchronized = cudaStreamSynchronize(stream);
             if (synchronized != cudaSuccess) {
                 *out_error = std::string("stream を同期できない: ") +
                              cudaGetErrorString(synchronized);
@@ -827,8 +850,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
             return true;
         }
         // download が stream を同期する。
-        const aruco3cuda::Status downloaded =
-                detector.download(&detections, nullptr, &message);
+        const aruco3cuda::Status downloaded = detector.download(&detections, stream, &message);
         if (downloaded != aruco3cuda::Status::kOk &&
             downloaded != aruco3cuda::Status::kMarkerOverflow) {
             *out_error = "結果を取り出せない: " + message;
@@ -848,7 +870,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
             std::chrono::duration<double, std::milli>(first_finish - setup_start).count();
 
     // 検出数は測定区間の外で 1 度だけ読む。device 常駐の経路でも記録は要る。
-    const aruco3cuda::Status counted = detector.download(&detections, nullptr, &message);
+    const aruco3cuda::Status counted = detector.download(&detections, stream, &message);
     if (counted != aruco3cuda::Status::kOk &&
         counted != aruco3cuda::Status::kMarkerOverflow) {
         *out_error = "検出数を読めない: " + message;

@@ -44,6 +44,14 @@ namespace aruco3cuda {
 ///   frame では、buffer の配置を組み直す前に 1 度だけ stream を同期する。
 ///   1 つの instance を複数の thread から同時に使ってはならない。
 ///
+/// 発行列の畳み込み:
+///   明示的な stream を渡すと、1 frame 分の発行列を CUDA Graph として捕らえ、
+///   2 回目以降は 1 回の起動で済ませる。捕らえた列は kernel の引数を焼き込む
+///   ため、次のいずれかが起きたときは必ず捨てて捕らえ直す。
+///   initialize() の呼び直し、入力の寸法か pitch か pointer の変化、
+///   stream の変更。設定を変えるには initialize() を呼び直す必要があるため、
+///   焼き込んだ値が黙って古くなる経路は無い。
+///
 /// 入力例: DICT_ARUCO_MIP_36h12 と既定設定で initialize
 /// 出力例: kOk。以降 detect_async() が呼べる
 class Detector {
@@ -86,6 +94,9 @@ public:
     ///              領域の所有権は呼出側にあり、kernel が完了するまで有効で
     ///              なければならない。
     /// @param stream kernel を発行する stream。nullptr は既定 stream を指す。
+    ///               **明示的な stream を渡すと発行列を CUDA Graph へ畳み、
+    ///               2 回目以降の発行が 1 回の起動になる。** 既定 stream は
+    ///               CUDA が捕獲を許さないため、1 段ずつ発行する経路になる。
     /// @param out_message 失敗時に理由を格納する。nullptr を渡してよい。
     /// @return kOk。initialize() 前なら kNotInitialized、画像が不正なら
     ///         kInvalidImage、上限を超える寸法なら kInvalidArgument、
