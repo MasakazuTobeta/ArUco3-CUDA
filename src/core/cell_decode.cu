@@ -76,7 +76,8 @@ __device__ int otsu_threshold(const int* histogram, int pixel_count) {
 /// 候補ごとにセル比を求め、外周セルの誤りを数える。1 block が 1 候補を担当する。
 __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::int32_t* count,
                                     float* ratios, std::int32_t* border_errors,
-                                    std::uint8_t* accepted, DecodeParams params) {
+                                    std::uint8_t* accepted, std::int32_t* thresholds,
+                                    DecodeParams params) {
     const int candidate = static_cast<int>(blockIdx.x);
     if (candidate >= *count) {
         return;
@@ -139,6 +140,7 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
         uniform = deviation < params.min_otsu_std_dev_;
         uniform_ratio = (mean > 127.0) ? 1.0F : 0.0F;
         threshold = uniform ? 0 : otsu_threshold(histogram, pixels);
+        thresholds[candidate] = threshold;
     }
     __syncthreads();
 
@@ -232,10 +234,11 @@ std::size_t cell_ratio_workspace_bytes(const DetectorConfig& config, int marker_
     const std::size_t ratios = align_up(per_candidate * capacity * sizeof(float), kPlaneAlignment);
     const std::size_t errors = align_up(capacity * sizeof(std::int32_t), kPlaneAlignment);
     const std::size_t flags = align_up(capacity * sizeof(std::uint8_t), kPlaneAlignment);
-    if (ratios == 0U || errors == 0U || flags == 0U) {
+    const std::size_t thresholds = align_up(capacity * sizeof(std::int32_t), kPlaneAlignment);
+    if (ratios == 0U || errors == 0U || flags == 0U || thresholds == 0U) {
         return 0U;
     }
-    return ratios + errors + flags;
+    return ratios + errors + flags + thresholds;
 }
 
 Status reserve_cell_ratios(const DetectorConfig& config, int marker_size, Workspace& workspace,
@@ -277,6 +280,12 @@ Status reserve_cell_ratios(const DetectorConfig& config, int marker_size, Worksp
     }
     buffers.accepted_ = static_cast<std::uint8_t*>(pointer);
 
+    status = workspace.allocate(capacity * sizeof(std::int32_t), kPlaneAlignment, &pointer);
+    if (status != Status::kOk) {
+        return status;
+    }
+    buffers.thresholds_ = static_cast<std::int32_t*>(pointer);
+
     *out = buffers;
     return Status::kOk;
 }
@@ -284,8 +293,8 @@ Status reserve_cell_ratios(const DetectorConfig& config, int marker_size, Worksp
 Status build_cell_ratios_async(const CanonicalBuffers& canonical,
                                const DeviceCandidates& candidates, const DetectorConfig& config,
                                int marker_size, CellRatioBuffers* ratios, cudaStream_t stream) {
-    if (ratios == nullptr || ratios->ratios_ == nullptr || canonical.images_ == nullptr ||
-        candidates.count_ == nullptr) {
+    if (ratios == nullptr || ratios->ratios_ == nullptr || ratios->thresholds_ == nullptr ||
+        canonical.images_ == nullptr || candidates.count_ == nullptr) {
         return Status::kInvalidArgument;
     }
     const int cells = cells_per_side(config, marker_size);
@@ -316,7 +325,7 @@ Status build_cell_ratios_async(const CanonicalBuffers& canonical,
     decode_cells_kernel<<<static_cast<unsigned int>(candidates.capacity_),
                           static_cast<unsigned int>(kDecodeThreads), 0, stream>>>(
             canonical.images_, candidates.count_, ratios->ratios_, ratios->border_errors_,
-            ratios->accepted_, params);
+            ratios->accepted_, ratios->thresholds_, params);
     return check_kernel_launch("cell_decode.decode_cells_kernel", -1, false, stream);
 }
 

@@ -22,7 +22,7 @@ namespace aruco3cuda::detail {
 ///           kernel が完了するまで確定しない。
 ///
 /// 入力例: 既定設定、marker_size = 6、候補上限 4096
-/// 出力例: cells_per_side_ = 8、ratios_ が 4096 * 8 * 8 要素
+/// 出力例: cells_per_side_ = 8、ratios_ が 4096 * 8 * 8 要素、thresholds_ が 4096 要素
 struct CellRatioBuffers {
     /// セルごとの白画素比。添字は (candidate * cells * cells) + (row * cells) + col。
     ///
@@ -33,6 +33,11 @@ struct CellRatioBuffers {
     std::int32_t* border_errors_ = nullptr;
     /// border 検証を通ったか。1 で通過。
     std::uint8_t* accepted_ = nullptr;
+    /// Otsu が選んだ閾値。低分散の経路へ入った候補は 0 が入る。
+    ///
+    /// 比だけを突き合わせると、閾値が 1 階調ずれても境界に画素が無ければ
+    /// 気付けない。閾値そのものを CPU 基準と比べられるようにする。
+    std::int32_t* thresholds_ = nullptr;
     /// 1 辺のセル数。marker_size + 2 * marker_border_bits_ に等しい。
     int cells_per_side_ = 0;
     int capacity_ = 0;

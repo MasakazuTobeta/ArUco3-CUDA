@@ -19,7 +19,18 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-constexpr int kRefineThreads = 64;
+/// 1 隅を担当する block の thread 数。
+///
+/// 1 反復で触る要素は patch が最大 13x13 = 169、勾配が最大 11x11 = 121 で
+/// ある。169 を 1 巡で覆える最小の warp の倍数にする。
+constexpr int kRefineThreads = 192;
+/// 起こす block 数の上限。
+///
+/// 1 block が共有 memory を約 5.5 KB 使うため、起こすだけでも費用がかかる。
+/// 検出が 0 件の frame でも block 数だけの起動費用は払うため、必要以上に
+/// 起こさない。評価計画の上限であるマーカー 16 枚 = 64 隅を 1 波で覆う数に
+/// する。これを超える隅は block が跨ぎながら処理する。
+constexpr int kRefineBlocks = 64;
 /// OpenCV が cornerSubPix 内で反復回数へ掛ける上限。
 constexpr int kMaxIterations = 100;
 /// 窓の半径を切り替える段の大きさ。
@@ -27,6 +38,8 @@ constexpr int kLargeLevelSidePx = 1080;
 /// 大きい段と小さい段で使う窓の半径。
 constexpr int kLargeWinRadius = 5;
 constexpr int kSmallWinRadius = 3;
+/// 窓の 1 辺の上限。半径 5 のとき 11。
+constexpr int kMaxWinSide = (kLargeWinRadius * 2) + 1;
 
 /// 窓の重みと、そこから決まる寸法。
 ///
@@ -75,41 +88,123 @@ RefineMask make_mask(int radius) {
     return mask;
 }
 
-/// getRectSubPix の内側の経路。走る位置が画像に完全に収まる場合に使う。
+/// patch の切り出しに必要な、位置から決まる係数と矩形。
 ///
-/// 1 行を左から右へ辿り、直前の項を持ち回る。数学的には双一次補間だが、
-/// 持ち回りの丸めが積み上がるため、素直な双一次で置き換えると値が変わる。
-__device__ void sample_patch_inside(const std::uint8_t* image, std::size_t pitch, int ip_x,
-                                    int ip_y, float a, float b, int patch_side, float* patch) {
-    const float a12 = a * (1.0F - b);
-    const float a22 = a * b;
-    const float b1 = 1.0F - b;
-    const float b2 = b;
-    const double s = (1.0 - static_cast<double>(a)) / static_cast<double>(a);
+/// 逐次版が loop の外で 1 度だけ求めていた値をまとめたもの。要素ごとに
+/// 並列で計算するため、すべての thread が同じ値を持つ必要がある。
+struct PatchSetup {
+    bool inside_ = false;
+    float a_ = 0.0F;
+    float b_ = 0.0F;
+    int ip_x_ = 0;
+    int ip_y_ = 0;
+    // 境界の経路で adjustRect が決める矩形と開始位置。
+    long long offset_ = 0;
+    int rect_x_ = 0;
+    int rect_width_ = 0;
+    int rect_y_ = 0;
+    int rect_height_ = 0;
+};
 
-    for (int row = 0; row < patch_side; ++row) {
-        const std::uint8_t* source = image + (static_cast<std::size_t>(ip_y + row) * pitch) +
-                                     static_cast<std::size_t>(ip_x);
-        const std::uint8_t* next = source + pitch;
-        float previous = (1.0F - a) * ((b1 * static_cast<float>(source[0])) +
-                                       (b2 * static_cast<float>(next[0])));
-        float* destination = patch + (row * patch_side);
-        for (int j = 0; j < patch_side; ++j) {
-            const float t = (a12 * static_cast<float>(source[j + 1])) +
-                            (a22 * static_cast<float>(next[j + 1]));
-            destination[j] = previous + t;
-            previous = static_cast<float>(static_cast<double>(t) * s);
+/// getRectSubPix が使う係数と矩形を求める。
+///
+/// 内側の経路と境界の経路のどちらへ入るかも、ここで決まる。条件は OpenCV の
+/// getRectSubPix_8u32f の速い経路の条件と同じである。
+__device__ PatchSetup prepare_patch(std::size_t pitch, int width, int height, float center_x,
+                                    float center_y, int patch_side) {
+    PatchSetup setup;
+    const float shift = static_cast<float>(patch_side - 1) * 0.5F;
+    const float cx = center_x - shift;
+    const float cy = center_y - shift;
+    setup.ip_x_ = static_cast<int>(floorf(cx));
+    setup.ip_y_ = static_cast<int>(floorf(cy));
+    setup.a_ = cx - static_cast<float>(setup.ip_x_);
+    setup.b_ = cy - static_cast<float>(setup.ip_y_);
+    setup.inside_ = setup.ip_x_ >= 0 && (setup.ip_x_ + patch_side) < width && setup.ip_y_ >= 0 &&
+                    (setup.ip_y_ + patch_side) < height;
+    if (setup.inside_) {
+        // OpenCV は 0 除算を避けるためここで下限を置く。
+        setup.a_ = fmaxf(setup.a_, 0.0001F);
+        return setup;
+    }
+
+    // adjustRect と同じ矩形と開始位置を求める。
+    //
+    // このうち 3 つの分岐は cornerSubPix からは到達しない。四隅が画像の内側に
+    // あることが呼出前に確かめられているため、patch の原点が画像を完全に
+    // 外れることが無い。具体的には `rect_x > patch_side` (原点が左へ 13 px
+    // より遠い)、`rect_width < 0` と `rect_height < 0` (原点が右または下へ
+    // はみ出しきる) である。実際に変異を入れても test は落ちない。
+    // adjustRect の写しとして残すが、test で固定できないことを明記する。
+    if (setup.ip_x_ >= 0) {
+        setup.offset_ += setup.ip_x_;
+    } else {
+        setup.rect_x_ = -setup.ip_x_;
+        if (setup.rect_x_ > patch_side) {
+            setup.rect_x_ = patch_side;
         }
     }
+    if (setup.ip_x_ < width - patch_side) {
+        setup.rect_width_ = patch_side;
+    } else {
+        setup.rect_width_ = width - setup.ip_x_ - 1;
+        if (setup.rect_width_ < 0) {
+            setup.offset_ += setup.rect_width_;
+            setup.rect_width_ = 0;
+        }
+    }
+    if (setup.ip_y_ >= 0) {
+        setup.offset_ += static_cast<long long>(setup.ip_y_) * static_cast<long long>(pitch);
+    } else {
+        setup.rect_y_ = -setup.ip_y_;
+    }
+    if (setup.ip_y_ < height - patch_side) {
+        setup.rect_height_ = patch_side;
+    } else {
+        setup.rect_height_ = height - setup.ip_y_ - 1;
+        if (setup.rect_height_ < 0) {
+            setup.offset_ +=
+                    static_cast<long long>(setup.rect_height_) * static_cast<long long>(pitch);
+            setup.rect_height_ = 0;
+        }
+    }
+    setup.offset_ -= setup.rect_x_;
+    return setup;
 }
 
-/// getRectSubPix の境界の経路。走る位置が画像からはみ出す場合に使う。
+/// patch の 1 要素を求める。
 ///
-/// OpenCV の adjustRect が決める矩形の内側は双一次で、外側は端の値を
-/// 縦方向にだけ補間して埋める。行の進み方も OpenCV と同じにする。
-__device__ void sample_patch_border(const std::uint8_t* image, std::size_t pitch, int width,
-                                    int height, int ip_x, int ip_y, float a, float b,
-                                    int patch_side, float* patch) {
+/// 逐次版と**同じ式、同じ被演算子の順序**で書く。内側の経路では 1 行を
+/// 左から右へ辿るが、持ち回りの深さは 1 なので要素ごとの閉じた式になる。
+/// 境界の経路では行の進み方が矩形に依存するため、開始位置を i から直接求める。
+__device__ float patch_element(const std::uint8_t* image, std::size_t pitch, const PatchSetup& s,
+                               int patch_side, int row, int column) {
+    const float a = s.a_;
+    const float b = s.b_;
+    if (s.inside_) {
+        const float a12 = a * (1.0F - b);
+        const float a22 = a * b;
+        const float b1 = 1.0F - b;
+        const float b2 = b;
+        const double scale = (1.0 - static_cast<double>(a)) / static_cast<double>(a);
+        const std::uint8_t* source = image + (static_cast<std::size_t>(s.ip_y_ + row) * pitch) +
+                                     static_cast<std::size_t>(s.ip_x_);
+        const std::uint8_t* next = source + pitch;
+        const float t = (a12 * static_cast<float>(source[column + 1])) +
+                        (a22 * static_cast<float>(next[column + 1]));
+        // previous は 1 つ前の t に scale を掛けたものである。column 0 だけ
+        // 別の式になる。
+        const float previous =
+                (column == 0)
+                        ? ((1.0F - a) * ((b1 * static_cast<float>(source[0])) +
+                                         (b2 * static_cast<float>(next[0]))))
+                        : static_cast<float>(
+                                  static_cast<double>((a12 * static_cast<float>(source[column])) +
+                                                      (a22 * static_cast<float>(next[column]))) *
+                                  scale);
+        return previous + t;
+    }
+
     const float a11 = (1.0F - a) * (1.0F - b);
     const float a12 = a * (1.0F - b);
     const float a21 = (1.0F - a) * b;
@@ -117,227 +212,221 @@ __device__ void sample_patch_border(const std::uint8_t* image, std::size_t pitch
     const float b1 = 1.0F - b;
     const float b2 = b;
 
-    // adjustRect と同じ矩形と開始位置を求める。
-    long long offset = 0;
-    int rect_x = 0;
-    int rect_width = 0;
-    int rect_y = 0;
-    int rect_height = 0;
-    if (ip_x >= 0) {
-        offset += ip_x;
-        rect_x = 0;
-    } else {
-        rect_x = -ip_x;
-        if (rect_x > patch_side) {
-            rect_x = patch_side;
-        }
-    }
-    if (ip_x < width - patch_side) {
-        rect_width = patch_side;
-    } else {
-        rect_width = width - ip_x - 1;
-        if (rect_width < 0) {
-            offset += rect_width;
-            rect_width = 0;
-        }
-    }
-    if (ip_y >= 0) {
-        offset += static_cast<long long>(ip_y) * static_cast<long long>(pitch);
-        rect_y = 0;
-    } else {
-        rect_y = -ip_y;
-    }
-    if (ip_y < height - patch_side) {
-        rect_height = patch_side;
-    } else {
-        rect_height = height - ip_y - 1;
-        if (rect_height < 0) {
-            offset += static_cast<long long>(rect_height) * static_cast<long long>(pitch);
-            rect_height = 0;
-        }
-    }
-    offset -= rect_x;
+    // 逐次版は rect_y から rect_height の行でだけ source を 1 行進める。
+    // 進んだ回数を row から直接数える。
+    const int advanced = max(0, min(row, s.rect_height_) - s.rect_y_);
+    const std::uint8_t* source = image + s.offset_ + (static_cast<long long>(advanced) * pitch);
+    const std::uint8_t* second =
+            (row < s.rect_y_ || row >= s.rect_height_) ? source : source + pitch;
 
-    const std::uint8_t* source = image + offset;
-    for (int i = 0; i < patch_side; ++i) {
-        const std::uint8_t* second = source + pitch;
-        if (i < rect_y || i >= rect_height) {
-            second -= pitch;
-        }
-        float* destination = patch + (i * patch_side);
-
-        float edge = (b1 * static_cast<float>(source[rect_x])) +
-                     (b2 * static_cast<float>(second[rect_x]));
-        for (int j = 0; j < rect_x; ++j) {
-            destination[j] = edge;
-        }
-        edge = (b1 * static_cast<float>(source[rect_width])) +
-               (b2 * static_cast<float>(second[rect_width]));
-        for (int j = rect_width; j < patch_side; ++j) {
-            destination[j] = edge;
-        }
-        for (int j = rect_x; j < rect_width; ++j) {
-            destination[j] = (static_cast<float>(source[j]) * a11) +
-                             (static_cast<float>(source[j + 1]) * a12) +
-                             (static_cast<float>(second[j]) * a21) +
-                             (static_cast<float>(second[j + 1]) * a22);
-        }
-        if (i < rect_height) {
-            source = second;
-        }
+    // 逐次版の書き込み順は 左端の埋め、右端の埋め、双一次である。後の書き込みが
+    // 残るため、判定は右端から順に行う。
+    if (column >= s.rect_width_) {
+        return (b1 * static_cast<float>(source[s.rect_width_])) +
+               (b2 * static_cast<float>(second[s.rect_width_]));
     }
+    if (column < s.rect_x_) {
+        return (b1 * static_cast<float>(source[s.rect_x_])) +
+               (b2 * static_cast<float>(second[s.rect_x_]));
+    }
+    return (static_cast<float>(source[column]) * a11) +
+           (static_cast<float>(source[column + 1]) * a12) +
+           (static_cast<float>(second[column]) * a21) +
+           (static_cast<float>(second[column + 1]) * a22);
 }
 
-/// getRectSubPix と同じ patch を切り出す。
-__device__ void sample_patch(const std::uint8_t* image, std::size_t pitch, int width, int height,
-                             float center_x, float center_y, int patch_side, float* patch) {
-    const float shift = static_cast<float>(patch_side - 1) * 0.5F;
-    const float cx = center_x - shift;
-    const float cy = center_y - shift;
-    const int ip_x = static_cast<int>(floorf(cx));
-    const int ip_y = static_cast<int>(floorf(cy));
+/// block 内で共有する作業領域。
+struct RefineShared {
+    float patch_[kMaxRefinePatchSide * kMaxRefinePatchSide];
+    // 累積する 5 つの量を要素ごとに置く。累積の順序は添字の昇順を保つ。
+    double part_[5][kMaxWinSide * kMaxWinSide];
+    double sum_[5];
+    float x_;
+    float y_;
+    int stop_;
+    int iteration_;
+};
 
-    if (ip_x >= 0 && (ip_x + patch_side) < width && ip_y >= 0 && (ip_y + patch_side) < height) {
-        float a = cx - static_cast<float>(ip_x);
-        const float b = cy - static_cast<float>(ip_y);
-        // OpenCV は 0 除算を避けるためここで下限を置く。
-        a = fmaxf(a, 0.0001F);
-        sample_patch_inside(image, pitch, ip_x, ip_y, a, b, patch_side, patch);
-        return;
-    }
-    const float a = cx - static_cast<float>(ip_x);
-    const float b = cy - static_cast<float>(ip_y);
-    sample_patch_border(image, pitch, width, height, ip_x, ip_y, a, b, patch_side, patch);
-}
-
-/// cv::cornerSubPix を 1 点について再現する。
+/// cv::cornerSubPix を 1 隅について再現する。1 block が 1 隅を担当する。
 ///
-/// 累積は CPU 基準と同じ順序で行う。row-major に 1 要素ずつ足す。並列に
-/// 畳み込むと丸めが変わり、反復回数や打ち切りの採否まで変わりうる。
-__device__ void corner_sub_pix(const std::uint8_t* image, std::size_t pitch, int width, int height,
-                               const RefineMask& mask, int max_iterations, double eps, float* out_x,
-                               float* out_y, std::int32_t* counters) {
-    const float start_x = *out_x;
-    const float start_y = *out_y;
-    float current_x = start_x;
-    float current_y = start_y;
-    // 画像の外から始まる場合、CPU 基準は例外を投げる。GPU では投げられない
-    // ため、補正せずに元の位置を残し counter で数える。
-    if (!(start_x >= 0.0F && start_x < static_cast<float>(width) && start_y >= 0.0F &&
-          start_y < static_cast<float>(height))) {
-        atomicAdd(&counters[kOutOfImageBreaks], 1);
-        return;
-    }
-
-    float patch[kMaxRefinePatchSide * kMaxRefinePatchSide];
+/// 累積される 5 つの量は要素ごとに閉じており、要素間に依存が無い。倍精度の
+/// 演算は被演算子の決定的な関数なので、どの thread が計算しても bit 表現は
+/// 変わらない。**変えられないのは累積の順序だけ**であり、そこは添字の昇順を
+/// 保って 5 本の鎖として足す。5 本は source でも独立な 5 変数であり、
+/// 別の lane へ割っても同一の和の中の順序は変わらない。
+__device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitch, int width,
+                                     int height, const RefineMask& mask, int max_iterations,
+                                     double eps, RefineShared& shared, std::int32_t* counters) {
+    const int tid = static_cast<int>(threadIdx.x);
     const int win_side = mask.win_side_;
     const int patch_side = mask.patch_side_;
-    int iteration = 0;
-    double error = 0.0;
-    do {
-        double a = 0.0;
-        double b = 0.0;
-        double c = 0.0;
-        double bb1 = 0.0;
-        double bb2 = 0.0;
+    const int patch_count = patch_side * patch_side;
+    const int element_count = win_side * win_side;
+    const float start_x = shared.x_;
+    const float start_y = shared.y_;
 
-        sample_patch(image, pitch, width, height, current_x, current_y, patch_side, patch);
+    if (tid == 0) {
+        shared.stop_ = 0;
+        shared.iteration_ = 0;
+        // 画像の外から始まる場合、CPU 基準は例外を投げる。GPU では投げられない
+        // ため、補正せずに元の位置を残し counter で数える。
+        if (!(start_x >= 0.0F && start_x < static_cast<float>(width) && start_y >= 0.0F &&
+              start_y < static_cast<float>(height))) {
+            atomicAdd(&counters[kOutOfImageBreaks], 1);
+            shared.stop_ = 2;
+        }
+    }
+    __syncthreads();
+    if (shared.stop_ == 2) {
+        return;
+    }
 
-        // 走査は patch の 1 行 1 列だけ内側から始める。
-        int k = 0;
-        for (int i = 0; i < win_side; ++i) {
-            const float* row = patch + ((i + 1) * patch_side) + 1;
+    while (true) {
+        const PatchSetup setup =
+                prepare_patch(pitch, width, height, shared.x_, shared.y_, patch_side);
+        for (int index = tid; index < patch_count; index += kRefineThreads) {
+            shared.patch_[index] = patch_element(image, pitch, setup, patch_side,
+                                                 index / patch_side, index % patch_side);
+        }
+        __syncthreads();
+
+        // 走査は patch の 1 行 1 列だけ内側から始める。添字の対応は逐次版と
+        // 同じで、k = i * win_side + j である。
+        for (int k = tid; k < element_count; k += kRefineThreads) {
+            const int i = k / win_side;
+            const int j = k % win_side;
+            const float* row = shared.patch_ + ((i + 1) * patch_side) + 1;
+            const double m = static_cast<double>(mask.weight_[k]);
+            const double tgx = static_cast<double>(row[j + 1]) - static_cast<double>(row[j - 1]);
+            const double tgy = static_cast<double>(row[j + patch_side]) -
+                               static_cast<double>(row[j - patch_side]);
+            const double gxx = tgx * tgx * m;
+            const double gxy = tgx * tgy * m;
+            const double gyy = tgy * tgy * m;
+            const double px = static_cast<double>(j - mask.radius_);
             const double py = static_cast<double>(i - mask.radius_);
-            for (int j = 0; j < win_side; ++j, ++k) {
-                const double m = static_cast<double>(mask.weight_[k]);
-                const double tgx =
-                        static_cast<double>(row[j + 1]) - static_cast<double>(row[j - 1]);
-                const double tgy = static_cast<double>(row[j + patch_side]) -
-                                   static_cast<double>(row[j - patch_side]);
-                const double gxx = tgx * tgx * m;
-                const double gxy = tgx * tgy * m;
-                const double gyy = tgy * tgy * m;
-                const double px = static_cast<double>(j - mask.radius_);
+            shared.part_[0][k] = gxx;
+            shared.part_[1][k] = gxy;
+            shared.part_[2][k] = gyy;
+            shared.part_[3][k] = (gxx * px) + (gxy * py);
+            shared.part_[4][k] = (gxy * px) + (gyy * py);
+        }
+        __syncthreads();
 
-                a += gxx;
-                b += gxy;
-                c += gyy;
+        if (tid < 5) {
+            double accumulator = 0.0;
+            for (int k = 0; k < element_count; ++k) {
+                accumulator += shared.part_[tid][k];
+            }
+            shared.sum_[tid] = accumulator;
+        }
+        __syncthreads();
 
-                bb1 += (gxx * px) + (gxy * py);
-                bb2 += (gxy * px) + (gyy * py);
+        if (tid == 0) {
+            const double a = shared.sum_[0];
+            const double b = shared.sum_[1];
+            const double c = shared.sum_[2];
+            const double bb1 = shared.sum_[3];
+            const double bb2 = shared.sum_[4];
+            const double determinant = (a * c) - (b * b);
+            if (fabs(determinant) <= (DBL_EPSILON * DBL_EPSILON)) {
+                atomicAdd(&counters[kSingularBreaks], 1);
+                shared.stop_ = 1;
+            } else {
+                const double scale = 1.0 / determinant;
+                const float next_x = static_cast<float>(static_cast<double>(shared.x_) +
+                                                        (c * scale * bb1) - (b * scale * bb2));
+                const float next_y = static_cast<float>(static_cast<double>(shared.y_) -
+                                                        (b * scale * bb1) + (a * scale * bb2));
+                // 誤差は単精度で求めてから倍精度へ広げる。CPU 基準と同じ順序。
+                const float dx = next_x - shared.x_;
+                const float dy = next_y - shared.y_;
+                const double error = static_cast<double>((dx * dx) + (dy * dy));
+                if (!(next_x >= 0.0F && next_x < static_cast<float>(width) && next_y >= 0.0F &&
+                      next_y < static_cast<float>(height))) {
+                    atomicAdd(&counters[kOutOfImageBreaks], 1);
+                    shared.stop_ = 1;
+                } else {
+                    shared.x_ = next_x;
+                    shared.y_ = next_y;
+                    ++shared.iteration_;
+                    if (!(shared.iteration_ < max_iterations && error > eps)) {
+                        shared.stop_ = 1;
+                    }
+                }
             }
         }
-
-        const double determinant = (a * c) - (b * b);
-        if (fabs(determinant) <= (DBL_EPSILON * DBL_EPSILON)) {
-            atomicAdd(&counters[kSingularBreaks], 1);
+        __syncthreads();
+        if (shared.stop_ != 0) {
             break;
         }
-
-        const double scale = 1.0 / determinant;
-        const float next_x = static_cast<float>(static_cast<double>(current_x) + (c * scale * bb1) -
-                                                (b * scale * bb2));
-        const float next_y = static_cast<float>(static_cast<double>(current_y) - (b * scale * bb1) +
-                                                (a * scale * bb2));
-        // 誤差は単精度で求めてから倍精度へ広げる。CPU 基準と同じ順序である。
-        const float dx = next_x - current_x;
-        const float dy = next_y - current_y;
-        error = static_cast<double>((dx * dx) + (dy * dy));
-        if (!(next_x >= 0.0F && next_x < static_cast<float>(width) && next_y >= 0.0F &&
-              next_y < static_cast<float>(height))) {
-            atomicAdd(&counters[kOutOfImageBreaks], 1);
-            break;
-        }
-        current_x = next_x;
-        current_y = next_y;
-    } while (++iteration < max_iterations && error > eps);
-
-    atomicAdd(&counters[kIterationTotal], iteration);
-    // 初期位置から窓の半径より遠ければ、収束が悪いとみなして戻す。
-    if (fabsf(current_x - start_x) > static_cast<float>(mask.radius_) ||
-        fabsf(current_y - start_y) > static_cast<float>(mask.radius_)) {
-        atomicAdd(&counters[kPoorConvergence], 1);
-        current_x = start_x;
-        current_y = start_y;
     }
-    *out_x = current_x;
-    *out_y = current_y;
+
+    if (tid == 0) {
+        atomicAdd(&counters[kIterationTotal], shared.iteration_);
+        // 初期位置から窓の半径より遠ければ、収束が悪いとみなして戻す。
+        if (fabsf(shared.x_ - start_x) > static_cast<float>(mask.radius_) ||
+            fabsf(shared.y_ - start_y) > static_cast<float>(mask.radius_)) {
+            atomicAdd(&counters[kPoorConvergence], 1);
+            shared.x_ = start_x;
+            shared.y_ = start_y;
+        }
+    }
+    __syncthreads();
 }
 
-/// 段を登りながら四隅を補正する。1 thread が 1 隅を担当する。
+/// 段を登りながら四隅を補正する。1 block が 1 隅を担当する。
 __global__ void refine_kernel(PyramidRef pyramid, DeviceDetections detections, RefineMasks masks,
                               float scale_init, int start_level, int max_iterations, double eps,
                               std::int32_t* counters) {
-    const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     const int total = *detections.count_ * kQuadCornerCount;
-    if (index >= total) {
-        return;
-    }
-    const int detection = index / kQuadCornerCount;
-    const int corner = index % kQuadCornerCount;
-    const std::size_t slot =
-            (static_cast<std::size_t>(corner) * static_cast<std::size_t>(detections.capacity_)) +
-            static_cast<std::size_t>(detection);
+    __shared__ RefineShared shared;
 
-    float x = detections.corner_x_[slot];
-    float y = detections.corner_y_[slot];
-    // segmentation の座標から開始段の座標へ移す。
-    if (scale_init != 1.0F) {
-        x *= scale_init;
-        y *= scale_init;
+    // block を隅の上限だけ起こすと、検出が数件でも数千 block を起動すること
+    // になる。共有 memory を使うため 1 SM に載る block 数が限られ、起動が
+    // 波に分かれて待ち時間になる。Jetson AGX Orin では検出 0 件でも 7 倍
+    // 遅くなった。控えめな block 数で起こして隅を跨ぎながら走る。
+    for (int index = static_cast<int>(blockIdx.x); index < total;
+         index += static_cast<int>(gridDim.x)) {
+        const int detection = index / kQuadCornerCount;
+        const int corner = index % kQuadCornerCount;
+        const std::size_t slot = (static_cast<std::size_t>(corner) *
+                                  static_cast<std::size_t>(detections.capacity_)) +
+                                 static_cast<std::size_t>(detection);
+
+        __syncthreads();
+        if (threadIdx.x == 0U) {
+            float x = detections.corner_x_[slot];
+            float y = detections.corner_y_[slot];
+            // segmentation の座標から開始段の座標へ移す。
+            if (scale_init != 1.0F) {
+                x *= scale_init;
+                y *= scale_init;
+            }
+            shared.x_ = x;
+            shared.y_ = y;
+        }
+        __syncthreads();
+
+        for (int level = start_level - 1; level >= 0; --level) {
+            if (threadIdx.x == 0U) {
+                // 段を 1 つ下げると解像度は 2 倍になる。
+                shared.x_ *= 2.0F;
+                shared.y_ *= 2.0F;
+            }
+            __syncthreads();
+            const int side = max(pyramid.width_[level], pyramid.height_[level]);
+            const RefineMask& mask = (side > kLargeLevelSidePx) ? masks.large_ : masks.small_;
+            corner_sub_pix_block(pyramid.data_[level], pyramid.pitch_[level], pyramid.width_[level],
+                                 pyramid.height_[level], mask, max_iterations, eps, shared,
+                                 counters);
+        }
+        if (threadIdx.x == 0U) {
+            detections.corner_x_[slot] = shared.x_;
+            detections.corner_y_[slot] = shared.y_;
+            atomicAdd(&counters[kRefinedCorners], 1);
+        }
     }
-    for (int level = start_level - 1; level >= 0; --level) {
-        // 段を 1 つ下げると解像度は 2 倍になる。
-        x *= 2.0F;
-        y *= 2.0F;
-        const int side = max(pyramid.width_[level], pyramid.height_[level]);
-        const RefineMask& mask = (side > kLargeLevelSidePx) ? masks.large_ : masks.small_;
-        corner_sub_pix(pyramid.data_[level], pyramid.pitch_[level], pyramid.width_[level],
-                       pyramid.height_[level], mask, max_iterations, eps, &x, &y, counters);
-    }
-    detections.corner_x_[slot] = x;
-    detections.corner_y_[slot] = y;
-    atomicAdd(&counters[kRefinedCorners], 1);
 }
 
 }  // namespace
@@ -413,9 +502,12 @@ Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
         return status;
     }
 
-    const auto capacity = static_cast<unsigned int>(detections->capacity_ * kQuadCornerCount);
-    const unsigned int blocks = (capacity + static_cast<unsigned int>(kRefineThreads) - 1U) /
-                                static_cast<unsigned int>(kRefineThreads);
+    // 1 block が 1 隅を担当し、block 数を超える隅は跨ぎながら処理する。
+    // 対象機の SM 数と、共有 memory から決まる 1 SM あたりの block 数を
+    // 踏まえ、評価計画の上限 (マーカー 16 枚 = 64 隅) を 1 波で覆える数にする。
+    const auto corner_count = detections->capacity_ * kQuadCornerCount;
+    const auto blocks = static_cast<unsigned int>((corner_count < kRefineBlocks) ? corner_count
+                                                                                 : kRefineBlocks);
     refine_kernel<<<blocks, static_cast<unsigned int>(kRefineThreads), 0, stream>>>(
             pyramid, *detections, masks, scale_init, plan.closest_level_index_, max_iterations, eps,
             buffers->diagnostics_.counters_);

@@ -200,7 +200,7 @@ void sample_patch(const cv::Mat& image, float center_x, float center_y, int patc
 
 /// cv::cornerSubPix を 1 点について写したもの。
 void corner_sub_pix(const cv::Mat& image, int radius, int max_iterations, double eps,
-                    cv::Point2f* point) {
+                    cv::Point2f* point, std::vector<std::int32_t>* counters) {
     const int win_side = (radius * 2) + 1;
     const int patch_side = win_side + 2;
     std::vector<float> mask(static_cast<std::size_t>(win_side) *
@@ -253,6 +253,7 @@ void corner_sub_pix(const cv::Mat& image, int radius, int max_iterations, double
         }
         const double determinant = (a * c) - (b * b);
         if (std::fabs(determinant) <= (DBL_EPSILON * DBL_EPSILON)) {
+            ++(*counters)[3];
             break;
         }
         const double scale = 1.0 / determinant;
@@ -266,13 +267,16 @@ void corner_sub_pix(const cv::Mat& image, int radius, int max_iterations, double
         error = static_cast<double>((dx * dx) + (dy * dy));
         if (!(next.x >= 0.0F && next.x < static_cast<float>(image.cols) && next.y >= 0.0F &&
               next.y < static_cast<float>(image.rows))) {
+            ++(*counters)[1];
             break;
         }
         current = next;
     } while (++iteration < max_iterations && error > eps);
 
+    (*counters)[4] += iteration;
     if (std::fabs(current.x - start.x) > static_cast<float>(radius) ||
         std::fabs(current.y - start.y) > static_cast<float>(radius)) {
+        ++(*counters)[2];
         current = start;
     }
     *point = current;
@@ -280,7 +284,10 @@ void corner_sub_pix(const cv::Mat& image, int radius, int max_iterations, double
 
 /// findCornerInPyrImage を写したもの。
 void refine(const std::vector<cv::Mat>& pyramid, int start_level, float scale_init,
-            const DetectorConfig& config, std::vector<cv::Point2f>* corners) {
+            const DetectorConfig& config, std::vector<cv::Point2f>* corners,
+            std::vector<std::int32_t>* counters = nullptr) {
+    std::vector<std::int32_t> local(aruco3cuda::detail::kRefineCounterCount, 0);
+    std::vector<std::int32_t>* sink = (counters != nullptr) ? counters : &local;
     if (scale_init != 1.0F) {
         for (cv::Point2f& point : *corners) {
             point.x *= scale_init;
@@ -295,12 +302,13 @@ void refine(const std::vector<cv::Mat>& pyramid, int start_level, float scale_in
             point.y *= 2.0F;
             if (!(point.x >= 0.0F && point.x < static_cast<float>(image.cols) && point.y >= 0.0F &&
                   point.y < static_cast<float>(image.rows))) {
+                ++(*sink)[1];
                 continue;
             }
             corner_sub_pix(image, radius, config.corner_refinement_max_iterations_,
                            config.corner_refinement_min_accuracy_px_ *
                                    config.corner_refinement_min_accuracy_px_,
-                           &point);
+                           &point, sink);
         }
     }
 }
@@ -678,7 +686,9 @@ TEST(CornerRefineTest, matches_transcribed_oracle_bit_exactly) {
     ASSERT_TRUE(run.run(scene, corners, config));
 
     std::vector<cv::Point2f> expected = corners;
-    oracle::refine(pyramid, plan.closest_level_index_, scale_init, config, &expected);
+    std::vector<std::int32_t> oracle_counters(aruco3cuda::detail::kRefineCounterCount, 0);
+    oracle::refine(pyramid, plan.closest_level_index_, scale_init, config, &expected,
+                   &oracle_counters);
     const Comparison against_oracle = compare(expected, run.corners());
 
     std::vector<cv::Point2f> opencv_result = corners;
@@ -699,6 +709,87 @@ TEST(CornerRefineTest, matches_transcribed_oracle_bit_exactly) {
     EXPECT_EQ(against_oracle.max_distance_, 0.0);
     // 退化した分岐を実際に通したことを確かめる。
     EXPECT_GT(run.counters()[2] + run.counters()[3], 0);
+
+    // **counter を oracle 側の counter と突き合わせる。**
+    //
+    // 四隅が一致していても制御流が違うことはある。とくに収束不良で初期位置へ
+    // 戻した隅は、戻した先が初期位置なので oracle と自明に一致してしまう。
+    // この test では 128 隅のうち半分以上が戻る経路へ入るため、四隅の一致だけ
+    // では並列化で分岐が動いたことを検出できない。
+    //
+    // counter の絶対値を固定してはならない。退化した入力では制御流が機で
+    // 違うことを実測している (DGX Spark 70/81/83/837 に対し RTX 5070 Ti は
+    // 78/66/87/711)。pyramid、mask、場面、compiler、glibc はいずれも 3 機で
+    // 同一であることを確認済みで、原因は未特定である。
+    // 機に依らない不変量は「GPU と oracle が同じ制御流を通ること」である。
+    EXPECT_EQ(run.counters()[0], 128) << "補正した隅の数";
+    for (int i = 1; i < aruco3cuda::detail::kRefineCounterCount; ++i) {
+        EXPECT_EQ(run.counters()[static_cast<std::size_t>(i)],
+                  oracle_counters[static_cast<std::size_t>(i)])
+                << "counter " << i;
+    }
+}
+
+// 境界値: 窓が画像からはみ出す経路でも oracle と bit 一致する。
+//
+// getRectSubPix には内側の経路と境界の経路があり、後者は adjustRect が決める
+// 矩形の外を端の値で埋めます。四隅が画像の中央付近にあるうちは境界の経路を
+// **一度も通りません**。画像の端にマーカーを置いて明示的に通します。
+TEST(CornerRefineTest, matches_oracle_on_image_border) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    const DetectorConfig config;
+    // マーカーを 4 隅と 4 辺へ寄せて置く。原寸で窓の半径 5、patch 13 なので、
+    // 隅が端から 6 px 以内にあると境界の経路へ入る。
+    const int side = 160;
+    struct Placement {
+        int x_;
+        int y_;
+    };
+    const std::vector<Placement> placements = {
+            {0, 0},   {1280 - side, 0},  {0, 720 - side}, {1280 - side, 720 - side},
+            {560, 0}, {560, 720 - side}, {0, 280},        {1280 - side, 280},
+    };
+
+    std::size_t total_oracle_mismatch = 0;
+    std::size_t border_cases = 0;
+    for (const Placement& place : placements) {
+        const cv::Mat scene = make_scene(1280, 720, cv::Rect(place.x_, place.y_, side, side));
+        aruco3cuda::detail::ScalePlan plan;
+        ASSERT_EQ(aruco3cuda::detail::plan_scales(config, 1280, 720, &plan), Status::kOk);
+        std::vector<cv::Point2f> corners;
+        make_case(1280, 720, cv::Rect(place.x_, place.y_, side, side), plan, &corners);
+
+        std::vector<cv::Mat> pyramid;
+        cv::buildPyramid(scene, pyramid, plan.level_count_ - 1);
+        const auto scale_init =
+                static_cast<float>(
+                        pyramid[static_cast<std::size_t>(plan.closest_level_index_)].cols) /
+                static_cast<float>(plan.segmentation_width_px_);
+
+        // 端に寄った隅がどれだけあるかを数える。境界の経路を通った証拠にする。
+        for (const cv::Point2f& point : corners) {
+            const float x = point.x * scale_init * 4.0F;
+            const float y = point.y * scale_init * 4.0F;
+            if (x < 8.0F || y < 8.0F || x > 1272.0F || y > 712.0F) {
+                ++border_cases;
+            }
+        }
+
+        RefineRun run;
+        ASSERT_TRUE(run.run(scene, corners, config)) << place.x_ << "," << place.y_;
+        std::vector<cv::Point2f> expected = corners;
+        oracle::refine(pyramid, plan.closest_level_index_, scale_init, config, &expected);
+        const Comparison result = compare(expected, run.corners());
+        total_oracle_mismatch += (result.total_ - result.exact_);
+    }
+    std::printf("[refine] 端 8 通り: oracle との不一致 %zu、端に寄った隅 %zu\n",
+                total_oracle_mismatch, border_cases);
+    EXPECT_EQ(total_oracle_mismatch, 0U);
+    // 境界の経路を実際に通したことを確かめる。通っていなければ、この test は
+    // 内側の経路しか見ておらず既存の test と変わらない。
+    EXPECT_GT(border_cases, 0U);
 }
 
 // 正常系: 補正した四隅が原寸の座標になる。

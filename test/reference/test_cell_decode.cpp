@@ -13,6 +13,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -165,6 +166,7 @@ public:
     const std::vector<cv::Mat>& ratios() const { return this->ratios_; }
     const std::vector<std::int32_t>& border_errors() const { return this->border_errors_; }
     const std::vector<std::uint8_t>& accepted() const { return this->accepted_; }
+    const std::vector<std::int32_t>& thresholds() const { return this->thresholds_; }
 
 private:
     bool download(const aruco3cuda::detail::CellRatioBuffers& buffers, std::size_t count) {
@@ -178,6 +180,11 @@ private:
                        cudaMemcpyDeviceToHost) != cudaSuccess ||
             cudaMemcpy(flags.data(), buffers.accepted_, flags.size(), cudaMemcpyDeviceToHost) !=
                     cudaSuccess) {
+            return false;
+        }
+        this->thresholds_.resize(count);
+        if (cudaMemcpy(this->thresholds_.data(), buffers.thresholds_, count * sizeof(std::int32_t),
+                       cudaMemcpyDeviceToHost) != cudaSuccess) {
             return false;
         }
         this->ratios_.clear();
@@ -196,6 +203,7 @@ private:
     std::vector<cv::Mat> ratios_;
     std::vector<std::int32_t> border_errors_;
     std::vector<std::uint8_t> accepted_;
+    std::vector<std::int32_t> thresholds_;
 };
 
 /// マーカーらしい canonical 画像を作る。外枠が黒、内側が乱数の bit。
@@ -270,6 +278,62 @@ TEST(CellDecodeTest, matches_reference_ratios) {
                 canonicals.size(), mismatched_cells, canonicals.size() * 64U, mismatched_errors);
     EXPECT_EQ(mismatched_cells, 0U);
     EXPECT_EQ(mismatched_errors, 0U);
+}
+
+// 正常系: Otsu が選ぶ閾値そのものが OpenCV と一致する。
+//
+// 比だけを突き合わせると、閾値が 1 階調ずれても境界に画素が無ければ気付け
+// ません。比は 1/16 刻みであり、境界に画素が無い場合は同じ比になります。
+// OpenCV の cv::threshold は THRESH_OTSU のとき選んだ閾値を戻り値で返すので、
+// 整数で直接比べます。
+TEST(CellDecodeTest, otsu_threshold_matches_opencv_exactly) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    const DetectorConfig config;
+    std::vector<cv::Mat> canonicals;
+    canonicals.reserve(256);
+    // 階調の分布を広く振る。noise の幅を変えると histogram の形が変わり、
+    // 漸化式の途中で最大が入れ替わる位置も変わる。
+    for (int i = 0; i < 256; ++i) {
+        canonicals.push_back(make_marker_canonical(6, 4, 1, 20260830U + i, 1 + (i % 60)));
+    }
+    DecodeRun run;
+    ASSERT_TRUE(run.run(canonicals, 6, config));
+    ASSERT_EQ(run.thresholds().size(), canonicals.size());
+
+    std::size_t mismatched = 0;
+    std::size_t uniform_cases = 0;
+    int smallest = 255;
+    int largest = 0;
+    for (std::size_t i = 0; i < canonicals.size(); ++i) {
+        // 低分散の経路へ入った候補は閾値を求めないので 0 が入る。
+        cv::Mat mean;
+        cv::Mat stddev;
+        const int cell = config.perspective_remove_pixel_per_cell_;
+        const cv::Mat inner = canonicals[i]
+                                      .colRange(cell / 2, canonicals[i].cols - (cell / 2))
+                                      .rowRange(cell / 2, canonicals[i].rows - (cell / 2));
+        cv::meanStdDev(inner, mean, stddev);
+        if (stddev.ptr<double>(0)[0] < config.min_otsu_std_dev_) {
+            ++uniform_cases;
+            EXPECT_EQ(run.thresholds()[i], 0) << i;
+            continue;
+        }
+        cv::Mat working = canonicals[i].clone();
+        const double expected =
+                cv::threshold(working, working, 125, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+        if (run.thresholds()[i] != static_cast<std::int32_t>(expected)) {
+            ++mismatched;
+        }
+        smallest = std::min(smallest, run.thresholds()[i]);
+        largest = std::max(largest, run.thresholds()[i]);
+    }
+    std::printf("[decode] 閾値 %zu 件: 不一致 %zu、低分散 %zu、範囲 %d から %d\n",
+                canonicals.size(), mismatched, uniform_cases, smallest, largest);
+    EXPECT_EQ(mismatched, 0U);
+    // 閾値が 1 つの値に張り付いていたら、この test は分布を振れていない。
+    EXPECT_LT(smallest, largest);
 }
 
 // 境界値: 分散が小さい画像では全セルが同じ比になる。
