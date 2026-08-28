@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "aruco3cuda/config.hpp"
+#include "aruco3cuda/detections.hpp"
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/workspace.hpp"
 #include "candidate_filter.hpp"
@@ -19,37 +20,9 @@ namespace aruco3cuda::detail {
 
 /// device 上に留まる検出結果。
 ///
-/// 四隅は Dictionary 照合で得た回転を打ち消した後の並びである。OpenCV も
-/// 識別の直後、subpixel 補正の前に打ち消す。順序を入れ替えると補正が別の
-/// 隅に掛かる。
-///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。内容は発行済みの
-///           kernel が完了するまで確定しない。
-///
-/// 入力例: max_markers_ = 1024 の設定
-/// 出力例: ids_ が 1024 要素、corner_x_ が 4096 要素
-struct DeviceDetections {
-    /// 一致した Dictionary の ID。
-    std::int32_t* ids_ = nullptr;
-    /// 一致した回転。0 から 3。四隅は打ち消し済みだが、姿勢推定側が
-    /// 元の向きを必要とする場合があるため値も残す。
-    std::int32_t* rotations_ = nullptr;
-    /// 四隅の x 座標。添字は (corner * capacity_) + detection。
-    ///
-    /// 単精度で持つ。入力は整数だが、S10 の subpixel 補正がここへ書き戻す。
-    /// 2^24 未満の整数は単精度で厳密に表せるため、変換で値は変わらない。
-    float* corner_x_ = nullptr;
-    /// 四隅の y 座標。並びは corner_x_ と同じ。
-    float* corner_y_ = nullptr;
-    /// 由来した候補の index。S10 が周長や label を引くために残す。
-    std::int32_t* source_ = nullptr;
-    /// 詰めた検出数。要素数 1。上限で打ち切った後の値が入る。
-    std::int32_t* count_ = nullptr;
-    /// 打ち切る前の検出数。要素数 1。count_ より大きければ捨てている。
-    std::int32_t* accepted_total_ = nullptr;
-    int capacity_ = 0;
-};
+/// 定義は公開 header にある。段の間で受け渡す型が公開型と食い違うと、
+/// 公開 API が内部の並びを写し直すことになる。同じ型を使う。
+using DeviceDetections = ::aruco3cuda::DeviceDetections;
 
 /// compaction の作業領域。
 ///

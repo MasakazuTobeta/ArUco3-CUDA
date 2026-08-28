@@ -358,6 +358,37 @@ S10 は `cv::cornerSubPix` の反復解法をそのまま再現する段です�
 - **`getRectSubPix` は素直な双一次補間ではありません。** 1 行を左から右へ辿り、直前の項に `(1-a)/a` を掛けて持ち回ります。数学的には同じですが丸めが積み上がるため、双一次の式で置き換えると値が変わります。
 - **誤差は単精度で求めてから倍精度へ広げます。** `err = (cI2.x-cI.x)*(cI2.x-cI.x) + ...` は float 演算であり、その結果が `double err` へ入ります。
 
+#### WP-3.6 の実測: 全経路が繋がった
+
+S1 から S10 を 1 本に繋いだ公開 API の検出器を作りました。**GPU 経路だけで OpenCV と同じ検出結果が出ます。**
+
+| 項目 | 結果 |
+| --- | --- |
+| OpenCV との四隅の差 | 3 機とも **0.0000 px** |
+| detect_async の発行時間 | 0.19 から 0.42 ms |
+| workspace | 13.5 MB、確保は **1 回だけ** |
+
+完了条件の「host 同期なしで参照できる」は、**実際に同期していないことを test で証明**しました。専用 stream へ 800 ms 前後を占有する kernel を先に積み、その後ろへ `detect_async` を積んで、戻った直後の `cudaStreamQuery` が `cudaErrorNotReady` を返すことを確かめています。発行に掛かるのは 0.2 ms 前後で、占有の完了までの時間の半分未満であることも併せて要求しています。
+
+#### 設計で決めたこと
+
+**支持する設定の組み合わせを 2 つに絞りました。**
+
+| `use_aruco3_detection_` | `corner_refine_method_` | 可否 |
+| --- | --- | --- |
+| true | kSubpix | 可。四隅は原寸 |
+| false | kNone | 可。縮小しないため原寸 |
+| true | kNone | **拒否**。四隅が縮小後の座標のまま残る |
+| false | kSubpix | **拒否**。段が 1 つしかなく補正が走らない |
+
+縮小後の座標を原寸へ戻す処理は S10 の段登りにしかありません。ArUco3 有効で補正を切ると、四隅が segmentation 座標のまま出ます。逆に ArUco3 無効では pyramid が 1 段しかなく、`for (level = 開始段 - 1; ...)` が 1 度も回りません。どちらも黙って通すと座標系が食い違うため、`initialize` が `kInvalidConfig` で拒否します。
+
+**workspace は 2 本に分けました。** Dictionary は frame をまたいで生きるため専用の arena に置き、残りの 13 段は frame ごとに `reset` して切り出し直します。切り出しは host の計算だけで CUDA API を呼ばないため、frame ごとに回しても確保回数は 1 のままです。
+
+**確保量は上限の寸法から計算できません。** 縮小率は `fxfy = S / (S + max(W, H) * tau)` であり、分母に長辺が入ります。上限 1000x4000 の設定で 1000x1000 を入れると、上限で計算した segmentation (138x552) より大きい 390x390 になります。`fxfy * W` は `W` について単調増加なので、正方形として計算した幅と高さをそれぞれの上界に使います。
+
+**`DeviceDetections` は面ごとの並び (SoA) にしました。** 草案は `float2*` の AoS でしたが、S5 から S10 までが `(corner * capacity) + index` で一貫しており、S10 は同じ添字で in-place に書き戻します。AoS へ変えると bit 一致まで検証済みの kernel を書き直すことになります。公開 header が `vector_types.h` へ依存しなくなる利点もあります。
+
 #### Phase 3: GPU decode
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
@@ -367,9 +398,10 @@ S10 は `cv::cornerSubPix` の反復解法をそのまま再現する段です�
 | WP-3.3 | S8 後半 Dictionary 照合 | `src/core/dictionary_match.{hpp,cu}` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す。3 機すべてで 1000 件の不一致 0。達成済み | WP-3.2、WP-0.5 | M |
 | WP-3.4 | S9 重複整理と compaction | `src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる。包含判定は `cv::pointPolygonTest` と 400 組で一致、打ち切りは乱数の森 80 通りで一致。達成済み | WP-3.3 | M |
 | WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core/corner_refine.{hpp,cu}` | 四隅 RMSE が CPU 基準に対する許容内に収まる。実運用に近い入力では RMSE 0.000012 px 以下、逐語 oracle とは 3 機すべてで bit 一致。達成済み | WP-3.4 | L |
-| WP-3.6 | device 常駐出力 API | `DeviceDetections` | host 同期なしで検出結果を参照できることをテストで確認できる | WP-3.5 | S |
+| WP-3.6 | device 常駐出力 API と検出器 | `include/aruco3cuda/detections.hpp`、`detector.hpp`、`src/core/detector.cpp` | host 同期なしで検出結果を参照できることをテストで確認できる。占有 kernel を先に積み `cudaStreamQuery` が `cudaErrorNotReady` を返すことで実証。達成済み | WP-3.5 | M (当初 S) |
+| WP-3.7 | benchmark へ CUDA 経路を追加 | `bench` | `Route::kCudaResident` を測定でき、測定範囲と同期点が結果に残る | WP-3.6 | M |
 
-G3 の完了条件: ID と四隅の出力まで GPU 経路で完結し、`CUDA-Resident` 経路が測定可能であること。
+G3 の完了条件: ID と四隅の出力まで GPU 経路で完結し、`CUDA-Resident` 経路が測定可能であること。**前半は WP-3.6 で達成済み**です (3 機とも OpenCV との四隅の差 0.0000 px)。後半の測定は WP-3.7 で行います。
 
 #### Phase 4: 最適化と評価
 

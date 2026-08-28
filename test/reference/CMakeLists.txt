@@ -20,6 +20,8 @@ add_executable(aruco3cuda_reference_tests
   test_candidate_tree.cpp
   test_detection_emit.cpp
   test_corner_refine.cpp
+  test_detector.cpp
+  test_detector_probe.cu
   test_hybrid_detector.cpp
   test_device_image.cpp
   test_report_diff.cpp)

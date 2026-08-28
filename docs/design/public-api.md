@@ -10,7 +10,10 @@ CUDA 検出器の公開 API の型、所有権、同期動作、エラー通知�
 
 ## 現状
 
-`Status`、`MemorySpace`、`ImageViewU8`、`CornerRefineMethod`、`DetectorConfig` と、それぞれの境界検証は実装済みです。`Dictionary` は `include/aruco3cuda/dictionary.hpp` として実装済みです。`DeviceDetections`、`HostDetections`、`Detector` は未実装であり、本書の該当箇所は草案です。
+**WP-3.6 で実装しました。** 以下は実装済みの内容です。段階ごとの CUDA event 計測
+(`set_stage_timing_enabled`) は WP-4.1 の担当として落としました。
+
+`Status`、`MemorySpace`、`ImageViewU8`、`CornerRefineMethod`、`DetectorConfig` と、それぞれの境界検証は実装済みです。`Dictionary` は `include/aruco3cuda/dictionary.hpp` として実装済みです。`DeviceDetections`、`HostDetections`、`Detector` も実装済みです。
 
 既定値は OpenCV 4.x の `DetectorParameters` の観測仕様に合わせています。ArUco3 検出戦略に関わる 2 項目のみ、評価目的に合わせて既定を変えています。OpenCV と同じ既定値が必要な場合は `DetectorConfig::opencv_defaults()` を使います。
 
@@ -149,23 +152,28 @@ struct DetectorConfig {
 namespace aruco3cuda {
 
 /// device 常駐の検出結果。GPU 常駐 pipeline から同期なしで参照できる。
+///
+/// 四隅は面ごとに分けて持つ (SoA)。添字は (corner * capacity_) + detection。
+/// S5 から S10 までが同じ並びを使っており、S10 はこの添字で in-place に
+/// 書き戻す。float2 の AoS へ変えると、bit 一致まで検証済みの kernel を
+/// 書き直すことになる。公開 header が vector_types.h へ依存しない利点もある。
 struct DeviceDetections {
-  int* ids_ = nullptr;               ///< [max_markers_]
-  float2* corners_ = nullptr;        ///< [max_markers_ * 4]、反時計回りに正規化
-  int* rotations_ = nullptr;         ///< [max_markers_]、0 から 3
-  float* hamming_distances_ = nullptr;
-  int* count_ = nullptr;             ///< device 上の検出数
-  int* overflow_flags_ = nullptr;
+  std::int32_t* ids_ = nullptr;
+  std::int32_t* rotations_ = nullptr;
+  float* corner_x_ = nullptr;
+  float* corner_y_ = nullptr;
+  std::int32_t* source_ = nullptr;   ///< 由来した候補の index
+  std::int32_t* count_ = nullptr;    ///< device 上の検出数
+  std::int32_t* accepted_total_ = nullptr;  ///< 打ち切る前の検出数
   int capacity_ = 0;
 };
 
 /// host 側へ取り出した検出結果。
 struct HostDetections {
-  std::vector<int> ids_;
-  std::vector<std::array<float, 8>> corners_;  ///< 四隅 x, y を反時計回りに格納
-  std::vector<int> rotations_;
-  std::vector<float> hamming_distances_;
-  bool candidate_overflow_ = false;
+  std::vector<std::int32_t> ids_;
+  std::vector<float> corners_;       ///< 1 検出あたり x0,y0,...,x3,y3 の 8 要素
+  std::vector<std::int32_t> rotations_;
+  std::int32_t accepted_total_ = 0;  ///< 打ち切る前の検出数
   bool marker_overflow_ = false;
 };
 
@@ -197,21 +205,28 @@ class Detector {
 
   /// workspace を確保し Dictionary を device へ転送する。
   /// 失敗時は内部状態を変更しない。
-  Status initialize(const Dictionary& dictionary, const DetectorConfig& config);
+  Status initialize(const DictionaryTable& dictionary, const DetectorConfig& config,
+                    std::string* out_message = nullptr);
 
   /// 検出を stream へ発行する。host 同期を行わない。
   /// 入力例: 1920x1080、pitch_bytes_ = 1920、space_ = kDevice
   /// 出力例: detections.count_ に device 上の検出数が書かれる
   Status detect_async(const ImageViewU8& image, cudaStream_t stream);
 
-  /// 直近の detect_async() の device 常駐結果を返す。同期は発生しない。
-  const DeviceDetections& device_detections() const;
+  /// 直近の detect_async() の device 常駐結果を写す。同期は発生しない。
+  /// 参照返しにしない。move 後に kNotInitialized を返せなくなるためである。
+  Status device_detections(DeviceDetections* out) const;
 
   /// stream の完了を待って host 結果を得る。ここでのみ同期が発生する。
-  Status download(HostDetections& out, cudaStream_t stream);
+  Status download(HostDetections* out, cudaStream_t stream,
+                  std::string* out_message = nullptr);
 
-  /// 段階ごとの CUDA event 計測を有効にする。benchmark 以外では無効を推奨する。
-  void set_stage_timing_enabled(bool enabled);
+  /// device workspace の使用状況。allocation_count_ が 1 のままであることを
+  /// test が確認する。
+  const WorkspaceStatistics& workspace_statistics() const;
+
+  /// initialize() が成功しているか。
+  bool initialized() const;
 
  private:
   class Impl;

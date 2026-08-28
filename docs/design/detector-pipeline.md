@@ -10,7 +10,7 @@ detector core の段階分解、各段階の GPU 適性評価、四角形候補�
 
 ## 現状
 
-S1 から S10 (前処理、二値化、連結成分ラベリング、四隅推定、候補の篩と統合、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction、四隅の subpixel 補正と原寸への復元) を CUDA で実装済みです。残るのは S11 の結果出力 (device 常駐 API) です。
+S1 から S11 まで全て CUDA で実装済みです。`aruco3cuda::Detector` が 1 本に繋いでおり、GPU 経路だけで OpenCV と同じ検出結果を出します (3 機とも四隅の差 0.0000 px)。
 
 互換対象である OpenCV 4.x の ArUco3 検出戦略については、Apache-2.0 の公開 header と source から次の観測仕様を確認しています。取得元と hash は [Code Provenance 記録](../code-provenance.md) を参照してください。
 
