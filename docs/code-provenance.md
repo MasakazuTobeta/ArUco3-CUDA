@@ -10,7 +10,7 @@
 
 ## 現状
 
-Phase 3 の途中まで実装済みです。GPU 側は前処理、二値化、候補抽出、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合までが記録の対象に含まれます。残りの段 (重複整理、四隅の subpixel 補正) は案 C のハイブリッド経路として CPU で実装しており、これも対象です。
+Phase 3 の途中まで実装済みです。GPU 側は前処理、二値化、候補抽出、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction までが記録の対象に含まれます。残りの段 (四隅の subpixel 補正、結果出力) は案 C のハイブリッド経路として CPU で実装しており、これも対象です。
 
 ## 記録
 
@@ -112,8 +112,8 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 
 | 項目 | 内容 |
 | --- | --- |
-| Implementation | `src/core/cell_sample.{hpp,cu}`、`src/core/cell_decode.{hpp,cu}`、`src/core/dictionary_match.{hpp,cu}`、`src/dictionary/dictionary.cpp` の `build_cell_masks` と `identify_marker` |
-| Basis | OpenCV `objdetect` の ArUco 検出器と `Dictionary::identify`、および `imgproc` の `warpPerspective`、`getPerspectiveTransform`、`threshold` の Otsu 経路、`core` の `meanStdDev` |
+| Implementation | `src/core/cell_sample.{hpp,cu}`、`src/core/cell_decode.{hpp,cu}`、`src/core/dictionary_match.{hpp,cu}`、`src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}`、`src/dictionary/dictionary.cpp` の `build_cell_masks` と `identify_marker` |
+| Basis | OpenCV `objdetect` の ArUco 検出器と `Dictionary::identify`、および `imgproc` の `warpPerspective`、`getPerspectiveTransform`、`threshold` の Otsu 経路、`pointPolygonTest`、`core` の `meanStdDev` |
 | Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7`（2026-08-28 取得） |
 | License | Apache-2.0 |
 | Reused expression | 振る舞いの再実装。判定式、演算の順序、丸めの規則、打ち切りの位置は OpenCV と同一にした。識別子、コメント、関数分割、data 構造は本 project の規約に従って独自に書いた |
@@ -130,6 +130,10 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 | `cell_decode.cu` の外周走査 | `_getBorderErrors` |
 | `build_cell_masks` | `CellBitMasks` の構築部 |
 | `identify_marker`、`dictionary_match.cu` の `distance_to_id` | `Dictionary::identify`、`CellBitMasks::hammingDistanceToId` |
+| `candidate_tree.cu` の `point_in_quad` | `pointPolygonTest` の float 経路と `checkMarker1InMarker2` |
+| `candidate_tree.cu` の `parent_kernel`、`depth_kernel` | `filterTooCloseCandidates` 末尾の包含木の構築 |
+| `candidate_tree.cu` の `suppress_kernel` | `identifyCandidates` の depth 走査 |
+| `detection_emit.cu` の `emit_kernel` の回転打ち消し | `correctCornerPosition` |
 
 出力の同一性を要求する以上、判定式と演算の順序は一致させる以外にありません。一方で、同一にしたのは観測可能な振る舞いであり、source code の表現は複製していません。とくに OpenCV が `hal::and8u` と `hal::normHamming` を byte 列に対して呼ぶところを、本 project は 64 bit の packed 表現に対する `__popcll` 1 回で書いています。
 
@@ -142,6 +146,8 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 | `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` |
 | `modules/imgproc/src/imgwarp.cpp` | `d953cdd11db1bf7b562ba7cfb8b36f2aba3198f15714e5deb40840b01ae77912` |
 | `modules/imgproc/src/thresh.cpp` | `ec40ffd08c842c946213cdd46c2b8036e43770445a4c4b797017c96fd3f91117` |
+| `modules/imgproc/src/geometry.cpp` | `05ec6cfba5ad82ac809118f7c9b657eee3bb2467f87046c6ed2f5606a2a59996` |
+| `modules/objdetect/src/aruco/aruco_detector.cpp` | `329ac3f0fd90939a23e1cbf21096352e2229a01998bd08d70ca50e17b99f11ed` |
 | `modules/core/src/mean.dispatch.cpp` | `8e52e41c7bf7f1942a5c366683d2742040f6d82db770f253b7d61cb18205133a` |
 | `modules/core/src/matrix_decomp.cpp` | `887deb3905e1f4fbcab426be4346b4ada863051579f19e3011721704dd2ac596` |
 

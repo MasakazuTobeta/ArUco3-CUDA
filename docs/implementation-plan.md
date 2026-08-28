@@ -309,6 +309,27 @@ Dictionary 照合を GPU へ移しました。全 250 ID の 4 回転 (1000 件)
 
 **最小距離の ID ではなく、条件を満たした最初の ID を採ります。** OpenCV は ID の昇順に見て、許容距離を満たした時点で `break` します。DICT_ARUCO_MIP_36h12 は収録間の最小距離が 12、許容距離が 3 なので両者は一致しますが、規則としては別物です。既存の `match_dictionary` は最小距離を返すため、検出経路には新しい `identify_marker` を使います。GPU 側は満たした ID の `atomicMin` で同じ結果を得ます。
 
+#### WP-3.4 の実測と、S9 の正体
+
+**OpenCV に「重複除去」という段階は存在しません。** `detectMarkers` を全行読み、`identifyCandidates` より後に走るのは corner refinement、Multi dictionary 専用の rejected 掃除、fxfy の逆スケール、出力の複製だけであることを確認しました。ID による重複除去はどこにもありません。同じ ID のマーカーが離れた位置に 2 枚あれば 2 件とも出ます。
+
+重複が消えるのは**包含木による識別の打ち切り**の結果です。黒枠の外周と内周が両方候補になるため、内側でマーカーが見つかったら、それを囲む候補は識別せずに済ませます。WP-3.4 で GPU 化したのはこの機構です。
+
+| 検証 | 結果 |
+| --- | --- |
+| 包含判定 対 `cv::pointPolygonTest` | 400 組で不一致 0 (うち凹な四角形 283 件) |
+| 木と打ち切り 対 CPU 基準 (乱数の入れ子鎖) | 60 通りで不一致 0 (打ち切りが起きた 28 件) |
+| 木と打ち切り 対 CPU 基準 (乱数の森) | 80 通りで不一致 0 (枝分かれ 39 件、二重計上 8 件) |
+
+外さずに実装する必要があった規則は 4 つです。
+
+1. **`parent[i]` は `j < i` を満たす最大の j**。最小ではありません。index は周長の降順なので、「囲むもののうち最も内側」という意味になります。
+2. **段数の伝播は index の降順**。並列にすると、まだ確定していない段数を読みます。
+3. **包含判定は `pointPolygonTest` の crossing number をそのまま移す**。境界 (戻り値 0) は内側です。極点探索で作る四角形は凹になりうるため、凸性を仮定した符号一致では代用できません。交差積は 64 bit 整数で計算します。
+4. **到達数の二重計上を保つ**。祖先として数えた候補を、自分の段に来たときもう一度数えます。これは打ち切りを早める方向に働くため、「候補単位の厳密な抑止」へ書き換えると結果が変わります。
+
+実装後に 4 観点の敵対的レビューを掛け、23 件の指摘のうち 11 件を確定として反映しました。主なものは workspace 必要量の doc が実際と 768 から 8192 byte 違っていたこと、および上記 4 規則のうち 2 つが「わざと壊しても test が通る」状態だったことです。**7 種類の変異を実際に注入し、すべてが test で捕まることを確認しています。**
+
 #### Phase 3: GPU decode
 
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
@@ -316,7 +337,7 @@ Dictionary 照合を GPU へ移しました。全 250 ID の 4 回転 (1000 件)
 | WP-3.1 | S7 射影変換とセル sampling | `src/core/cell_sample.{hpp,cu}` | 既知 homography で正しいセル値を得られる。x86_64 の OpenCV と byte 単位で一致、aarch64 では 40960 画素中 1 画素が異なる。達成済み | WP-2.6 | M |
 | WP-3.2 | S8 前半 Otsu と border 検証 | `src/core/cell_decode.{hpp,cu}` | `minOtsuStdDev` と `maxErroneousBitsInBorderRate` の境界で CPU と判定が一致する。3 機すべてで比の不一致 0 セル、誤り数の不一致 0 件。達成済み | WP-3.1 | M |
 | WP-3.3 | S8 後半 Dictionary 照合 | `src/core/dictionary_match.{hpp,cu}` | 全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す。3 機すべてで 1000 件の不一致 0。達成済み | WP-3.2、WP-0.5 | M |
-| WP-3.4 | S9 重複整理 | `src/core` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる | WP-3.3 | M |
+| WP-3.4 | S9 重複整理と compaction | `src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}` | 重複入力に対し CPU と同じ代表候補を選ぶか、差異を説明できる。包含判定は `cv::pointPolygonTest` と 400 組で一致、打ち切りは乱数の森 80 通りで一致。達成済み | WP-3.3 | M |
 | WP-3.5 | S10 四隅の subpixel 補正と upsampling | `src/core` | 四隅 RMSE が CPU 基準に対する許容内に収まる | WP-3.4 | L |
 | WP-3.6 | device 常駐出力 API | `DeviceDetections` | host 同期なしで検出結果を参照できることをテストで確認できる | WP-3.5 | S |
 
