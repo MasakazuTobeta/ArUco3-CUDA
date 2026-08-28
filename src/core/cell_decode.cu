@@ -22,6 +22,9 @@ constexpr std::size_t kPlaneAlignment = 256U;
 constexpr int kDecodeThreads = 256;
 /// 階調の数。8-bit なので 256。
 constexpr int kHistogramBins = 256;
+constexpr int kWarpSize = 32;
+/// 1 block の warp 数。畳み込みの共有領域をこの数に抑える。
+constexpr int kDecodeWarps = kDecodeThreads / kWarpSize;
 /// OpenCV が Otsu の除外判定に使う値。FLT_EPSILON と同じ。
 constexpr double kOtsuGuard = 1.1920928955078125e-07;
 
@@ -37,40 +40,141 @@ struct DecodeParams {
     double min_otsu_std_dev_ = 0.0;
 };
 
-/// histogram から Otsu の閾値を求める。
+/// Otsu の漸化式が bin ごとに残す状態。
 ///
-/// OpenCV の getThreshVal_Otsu と同じ漸化式にする。評価の順序を変えると
-/// 丸めが変わる。更新は厳密な大なりであり、同値なら小さい階調が残る。
-/// 全画素が同じ値の場合は一度も更新されず 0 が返る。
-__device__ int otsu_threshold(const int* histogram, int pixel_count) {
-    const double scale = 1.0 / static_cast<double>(pixel_count);
-    double mu = 0.0;
-    for (int i = 0; i < kHistogramBins; ++i) {
-        mu += static_cast<double>(i) * static_cast<double>(histogram[i]);
-    }
-    mu *= scale;
+/// 逐次でなければならないのは漸化式だけである。その前後は要素ごとに独立で
+/// あり、並列に計算しても丸めは変わらない。
+struct OtsuState {
+    double q1_[kHistogramBins];
+    double mu1_[kHistogramBins];
+    /// guard を通り抜けた bin か。通り抜けなかった bin は候補にならない。
+    bool candidate_[kHistogramBins];
+};
 
+/// 閾値の探索で使う 1 候補分の値。
+struct OtsuCandidate {
+    double sigma_;
+    int index_;
+};
+
+/// histogram の重心を並列に求める。
+///
+/// 各項 i * histogram[i] とその部分和はすべて整数であり、上限は
+/// 255 * pixel_count である。canonical の 1 辺は 32767 以下に制限されている
+/// ため pixel_count は 1.07e9 以下、255 倍しても 2.7e11 で 2^53 に収まる。
+/// **すべての部分和が倍精度で厳密に表せるため丸めが 1 度も起きず、加算の
+/// 順序を変えても結果は bit 同一である。**
+__device__ double otsu_center(const int* histogram, double scale, double* warp_partial) {
+    double partial = 0.0;
+    for (int i = static_cast<int>(threadIdx.x); i < kHistogramBins;
+         i += static_cast<int>(blockDim.x)) {
+        partial += static_cast<double>(i) * static_cast<double>(histogram[i]);
+    }
+    // warp 内は shuffle で畳む。共有 memory を thread 数だけ使わずに済む。
+    for (int offset = kWarpSize / 2; offset > 0; offset /= 2) {
+        partial += __shfl_down_sync(0xffffffffU, partial, offset);
+    }
+    const int lane = static_cast<int>(threadIdx.x) % kWarpSize;
+    const int warp = static_cast<int>(threadIdx.x) / kWarpSize;
+    if (lane == 0) {
+        warp_partial[warp] = partial;
+    }
+    __syncthreads();
+    double total = 0.0;
+    for (int w = 0; w < kDecodeWarps; ++w) {
+        total += warp_partial[w];
+    }
+    return total * scale;
+}
+
+/// Otsu の漸化式を逐次で回し、bin ごとの状態を残す。
+///
+/// **この部分は絶対に並列化してはならない。** p_i は丸められた倍精度であり、
+/// q1 の累積は順序に依存する。さらに guard で飛ばした反復では mu1 が
+/// 正規化されない状態 (前回の mu1 に前回の q1 を掛けたもの) のまま持ち越され、
+/// 次の反復でさらに新しい q1 を掛けられる。つまり mu1 は「連続して何回
+/// 飛ばしたか」に依存する経路依存量であり、q1 を並列 scan で作ってから
+/// mu1 を復元する形では必ず壊れる。
+__device__ void otsu_recurrence(const int* histogram, double scale, OtsuState* state) {
     double mu1 = 0.0;
     double q1 = 0.0;
-    double max_sigma = 0.0;
-    int max_val = 0;
     for (int i = 0; i < kHistogramBins; ++i) {
         const double p_i = static_cast<double>(histogram[i]) * scale;
         mu1 *= q1;
         q1 += p_i;
         const double q2 = 1.0 - q1;
+        state->q1_[i] = q1;
         if (fmin(q1, q2) < kOtsuGuard || fmax(q1, q2) > 1.0 - kOtsuGuard) {
+            state->candidate_[i] = false;
             continue;
         }
         mu1 = (mu1 + (static_cast<double>(i) * p_i)) / q1;
+        state->mu1_[i] = mu1;
+        state->candidate_[i] = true;
+    }
+}
+
+/// bin ごとの分離度を並列に求め、最大を与える階調を選ぶ。
+///
+/// 逐次版は max_sigma を 0.0 で始め、厳密な大なりで更新する。そこから
+/// 3 つの性質が出る。
+///
+/// 1. sigma が 0 以下の bin は絶対に選ばれない
+/// 2. 同値なら小さい階調が残る
+/// 3. 一度も更新されなければ 0 を返す
+///
+/// 畳み込みでもこの 3 つを厳密に守る。比較は (sigma が大きい, 階調が小さい)
+/// の辞書式にする。
+__device__ int otsu_argmax(const OtsuState& state, double mu, OtsuCandidate* warp_best) {
+    double best_sigma = 0.0;
+    int best_index = kHistogramBins;
+    for (int i = static_cast<int>(threadIdx.x); i < kHistogramBins;
+         i += static_cast<int>(blockDim.x)) {
+        if (!state.candidate_[i]) {
+            continue;
+        }
+        const double q1 = state.q1_[i];
+        const double mu1 = state.mu1_[i];
+        const double q2 = 1.0 - q1;
         const double mu2 = (mu - (q1 * mu1)) / q2;
         const double sigma = q1 * q2 * (mu1 - mu2) * (mu1 - mu2);
-        if (sigma > max_sigma) {
-            max_sigma = sigma;
-            max_val = i;
+        // 0 以下は候補にしない。逐次版の max_sigma の初期値が 0.0 で、
+        // 更新が厳密な大なりであることに対応する。
+        if (sigma <= 0.0) {
+            continue;
+        }
+        if (sigma > best_sigma || (sigma == best_sigma && i < best_index)) {
+            best_sigma = sigma;
+            best_index = i;
         }
     }
-    return max_val;
+    // warp 内は shuffle で畳む。比較は (sigma が大きい, 階調が小さい) の辞書式。
+    for (int offset = kWarpSize / 2; offset > 0; offset /= 2) {
+        const double other_sigma = __shfl_down_sync(0xffffffffU, best_sigma, offset);
+        const int other_index = __shfl_down_sync(0xffffffffU, best_index, offset);
+        if (other_sigma > best_sigma || (other_sigma == best_sigma && other_index < best_index)) {
+            best_sigma = other_sigma;
+            best_index = other_index;
+        }
+    }
+    const int lane = static_cast<int>(threadIdx.x) % kWarpSize;
+    const int warp = static_cast<int>(threadIdx.x) / kWarpSize;
+    if (lane == 0) {
+        warp_best[warp].sigma_ = best_sigma;
+        warp_best[warp].index_ = best_index;
+    }
+    __syncthreads();
+    double sigma = 0.0;
+    int index = kHistogramBins;
+    for (int w = 0; w < kDecodeWarps; ++w) {
+        if (warp_best[w].sigma_ > sigma ||
+            (warp_best[w].sigma_ == sigma && warp_best[w].index_ < index)) {
+            sigma = warp_best[w].sigma_;
+            index = warp_best[w].index_;
+        }
+    }
+    // 一度も候補が無ければ 0 を返す。
+    return (index >= kHistogramBins) ? 0 : index;
 }
 
 /// 候補ごとにセル比を求め、外周セルの誤りを数える。1 block が 1 候補を担当する。
@@ -84,6 +188,10 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     }
 
     __shared__ int histogram[kHistogramBins];
+    // Otsu の 3 相で使う共有領域。漸化式が残す状態と、畳み込みの作業領域。
+    __shared__ OtsuState otsu_state;
+    __shared__ double reduction[kDecodeWarps];
+    __shared__ OtsuCandidate best[kDecodeWarps];
     __shared__ unsigned long long inner_sum;
     __shared__ unsigned long long inner_square_sum;
     __shared__ int threshold;
@@ -139,10 +247,29 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
         const double deviation = sqrt(fmax(variance, 0.0));
         uniform = deviation < params.min_otsu_std_dev_;
         uniform_ratio = (mean > 127.0) ? 1.0F : 0.0F;
-        threshold = uniform ? 0 : otsu_threshold(histogram, pixels);
-        thresholds[candidate] = threshold;
     }
     __syncthreads();
+
+    // Otsu の閾値を 3 相で求める。重心の集計と分離度の探索は要素ごとに独立
+    // なので並列にし、漸化式だけを thread 0 の逐次で回す。
+    if (!uniform) {
+        const double pixel_scale = 1.0 / static_cast<double>(pixels);
+        const double center = otsu_center(histogram, pixel_scale, reduction);
+        if (threadIdx.x == 0U) {
+            otsu_recurrence(histogram, pixel_scale, &otsu_state);
+        }
+        __syncthreads();
+        const int found = otsu_argmax(otsu_state, center, best);
+        if (threadIdx.x == 0U) {
+            threshold = found;
+        }
+    } else if (threadIdx.x == 0U) {
+        threshold = 0;
+    }
+    __syncthreads();
+    if (threadIdx.x == 0U) {
+        thresholds[candidate] = threshold;
+    }
 
     // セルごとの比。余白を除いた範囲の白画素数を数える。
     const int cells = params.cells_;
