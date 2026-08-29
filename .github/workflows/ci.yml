@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GPU を持たない runner で回せる検査だけを行う。
+#
+# 検出の正しさは GPU 上でしか確かめられないため、402 件の自動 test と
+# Compute Sanitizer は DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の
+# 実機で実行する。CI が守るのは「compile が通ること」と「文書と整形の規約」であり、
+# 正確性の保証ではない。この区別を曖昧にすると、CI の緑を正しさの証明と
+# 読み違える。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: 整形と文書の検査
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # container と同じ 18 系を使う。version が違うと整形結果が変わり、
+      # 手元で通るものが CI で落ちる。
+      - name: clang-format を導入する
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format-18
+          echo "CLANG_FORMAT=clang-format-18" >> "$GITHUB_ENV"
+
+      - name: 整形差分を確認する
+        run: ./tools/check-format.sh
+
+      - name: 公開 header の Doxygen を検査する
+        run: python3 tools/check_doxygen.py
+
+      - name: 文書の相対 link を検査する
+        run: python3 tools/check-doc-links.py
+
+      - name: 新規 source file の SPDX 表記を確認する
+        run: |
+          missing=0
+          while IFS= read -r file; do
+            if ! head -5 "$file" | grep -q 'SPDX-License-Identifier'; then
+              echo "SPDX 表記が無い: $file"
+              missing=1
+            fi
+          done < <(git ls-files '*.cpp' '*.hpp' '*.cu' '*.cuh' '*.py' '*.sh')
+          exit "$missing"
+
+  build:
+    name: build と CPU 側 test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # 開発 container と同じ経路で導入する。third-party action を使わないのは
+      # 供給元を NVIDIA の apt repository へ揃えるためである。
+      - name: CUDA Toolkit を導入する
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl
+          curl -fsSL -o /tmp/cuda-keyring.deb \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          # 本 project は Thrust / CUB / libcu++ を使わないため、nvcc と
+          # cudart の開発 package だけで足りる。開発 container が入れている
+          # sanitizer と profiler は GPU が無い runner では使えないため省く。
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-13-0 cuda-cudart-dev-13-0
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
+
+      - name: build 依存を導入する
+        run: sudo apt-get install -y --no-install-recommends ninja-build libgtest-dev
+
+      # OpenCV を必要とする CPU 基準 runner は build しない。source から build すると
+      # CI の時間の大半を占め、compile の退行検出という目的に見合わない。
+      - name: configure する
+        run: |
+          cmake -S . -B build/ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DARUCO3CUDA_BUILD_REFERENCE=OFF \
+            -DCMAKE_CUDA_ARCHITECTURES="87;120;121"
+
+      # 3 つの architecture 向けに同時に生成し、機種固有の compile 誤りを捕まえる。
+      - name: build する
+        run: cmake --build build/ci -j "$(nproc)"
+
+      # GPU を要する suite は除く。ここに挙げた suite が増減した場合、CI は
+      # 落ちて気付かせる。無言で読み替えない。
+      - name: device を必要としない test を実行する
+        run: |
+          ./build/ci/test/aruco3cuda_unit_tests \
+            --gtest_filter=-AlignUpTest.*:CudaCheckTest.*:CudaCheckDeliberateErrorTest.*:DeviceProbeTest.*:WorkspaceTest.*

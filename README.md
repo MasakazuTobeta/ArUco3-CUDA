@@ -1,5 +1,7 @@
 # ArUco3-CUDA
 
+[![CI](https://github.com/MasakazuTobeta/ArUco3-CUDA/actions/workflows/ci.yml/badge.svg)](https://github.com/MasakazuTobeta/ArUco3-CUDA/actions/workflows/ci.yml)
+
 ArUco3-CUDA は、OpenCV の `cv::aruco::ArucoDetector` が持つ ArUco3 検出戦略を CUDA で独立に実装した library です。入力画像から marker の ID と四隅までを GPU 上で処理し、結果を device に置いたまま返します。公式 ArUco の GPLv3 code は複製も翻案もしていません ([知的財産・ライセンス方針](docs/ip-and-licensing.md))。
 
 > [!IMPORTANT]

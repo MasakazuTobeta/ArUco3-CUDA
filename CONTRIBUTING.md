@@ -92,6 +92,26 @@
 - 設計判断の記録先は領域ごとに決まっている。`src/core` の各段は [検出パイプライン設計](docs/design/detector-pipeline.md) が正本であり、sidecar は置かない。`tools/`、`bench/`、`reference/` は独立した道具なので sidecar を置く。test file には置かない。
 - 将来の判断に影響する採用理由と制約は ADR または関連文書へ残す。
 
+## CI が守る範囲
+
+GitHub Actions は GPU を持たない runner で動きます。したがって **CI が緑であることは検出結果の正しさを意味しません。**
+
+| 検査 | 実行場所 |
+| --- | --- |
+| clang-format の整形差分 | CI (`tools/check-format.sh`) |
+| 公開 header の Doxygen 要素 | CI (`tools/check_doxygen.py`) |
+| 文書の相対 link | CI (`tools/check-doc-links.py`) |
+| source file の SPDX 表記 | CI |
+| 3 architecture 向けの compile | CI (`ARUCO3CUDA_BUILD_REFERENCE=OFF`) |
+| device を必要としない test 54 件 | CI |
+| **自動 test 402 件** | **実機 3 台** |
+| **Compute Sanitizer 4 tool** | **実機 3 台** |
+| **CPU 基準との突き合わせ** | **実機 3 台** (OpenCV を要する) |
+
+CI が OpenCV を build しないのは、source から build すると CI 時間の大半を占め、compile の退行検出という目的に見合わないためです。CPU 基準との比較は実機で行います。
+
+整形と link の判定は CI と手元で同じ script を使います。`cmake --build <dir> --target format-check` と CI は同じ `tools/check-format.sh` を呼びます。判定を二重に持つと必ず食い違います。
+
 ## Commit And Review
 
 - commit message は Conventional Commits 形式を使用する。

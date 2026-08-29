@@ -106,26 +106,20 @@ function(aruco3cuda_add_coverage_target)
     COMMENT "ctest 実行後に C0 / C1 カバレッジを集計する")
 endfunction()
 
-# format 用の target。CI と手元で同じ判定を使う。
+# format 用の target。判定は tools/check-format.sh へ集約し、CI と手元で
+# 同じ file 一覧・同じ引数を使う。ここで glob を二重に持つと必ず drift する。
 function(aruco3cuda_add_format_targets)
   find_program(kClangFormat NAMES clang-format)
   if(NOT kClangFormat)
     message(STATUS "  clang-format       : 見つからないため format target を作らない")
     return()
   endif()
-  file(GLOB_RECURSE kFormatSources
-    "${PROJECT_SOURCE_DIR}/include/*.hpp"
-    "${PROJECT_SOURCE_DIR}/src/*.hpp" "${PROJECT_SOURCE_DIR}/src/*.cpp" "${PROJECT_SOURCE_DIR}/src/*.cu"
-    "${PROJECT_SOURCE_DIR}/reference/*.hpp" "${PROJECT_SOURCE_DIR}/reference/*.cpp"
-    "${PROJECT_SOURCE_DIR}/tools/*.hpp" "${PROJECT_SOURCE_DIR}/tools/*.cpp"
-    "${PROJECT_SOURCE_DIR}/test/*.cpp" "${PROJECT_SOURCE_DIR}/test/*.cu")
-  # 生成物は整形対象から外す。整形すると生成器の出力と byte 単位で一致しなくなり、
-  # dictgen --check による再生成の検証が成立しなくなる。
-  list(FILTER kFormatSources EXCLUDE REGEX "/generated/")
   add_custom_target(format-check
-    COMMAND "${kClangFormat}" --dry-run --Werror ${kFormatSources}
+    COMMAND "${CMAKE_COMMAND}" -E env "CLANG_FORMAT=${kClangFormat}"
+            "${PROJECT_SOURCE_DIR}/tools/check-format.sh"
     COMMENT "clang-format による整形差分の確認")
   add_custom_target(format-fix
-    COMMAND "${kClangFormat}" -i ${kFormatSources}
+    COMMAND "${CMAKE_COMMAND}" -E env "CLANG_FORMAT=${kClangFormat}"
+            "${PROJECT_SOURCE_DIR}/tools/check-format.sh" --fix
     COMMENT "clang-format による整形の適用")
 endfunction()
