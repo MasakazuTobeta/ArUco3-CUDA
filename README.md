@@ -90,6 +90,7 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 - [Dictionary 方針](docs/dictionaries.md)
 - [ロードマップ](docs/roadmap.md)
 - [知的財産・ライセンス方針](docs/ip-and-licensing.md)
+- [特許 Clearance 下調べ記録](docs/patent-clearance.md)
 - [Code Provenance 記録](docs/code-provenance.md)
 - [ADR-0001: 独立リポジトリで先行実装する](docs/adr/0001-independent-implementation.md)
 - [ADR-0002: build 基盤と対象環境の baseline を固定する](docs/adr/0002-toolchain-and-target-baseline.md)

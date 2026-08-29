@@ -46,12 +46,21 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 特許は著作権および open-source license とは別です。アルゴリズムを独立実装しても、対象国で有効な patent claim に該当すれば問題になり得ます。
 
-初期調査では、2018 年の ArUco3 論文そのものを権利化した patent は確認できていません。ただし、この結果は不存在または非侵害を保証しません。商用公開前には、少なくとも次を実施します。
+商用公開前には、少なくとも次を実施します。
 
 1. 発明者名、大学名、論文名、優先日前後の patent family を検索する。
 2. 日本、米国、欧州および販売予定国の有効 claim を確認する。
 3. marker Dictionary の生成方法と検出方法を分けて確認する。
 4. 専門家による freedom-to-operate review の要否を判断する。
+
+2026-08-29 に手順 1 と 3 を実施し、手順 2 を米国の登録 claim について一部実施しました。記録は [特許 Clearance 下調べ記録](patent-clearance.md) にあります。要点は次のとおりです。
+
+- **ArUco3 論文の著者 5 名と Universidad de Córdoba を発明者・出願人とする marker 検出・生成の特許は 1 件も見つかりませんでした。** 論文著者名は他社特許の引用文献としてのみ現れます。ただしこれは不存在の証明ではありません。表記ゆれ (`Muñoz` の発音区別符号) で検索結果が変わることも実測しています。
+- **ArUco3 の中核 (最小マーカー寸法からの縮小率決定、縮小画像での候補探索、pyramid による四隅復元) を claim する特許は見つかりませんでした。**
+- **Dictionary の生成方法 (MILP による符号集合設計) を claim する特許も見つかりませんでした。** 本 project はそもそも Dictionary を生成せず、OpenCV 収録済み Dictionary の変換物を保持するだけです。
+- 技術分野が最も近いのは **NVIDIA の GPU fiducial marker 検出 family** (`US11113819B2` ほか) です。独立 claim は候補 corner 点の検出と閾値画素距離・辺の角度による絞り込みを要件とし、本 project にはそのいずれも存在しません。これは事実の差異であり、非侵害の評価ではありません。
+
+**手順 2 は完了していません。** 日本 (J-PlatPat) と欧州 (EPO Register) は未調査であり、とくに NVIDIA family の日本出願 `JP7429542B2` の claim が未確認です。**販売予定国が未定であるため、そもそも手順 2 を完了できません。** 手順 4 の判断も行っていません。
 
 ## 実装方針
 
@@ -133,7 +142,13 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 - 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。表記そのものは 2026-08-29 に確認済み。解釈は未解決だが、本 project は公式配布物を使っていないため依存しない。
 - OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。現時点では `NOTICE` へ記載している。
-- patent clearance の対象国と実施担当。
+- patent clearance の対象国と実施担当。**手順 2 と手順 4 を進めるための前提であり、最も優先度の高い未決事項です。** 詳細は [特許 Clearance 下調べ記録](patent-clearance.md) を参照してください。
+
+## 関連
+
+- [特許 Clearance 下調べ記録](patent-clearance.md)
+- [Code Provenance 記録](code-provenance.md)
+- [Dictionary 方針](dictionaries.md)
 
 ## 参考資料
 

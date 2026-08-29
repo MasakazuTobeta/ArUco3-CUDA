@@ -24,7 +24,7 @@ Phase 0 から Phase 4 までの全作業単位が完了しました。次は Ph
 - 実画像 corpus。現在は合成 corpus のみです。
 - 段ごとの CUDA event 計測。現在の段階時間は wall-clock であり host 同期を含みます。
 - `.cu` を含めた coverage 計測。現状と未達理由は下の「カバレッジの現状と未達理由」にあります。
-- patent clearance ([R7](#リスクと対策))。Phase 4 が完了したため、着手の期限に達しています。
+- patent clearance ([R7](#リスクと対策))。2026-08-29 に着手し、手順 1 と 3 を実施しました ([特許 Clearance 下調べ記録](patent-clearance.md))。**販売予定国が未定のため手順 2 は完了できません。** 実施担当も未定です。
 
 ### 着手前の blocker
 
@@ -661,7 +661,7 @@ OpenCV Issue #27118 の報告者は、CPU 実装の処理時間として 640x480
 | R5 | Dictionary data の由来を説明できない状態で取り込む | ライセンス上の問題 | WP-0.5 で hash と変換手順を [Code Provenance 記録](code-provenance.md) へ残す |
 | R6 | 測定条件の差で有利な結果だけが残る | 評価の信頼性低下 | 外れ値を削除せず全分布を保存し、条件を機械可読形式で併記する |
 | R8 | compiler が image と分離していると測定結果を後から再現できない | 成功判定 3 を満たせない | CUDA Toolkit を image へ固定する `pinned` mode を既定とし、version を環境情報へ記録する |
-| R7 | patent clearance が未実施のまま商用検討が進む | 事業判断の遅延 | [知的財産・ライセンス方針](ip-and-licensing.md) の手順を Phase 4 完了までに開始する |
+| R7 | patent clearance が未実施のまま商用検討が進む | 事業判断の遅延 | [知的財産・ライセンス方針](ip-and-licensing.md) の手順を Phase 4 完了までに開始する。**2026-08-29 に着手した。** 手順 1 と 3 を実施、手順 2 は米国のみ一部。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。**残件は販売予定国の確定** (これが決まらないと手順 2 を完了できない) **と日本 (J-PlatPat)・欧州の調査** |
 
 ## 未確定事項
 
