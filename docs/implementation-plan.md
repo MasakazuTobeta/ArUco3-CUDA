@@ -610,7 +610,6 @@ OpenCV Issue #27118 の報告者は、CPU 実装の処理時間として 640x480
 - CUDA Toolkit の最低 version。[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じ。
 - CI を実行する環境。開発機、Jetson 実機、外部 runner のどれを使うか。
 - corpus に実画像を含める時期と、その入手・配布条件。
-- DGX Spark で `LabelingTest.large_image_matches_reference` が 1 度だけ落ちた。同じ組み合わせで 9 回続けて再現せず、単独では 5 回とも通る。失敗時の内訳を捕捉できていない。再現したら特定する。
 - DGX Spark で `M-Pinned` が `M-Pageable` より 1.09 から 1.15 倍遅い理由。統合 GPU で DMA の利点が無いことは説明できるが、遅くなる分の説明が付いていない。
 
 ## 関連

@@ -460,6 +460,14 @@ python3 bench/aggregate.py results.jsonl
 
 実機への同期は `tools/sync-to-host.sh <user@host>` を使います。
 
+**測定の前に page cache を落としてください。**
+
+```
+sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
+```
+
+統合 GPU では device memory が host memory と同じものです。`cudaMemGetInfo` が返す「空き」は `MemFree` 相当であり、回収可能な page cache を含みません。長い作業のあとは page cache が 100 GB まで育ち、DGX Spark で device の空きが 3.5 GB まで落ちました。この状態では確保が失敗するだけでなく、測定値も揺れます。詳細は [host と device の間の memory 受け渡し](design/memory-transfer.md) にあります。
+
 ## 関連
 
 - [評価計画](evaluation-plan.md)

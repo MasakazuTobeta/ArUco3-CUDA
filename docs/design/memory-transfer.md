@@ -89,6 +89,29 @@ RTX 5070 Ti で B が極端に遅いのは、host が読むたびに page が de
 - Jetson で mapped host memory を使った場合、kernel 側の access が遅くなる度合い。zero copy は kernel から見ると host memory への access になる。
 - 統合 GPU で `pageableMemoryAccess` が 1 の場合、`cv::Mat` の buffer をそのまま device へ渡せるか。DGX Spark では原理的に可能だが未検証。
 
+## 統合 GPU では page cache が「device の空き」を食う
+
+DGX Spark GB10 で `ctest -j 8` が断続的に落ちるようになりました。15 回中 5 回、毎回違う test が `out of memory` で失敗します。原因は**実装ではなく環境**でした。
+
+```
+GPU:  空き 3513.6 MiB / 全体 122572.2 MiB
+host: MemTotal 119 GB / MemFree 5 GB / MemAvailable 107 GB / Cached 100 GB
+```
+
+統合 GPU では device memory が host memory と同じものです。`cudaMemGetInfo` が返す「空き」は **`MemFree` に相当し、`MemAvailable` ではありません**。page cache は回収可能ですが、CUDA の確保はそれを待たずに失敗します。
+
+長い作業 session では build 出力、corpus、docker layer で page cache が 100 GB まで育ちます。そうなると 1 process でも 3.5 GB しか確保できず、`ctest -j 8` のように process を並べると簡単に枯渇します。
+
+回収すれば戻ります。
+
+```
+sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
+```
+
+実測では 3.5 GB から **108.9 GB** へ戻り、`ctest -j 8` を 10 回続けて全て通りました。
+
+**測定の前には page cache を落とすこと。** 落とさずに測ると、確保の失敗だけでなく、host 側の memory 帯域の奪い合いで測定値そのものが揺れます。
+
 ## 関連
 
 - [検出パイプライン設計](detector-pipeline.md)
