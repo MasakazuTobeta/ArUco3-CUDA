@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // 目的: 統合 GPU で device から host へ結果を渡す 3 方式を比べる。
 //   A. cudaMalloc + cudaMemcpy2D  (現在の実装)
 // 公平に比べるため、いずれも host が全 byte を読み終えるまでを測る。

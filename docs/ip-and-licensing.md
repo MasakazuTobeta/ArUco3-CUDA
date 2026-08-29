@@ -93,6 +93,50 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 9. `ArUco` の名称は互換対象と技術方式を示す目的でのみ使用し、公式実装または Universidad de Córdoba との提携・承認を示唆しない。
 10. 商用製品へ組み込む前に、販売予定国を対象として有効な patent claim の freedom-to-operate review を行う。
 
+## OSS として公開してよいか
+
+商用製品として実施できるか (freedom-to-operate) とは別の問いです。**source を Apache-2.0 で公開すること**に限って整理します。
+
+### 著作権と license: 障害は見当たりません
+
+| 確認事項 | 状態 | 根拠 |
+| --- | --- | --- |
+| 公式 ArUco GPLv3 code の混入 | **無し** | 参照も取得もしていない。実装根拠は 2018 年論文と OpenCV 4.x。[Code Provenance 記録](code-provenance.md) に file と hash 単位で記録 |
+| 第三者 code の同梱 (vendoring) | **無し** | `third_party` / `vendor` 等の dir は存在しない。依存はすべて `find_package` で環境から解決する。**本 repository は第三者の code を 1 byte も配布しない** |
+| 依存の license | **すべて permissive** | OpenCV (Apache-2.0 と 3 条項 BSD の混在)、GoogleTest (3 条項 BSD)、CUDA Toolkit (NVIDIA EULA。**再配布せず**、利用者の環境で build する) |
+| copyleft 依存 | **無し** | 上記のとおり |
+| Dictionary data の出所 | **OpenCV** | Apache-2.0 の `getPredefinedDictionary()` 出力を変換。GPLv3 配布物からは抽出していない。OpenCV との byte 一致を test で継続検証 |
+| 写した code の attribution | **記載済み** | 3 条項 BSD の 5 file について著作権表示と license 本文を `NOTICE` へ保持 |
+| SPDX 表記 | **全 source file にあり** | 2026-08-29 に `tools/probe-memory-transfer.cu` の欠落を補って完了 |
+
+**この範囲では、Apache-2.0 での source 公開を妨げるものは見つかりませんでした。**
+
+### 特許: OSS にしても消えません
+
+**「OSS だから特許は関係ない」は成り立ちません。** 日本の特許法 2 条 3 項は program の譲渡・提供を実施に含み、米国でも頒布は §271 の対象です。無償であることは実施か否かを左右しません。
+
+一方で、**source library の公開は製品の販売より対比が明確です。** [特許 Clearance 下調べ記録](patent-clearance.md) が挙げた差異のうち、製品形態に依存するもの (NVIDIA の色空間変換が製品側に存在しうる点、Magic Leap の頭部装着装置の前提部) は、**library の source を配布するだけなら成立しにくくなります。** 配布物が library そのものだからです。
+
+ただし次は未検討のままです。**OSS 公開でも消えません。**
+
+- 均等論とクレーム解釈。
+- 従属請求項。
+- 間接侵害。日本の特許法 101 条は「発明による課題の解決に不可欠なもの」の提供を侵害とみなす類型を持ち、**library の提供はこの類型で議論されうる位置にあります。**
+
+### 商標: 未確認です。OSS では真っ先に効きます
+
+**`ArUco` の商標登録の有無を確認できていません。** 商標 database (TMview) へ到達できませんでした。
+
+これは OSS 公開に固有の重さを持ちます。repository 名 `ArUco3-CUDA`、生成物名 `aruco3cuda_*`、公開 URL のすべてに名称が入るためです。**公開後の改名は費用が大きく、公開前に確認する価値があります。**
+
+判断材料として、OpenCV 自身が `aruco` という module 名を用いており、名称が技術方式の記述として流通している事実はあります。ただしこれは商標登録の不存在を示しません。
+
+本方針は既に「`ArUco` の名称は互換対象と技術方式を示す目的でのみ使用し、提携・承認を示唆しない」と定めています (実装方針 9)。この運用は維持します。
+
+### 判断
+
+**著作権と license の面では公開できる状態です。** 未確認で残るのは商標と、特許のうち OSS でも消えない部分です。**商標の確認は安価であり、公開前に済ませることを推奨します。**
+
 ## Dictionary の取扱い
 
 `DICT_ARUCO_MIP_36h12` に関する「生成」は、次の処理を区別します。
@@ -159,6 +203,7 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 - 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。表記そのものは 2026-08-29 に確認済み。解釈は未解決だが、本 project は公式配布物を使っていないため依存しない。
 - OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。現時点では `NOTICE` へ記載している。
 - patent clearance の実施担当。対象国は 2026-08-29 に日本と米国へ決定しました (上の「対象国の決定」)。担当は未定です。
+- **`ArUco` の商標登録の有無。** 商標 database へ到達できず未確認です。OSS 公開では repository 名と生成物名に影響するため、公開前に確認する必要があります。
 
 ## 関連
 
