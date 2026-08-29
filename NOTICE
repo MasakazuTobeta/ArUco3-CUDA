@@ -93,6 +93,18 @@ The predefined dictionary data in src/dictionary/generated/ was converted from
 OpenCV's getPredefinedDictionary() output. It was not extracted from any GPLv3
 distribution of ArUco.
 
+--------------------------------------------------------------------------------
+Trademarks
+--------------------------------------------------------------------------------
+
+ArUco is the name of a marker system published by a research group at the
+Universidad de Cordoba. This project uses the name only to identify the
+compatibility target and the technical approach. It is not affiliated with,
+endorsed by, or sponsored by the Universidad de Cordoba, the official ArUco
+library, or OpenCV.
+
 The name OpenCV, and the names of the copyright holders above, are used here
 only to identify the compatibility target and the origin of the reproduced
 behaviour. Their use does not indicate endorsement of this project.
+
+All other trademarks are the property of their respective owners.

@@ -103,4 +103,10 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 
 第三者の著作権表示は [NOTICE](NOTICE) にあります。OpenCV 4.x は file ごとに license header が違い、本 project が振る舞いを写した `imgproc` の file は 3 条項 BSD です。
 
+## 商標について
+
+`ArUco` は Universidad de Córdoba の研究グループが発表した marker 方式の名称です。本プロジェクトは互換対象と技術方式を示す目的でのみこの名称を使用しており、**Universidad de Córdoba、公式 ArUco library、OpenCV のいずれとも提携しておらず、これらによる承認・推奨を受けていません。**
+
+その他の商標は各権利者に帰属します。詳細は [知的財産・ライセンス方針](docs/ip-and-licensing.md) を参照してください。
+
 実装根拠は ArUco3 論文と Apache-2.0 の OpenCV 4.x に限定します。定義済み Dictionary は GPLv3 の公式 ArUco 配布物から抽出せず、version と commit を固定した OpenCV 4.x のデータを正本として扱います。
