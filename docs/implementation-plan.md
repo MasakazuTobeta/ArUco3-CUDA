@@ -454,9 +454,43 @@ GPU は固定費が高く仕事量に対して平坦、CPU は仕事量に比例
 | WP-4.1 | kernel 起動数と待ち時間の最適化 | `src/core`、`bench`、[benchmark 結果まとめ](benchmark-report.md) | 最適化前後で正確性が不変であり、変化を測定値で示せる。**達成済み。** 転送の非同期化、S10 の要素並列化、Otsu の 3 相化、CUDA Graph 化を入れ、全場面・全機で GPU が CPU を上回った。丸めは不変 | WP-3.6 (転送の非同期化は hybrid 経路で先行実施) | L (当初 M) |
 | WP-4.2 | memory 経路 4 種の実装と測定 | `hybrid/device_image.{hpp,cpp}`、`bench`、[benchmark 結果まとめ](benchmark-report.md) | pageable、pinned、managed、device 常駐を別結果として記録できる。**達成済み。** 3 機で測定し、discrete GPU での managed が 6.4 から 30 倍遅いことを確認 | WP-3.6 | M |
 | WP-4.3 | 機種別 tuning | `src/core/corner_refine.{hpp,cu}` | **完了条件を変更した。** 当初は「設定から上書きできる」だったが、測定の結果 block size は 3 機とも 16 が最適で設定にする価値が無かった。代わりに「機に依存する値は device 属性から導き、固定値を残さない」とする。達成済み | WP-4.1 | S |
-| WP-4.4 | Jetson Orin での全評価 | 測定結果 | 同一 corpus が通り、環境情報と power mode が記録されている | B2、WP-4.3 | L |
+| WP-4.4 | Jetson Orin での全評価 | `tools/evaluate`、[正確性評価の結果](accuracy-report.md) | 同一 corpus が通り、環境情報と power mode が記録されている。**達成済み。** 91 場面・真値 480 個を 3 経路 x 3 機で測り、precision、recall、rotation 一致率、四隅 RMSE、device memory を条件別に記録した | B2、WP-4.3 | L |
 | WP-4.5 | crossover point の報告 | [benchmark 結果まとめ](benchmark-report.md) の crossover と判断の節 | CPU が有利な条件を含めて境界を示せる。**達成済み。** 28 場面 x 3 経路 x 3 機で測り、境界を決める量が segmentation 画素数と輪郭点数であることを回帰 (R2 0.89 から 0.99) で示した | WP-4.4 | M |
 | WP-4.6 | Compute Sanitizer 全経路 | `cmake/Aruco3CudaSanitizer.cmake` | memcheck、racecheck、initcheck、synccheck で指摘が無い。**達成済み。** 3 機すべてで 8 件通過。`--leak-check full` と `--report-api-errors all` も追加 | WP-4.1 | M |
+
+#### WP-4.4 の結論: false positive 0 件、取りこぼしは複合劣化に集中
+
+正確性の指標を出す仕組みが無かったため、`tools/evaluate` を作りました。差分
+レポート (WP-1.6) は CPU 基準を基準に据えます。基準は互換性の oracle であって
+ground truth ではないため、**基準自身が取りこぼしたマーカーは差異として現れません。**
+真値と突き合わせる経路を別に持たせました。
+
+corpus preset `full` の 91 場面、真値 480 個を 3 経路 x 3 機で測りました。
+
+- **precision は 3 経路 x 3 機のすべてで 100%** です。false positive は 1 件も
+  ありません。ID を誤った検出も 0 件、rotation は検出した 85 件すべてで一致します。
+- **recall は ArUco3 の下限以上のマーカーで 94.44%** です。全体の recall 18.33% は
+  戦略上の下限に支配されており、実装の取りこぼしを表しません。corpus は下限を
+  下回る大きさを意図的に含みます。
+- **取りこぼし 5 件は複合劣化 3 件、遮蔽 1 件、境界はみ出し 1 件です。** 回転、
+  射影歪み、ぼけ、noise、照度差は単独では 1 件も落としません。
+- **hybrid 経路は 3 機すべてで CPU と完全に一致します** (91/91 枚、最大差 0.000 px)。
+- **CUDA 経路の差異は 1 場面 1 件だけです** (90/91 枚、3.804 px)。遮蔽で輪郭が
+  途切れた候補であり、**真値に対しては CUDA の方が近くなっています** (CPU 3.6351 px、
+  CUDA 1.0936 px)。
+- **検出中の `cudaMalloc` は 91 回の検出で 0 回**でした。workspace の最大使用量は
+  ArUco3 有効で 17.51 MB、無効で 414.51 MB です。
+
+subpixel 補正を切ると、差異はすべて **ちょうど sqrt(2) = 1.414 px** になります。
+整数座標の四隅が斜めに 1 pixel ずれた距離であり、四隅の推定方法の違い (極点探索と
+多角形近似) がそのまま出ています。**補正はこの違いを吸収し、18 件を 1 件へ減らします。**
+
+副産物として、**同じ seed の corpus 画像が aarch64 と x86_64 で一致しない**ことが
+判りました。91 場面のうち 54 場面が異なり、差は 0.1% 未満の画素で最大 4 階調です。
+architecture をまたぐ数値の比較にのみ影響し、同じ機の中で CPU と CUDA を比べる
+測定には影響しません。
+
+詳細は [正確性評価の結果](accuracy-report.md) にあります。
 
 #### WP-4.5 の結論: CPU が勝つのは 640x480 かつ検出ありのときだけ
 

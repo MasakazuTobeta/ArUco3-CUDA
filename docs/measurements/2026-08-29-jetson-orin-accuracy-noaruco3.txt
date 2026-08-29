@@ -1,0 +1,126 @@
+=== 正確性評価 ===
+preset full / 場面 91 枚 / seed 20260827
+
+真値との突き合わせ (全て)
+  CPU                真値   480 検出   436 TP   436 FP    0 FN   44  precision  100.00%  recall   90.83%  rotation 一致  100.00%  四隅 RMSE 0.8779 px 最大 2.0933 px
+  Hybrid             真値   480 検出   436 TP   436 FP    0 FN   44  precision  100.00%  recall   90.83%  rotation 一致  100.00%  四隅 RMSE 0.8779 px 最大 2.0933 px
+  CUDA               真値   480 検出   439 TP   439 FP    0 FN   41  precision  100.00%  recall   91.46%  rotation 一致  100.00%  四隅 RMSE 0.8337 px 最大 1.4908 px
+
+真値との突き合わせ (ArUco3 の下限以上の大きさのみ。precision はこの区分では定義しない)
+  CPU                真値   480                  TP   436          FN   44  precision        -  recall   90.83%  rotation 一致  100.00%  四隅 RMSE 0.8779 px 最大 2.0933 px
+  Hybrid             真値   480                  TP   436          FN   44  precision        -  recall   90.83%  rotation 一致  100.00%  四隅 RMSE 0.8779 px 最大 2.0933 px
+  CUDA               真値   480                  TP   439          FN   41  precision        -  recall   91.46%  rotation 一致  100.00%  四隅 RMSE 0.8337 px 最大 1.4908 px
+
+真値との突き合わせ (下限を下回る大きさのみ)
+  CPU                真値     0                  TP     0          FN    0  precision        -  recall        -  rotation 一致        -
+  Hybrid             真値     0                  TP     0          FN    0  precision        -  recall        -  rotation 一致        -
+  CUDA               真値     0                  TP     0          FN    0  precision        -  recall        -  rotation 一致        -
+
+条件別 (CPU)
+  blur               真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 1.6282 px 最大 2.0933 px
+  border             真値    16 検出    12 TP    12 FP    0 FN    4  precision  100.00%  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.8084 px 最大 1.3621 px
+  clean              真値   352 検出   330 TP   330 FP    0 FN   22  precision  100.00%  recall   93.75%  rotation 一致  100.00%  四隅 RMSE 0.8378 px 最大 1.4093 px
+  combined           真値    16 検出     0 TP     0 FP    0 FN   16  precision        -  recall    0.00%  rotation 一致        -
+  illumination       真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8171 px 最大 1.3078 px
+  noise              真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8391 px 最大 1.3018 px
+  occlusion          真値    16 検出    14 TP    14 FP    0 FN    2  precision  100.00%  recall   87.50%  rotation 一致  100.00%  四隅 RMSE 0.7131 px 最大 1.4196 px
+  perspective        真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8996 px 最大 1.4908 px
+  rotation           真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8718 px 最大 1.4388 px
+
+条件別 (Hybrid)
+  blur               真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 1.6282 px 最大 2.0933 px
+  border             真値    16 検出    12 TP    12 FP    0 FN    4  precision  100.00%  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.8084 px 最大 1.3621 px
+  clean              真値   352 検出   330 TP   330 FP    0 FN   22  precision  100.00%  recall   93.75%  rotation 一致  100.00%  四隅 RMSE 0.8378 px 最大 1.4093 px
+  combined           真値    16 検出     0 TP     0 FP    0 FN   16  precision        -  recall    0.00%  rotation 一致        -
+  illumination       真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8171 px 最大 1.3078 px
+  noise              真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8391 px 最大 1.3018 px
+  occlusion          真値    16 検出    14 TP    14 FP    0 FN    2  precision  100.00%  recall   87.50%  rotation 一致  100.00%  四隅 RMSE 0.7131 px 最大 1.4196 px
+  perspective        真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8996 px 最大 1.4908 px
+  rotation           真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8718 px 最大 1.4388 px
+
+条件別 (CUDA)
+  blur               真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8068 px 最大 1.2639 px
+  border             真値    16 検出    12 TP    12 FP    0 FN    4  precision  100.00%  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.8084 px 最大 1.3621 px
+  clean              真値   352 検出   330 TP   330 FP    0 FN   22  precision  100.00%  recall   93.75%  rotation 一致  100.00%  四隅 RMSE 0.8378 px 最大 1.4093 px
+  combined           真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 0.7026 px 最大 1.1726 px
+  illumination       真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8171 px 最大 1.3078 px
+  noise              真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8391 px 最大 1.3018 px
+  occlusion          真値    16 検出    14 TP    14 FP    0 FN    2  precision  100.00%  recall   87.50%  rotation 一致  100.00%  四隅 RMSE 0.6948 px 最大 1.1830 px
+  perspective        真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8989 px 最大 1.4908 px
+  rotation           真値    16 検出    16 TP    16 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8718 px 最大 1.4388 px
+
+条件別・下限以上のみ (CPU)
+  blur               真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 1.6282 px 最大 2.0933 px
+  border             真値    16                  TP    12          FN    4  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.8084 px 最大 1.3621 px
+  clean              真値   352                  TP   330          FN   22  precision        -  recall   93.75%  rotation 一致  100.00%  四隅 RMSE 0.8378 px 最大 1.4093 px
+  combined           真値    16                  TP     0          FN   16  precision        -  recall    0.00%  rotation 一致        -
+  illumination       真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8171 px 最大 1.3078 px
+  noise              真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8391 px 最大 1.3018 px
+  occlusion          真値    16                  TP    14          FN    2  precision        -  recall   87.50%  rotation 一致  100.00%  四隅 RMSE 0.7131 px 最大 1.4196 px
+  perspective        真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8996 px 最大 1.4908 px
+  rotation           真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8718 px 最大 1.4388 px
+
+条件別・下限以上のみ (Hybrid)
+  blur               真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 1.6282 px 最大 2.0933 px
+  border             真値    16                  TP    12          FN    4  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.8084 px 最大 1.3621 px
+  clean              真値   352                  TP   330          FN   22  precision        -  recall   93.75%  rotation 一致  100.00%  四隅 RMSE 0.8378 px 最大 1.4093 px
+  combined           真値    16                  TP     0          FN   16  precision        -  recall    0.00%  rotation 一致        -
+  illumination       真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8171 px 最大 1.3078 px
+  noise              真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8391 px 最大 1.3018 px
+  occlusion          真値    16                  TP    14          FN    2  precision        -  recall   87.50%  rotation 一致  100.00%  四隅 RMSE 0.7131 px 最大 1.4196 px
+  perspective        真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8996 px 最大 1.4908 px
+  rotation           真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8718 px 最大 1.4388 px
+
+条件別・下限以上のみ (CUDA)
+  blur               真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8068 px 最大 1.2639 px
+  border             真値    16                  TP    12          FN    4  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.8084 px 最大 1.3621 px
+  clean              真値   352                  TP   330          FN   22  precision        -  recall   93.75%  rotation 一致  100.00%  四隅 RMSE 0.8378 px 最大 1.4093 px
+  combined           真値    16                  TP     3          FN   13  precision        -  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 0.7026 px 最大 1.1726 px
+  illumination       真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8171 px 最大 1.3078 px
+  noise              真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8391 px 最大 1.3018 px
+  occlusion          真値    16                  TP    14          FN    2  precision        -  recall   87.50%  rotation 一致  100.00%  四隅 RMSE 0.6948 px 最大 1.1830 px
+  perspective        真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8989 px 最大 1.4908 px
+  rotation           真値    16                  TP    16          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8718 px 最大 1.4388 px
+
+マーカー 1 辺別 (CPU)
+  16 px              真値    84 検出    62 TP    62 FP    0 FN   22  precision  100.00%  recall   73.81%  rotation 一致  100.00%  四隅 RMSE 0.8213 px 最大 1.3579 px
+  32 px              真値    84 検出    84 TP    84 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8179 px 最大 1.3810 px
+  64 px              真値    84 検出    84 TP    84 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8106 px 最大 1.3511 px
+  96 px              真値   128 検出   106 TP   106 FP    0 FN   22  precision  100.00%  recall   82.81%  rotation 一致  100.00%  四隅 RMSE 0.9926 px 最大 2.0933 px
+  128 px             真値    68 検出    68 TP    68 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.9052 px 最大 1.4093 px
+  256 px             真値    32 検出    32 TP    32 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.8423 px 最大 1.3882 px
+
+解像度別 (CPU)
+  1280x720           真値   121 検出   116 TP   116 FP    0 FN    5  precision  100.00%  recall   95.87%  rotation 一致  100.00%  四隅 RMSE 0.9290 px 最大 2.0933 px
+  1920x1080          真値   121 検出   114 TP   114 FP    0 FN    7  precision  100.00%  recall   94.21%  rotation 一致  100.00%  四隅 RMSE 0.8567 px 最大 2.0920 px
+  3840x2160          真値   137 検出   111 TP   111 FP    0 FN   26  precision  100.00%  recall   81.02%  rotation 一致  100.00%  四隅 RMSE 0.8576 px 最大 2.0455 px
+  640x480            真値   101 検出    95 TP    95 FP    0 FN    6  precision  100.00%  recall   94.06%  rotation 一致  100.00%  四隅 RMSE 0.8624 px 最大 1.9602 px
+
+CPU 基準との差異
+  Hybrid 一致 91 / 91 枚、四隅の最大差 0 px
+  CUDA 一致 82 / 91 枚、四隅の最大差 1.414 px、過検出 3 件、四隅ずれ 18 件
+    perspective_640x480 四隅ずれ id=226 位置 (456.8, 328.8) 差 1.414 px
+    blur_640x480 四隅ずれ id=10 位置 (547.5, 79.5) 差 1.414 px
+    blur_640x480 四隅ずれ id=36 位置 (500.5, 377.5) 差 1.414 px
+    blur_640x480 四隅ずれ id=131 位置 (86.5, 355.5) 差 1.414 px
+    blur_640x480 四隅ずれ id=210 位置 (176.5, 157.5) 差 1.414 px
+    occlusion_640x480 四隅ずれ id=140 位置 (111, 145) 差 1.414 px
+    combined_640x480 過検出 id=-1 位置 (181.5, 84.75) 差 0 px
+    blur_1280x720 四隅ずれ id=83 位置 (507.5, 244.5) 差 1.414 px
+    blur_1280x720 四隅ずれ id=116 位置 (732.5, 113.5) 差 1.414 px
+    blur_1280x720 四隅ずれ id=162 位置 (802.5, 592.5) 差 1.414 px
+    blur_1280x720 四隅ずれ id=243 位置 (232.5, 601.5) 差 1.414 px
+    combined_1280x720 過検出 id=-1 位置 (1006, 158) 差 0 px
+    blur_1920x1080 四隅ずれ id=75 位置 (815.5, 431.5) 差 1.414 px
+    blur_1920x1080 四隅ずれ id=178 位置 (1424, 97.5) 差 1.414 px
+    blur_1920x1080 四隅ずれ id=236 位置 (1748, 845.5) 差 1.414 px
+    blur_1920x1080 四隅ずれ id=240 位置 (515.5, 704.5) 差 1.414 px
+    blur_3840x2160 四隅ずれ id=57 位置 (2174, 1524) 差 1.414 px
+    blur_3840x2160 四隅ずれ id=90 位置 (1448, 111.5) 差 1.414 px
+    blur_3840x2160 四隅ずれ id=118 位置 (283.5, 1362) 差 1.414 px
+    blur_3840x2160 四隅ずれ id=190 位置 (3640, 686.5) 差 1.414 px
+    combined_3840x2160 過検出 id=-1 位置 (944.8, 2016) 差 0 px
+
+device memory (CUDA 経路)
+  workspace の最大使用量 414514452 byte / 最大容量 414514944 byte
+  検出 91 回で増えた確保回数 0 回

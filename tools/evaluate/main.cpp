@@ -85,6 +85,8 @@ struct RouteTotals {
     AccuracySummary detectable_;
     /// 下限を下回る真値だけの集計。原理上検出されないことの確認に使う。
     AccuracySummary below_limit_;
+    /// 条件ごとの、下限以上の真値だけの集計。条件別の recall はここを読む。
+    std::map<std::string, AccuracySummary> detectable_by_condition_;
     /// CPU 基準との差異。CPU 経路自身では使わない。
     std::vector<aruco3cuda::report::ImageComparison> comparisons_;
 };
@@ -216,6 +218,8 @@ void record(const aruco3cuda::corpusgen::GeneratedScene& scene,
         below_limit[m] = !detectable[m];
     }
     aruco3cuda::evaluate::accumulate_selected(image, detectable, &out_totals->detectable_);
+    aruco3cuda::evaluate::accumulate_selected(
+            image, detectable, &out_totals->detectable_by_condition_[condition_of(scene.name_)]);
     aruco3cuda::evaluate::accumulate_selected(image, below_limit, &out_totals->below_limit_);
     aruco3cuda::evaluate::accumulate(image, &out_totals->truth_);
     aruco3cuda::evaluate::accumulate(image, &out_totals->by_condition_[condition_of(scene.name_)]);
@@ -578,6 +582,12 @@ int main(int argc, char** argv) {
             write_summary_line(std::cout, entry.first, entry.second, false);
         }
     }
+    for (std::size_t r = 0; r < kRouteCount; ++r) {
+        std::cout << "\n条件別・下限以上のみ (" << route_name(kRoutes[r]) << ")\n";
+        for (const auto& entry : totals[r].detectable_by_condition_) {
+            write_summary_line(std::cout, entry.first, entry.second, true);
+        }
+    }
     std::cout << "\nマーカー 1 辺別 (CPU)\n";
     for (const auto& entry : totals[0].by_side_px_) {
         write_summary_line(std::cout, std::to_string(entry.first) + " px", entry.second, false);
@@ -653,6 +663,13 @@ int main(int argc, char** argv) {
             for (const auto& entry : totals[r].by_condition_) {
                 writer.key(entry.first);
                 write_summary_json(writer, entry.second, false);
+            }
+            writer.end_object();
+            writer.key("detectableByCondition");
+            writer.begin_object();
+            for (const auto& entry : totals[r].detectable_by_condition_) {
+                writer.key(entry.first);
+                write_summary_json(writer, entry.second, true);
             }
             writer.end_object();
             writer.key("byResolution");
