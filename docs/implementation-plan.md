@@ -455,8 +455,28 @@ GPU は固定費が高く仕事量に対して平坦、CPU は仕事量に比例
 | WP-4.2 | memory 経路 4 種の実装と測定 | `hybrid/device_image.{hpp,cpp}`、`bench`、[benchmark 結果まとめ](benchmark-report.md) | pageable、pinned、managed、device 常駐を別結果として記録できる。**達成済み。** 3 機で測定し、discrete GPU での managed が 6.4 から 30 倍遅いことを確認 | WP-3.6 | M |
 | WP-4.3 | 機種別 tuning | `src/core/corner_refine.{hpp,cu}` | **完了条件を変更した。** 当初は「設定から上書きできる」だったが、測定の結果 block size は 3 機とも 16 が最適で設定にする価値が無かった。代わりに「機に依存する値は device 属性から導き、固定値を残さない」とする。達成済み | WP-4.1 | S |
 | WP-4.4 | Jetson Orin での全評価 | 測定結果 | 同一 corpus が通り、環境情報と power mode が記録されている | B2、WP-4.3 | L |
-| WP-4.5 | crossover point の報告 | benchmark report | CPU が有利な条件を含めて境界を示せる | WP-4.4 | M |
+| WP-4.5 | crossover point の報告 | [benchmark 結果まとめ](benchmark-report.md) の crossover と判断の節 | CPU が有利な条件を含めて境界を示せる。**達成済み。** 28 場面 x 3 経路 x 3 機で測り、境界を決める量が segmentation 画素数と輪郭点数であることを回帰 (R2 0.89 から 0.99) で示した | WP-4.4 | M |
 | WP-4.6 | Compute Sanitizer 全経路 | `cmake/Aruco3CudaSanitizer.cmake` | memcheck、racecheck、initcheck、synccheck で指摘が無い。**達成済み。** 3 機すべてで 8 件通過。`--leak-check full` と `--report-api-errors all` も追加 | WP-4.1 | M |
+
+#### WP-4.5 の結論: CPU が勝つのは 640x480 かつ検出ありのときだけ
+
+corpus の 28 場面を 3 経路 x 3 回 x 3 機で測りました。**CPU が勝つのは 640x480 かつ検出が 1 件以上ある場面だけ**で、28 場面中 DGX Spark 5 件、RTX 5070 Ti 4 件、Jetson AGX Orin 1 件です。同じ 640x480 でも検出 0 件なら GPU が勝ちます。
+
+**境界を決めているのは解像度でも候補数でもありません。** ArUco3 の縮小により、原寸が 27 倍変わっても segmentation 面は 2.2 倍しか変わりません。候補数も説明変数になりません (`noise_1280x720` は検出 0 件なのに CPU で最も重い場面の 1 つ)。効いているのは**二値化後の輪郭点数**です。
+
+回帰 (R2 は CPU 0.977 から 0.988、CUDA-Resident 0.894 から 0.973) で、輪郭点 1e5 あたりの係数は次のようになりました。
+
+| 機体 | CPU | Hybrid | CUDA-Resident |
+| --- | --- | --- | --- |
+| DGX Spark GB10 | 2.56 ms | 2.70 ms | **0.077 ms** |
+| Jetson AGX Orin | 5.35 ms | 5.48 ms | **0.278 ms** |
+| RTX 5070 Ti | 2.48 ms | 2.54 ms | **0.041 ms** |
+
+**Hybrid の係数は CPU とほぼ同じ**です。輪郭抽出から先を CPU で行うためです。ここが 3 経路の本質的な違いであり、使い分けの基準になります。
+
+結果として場面による振れ幅が経路で大きく違います。**CUDA-Resident は 3.4 から 4.1 倍しか振れません** (CPU 11.6 から 20.8 倍、Hybrid 10.0 から 43.7 倍)。**GPU 経路の価値は平均の速さより「遅い場面が無い」ことにあります。**
+
+詳細と 3 経路の使い分け規則は [benchmark 結果まとめ](benchmark-report.md) にあります。
 
 #### WP-4.3 の判断: 設定を増やさず device 属性から導く
 

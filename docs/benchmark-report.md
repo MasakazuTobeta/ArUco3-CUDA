@@ -404,23 +404,170 @@ CPU 経路は core 種別で約 2 倍変わります。GPU 段も kernel 起動�
 
 実運用で検出を効率 core へ固定することは考えにくいため、性能 core の値を本報告の主結果とします。
 
-## 判断
+## crossover: どこで CPU が勝つか (WP-4.5)
 
-**Phase 3 (GPU decode) へ進むべきです。**
+corpus の 28 場面 (解像度 4 種 x マーカー 0/1/4/16 枚 + blur / noise / combined 各 4 解像度) を 3 経路 x 3 回で測りました。
 
-- 転送の最適化 (WP-4.1 の一部) だけで、DGX Spark と RTX 5070 Ti の優位が 1.1 倍から 2 倍前後へ広がりました。Jetson Orin も条件によっては逆転します。
-- 残る費用の内訳は明確です。GPU 段 0.206 ms のうち kernel 実行は 0.099 ms で、残り半分は依然として転送です。CPU 段は 0.04 から 2.2 ms で、場面の内容に強く依存します。
-- **CPU 段を GPU へ移す (Phase 3) と、転送も同時に不要になります。** 効果が最も大きい場面 (noise、複合劣化、マーカー多数) は、いずれも CPU 段が支配的な場面です。
-- 統合 GPU で managed / mapped memory を使う最適化 (WP-4.2) は、Phase 3 で転送そのものが消えるなら不要になります。Phase 3 の後に必要性を再判断します。
-- 起動の費用は用途で判断が分かれます。連続する動画なら 25 秒程度で元が取れますが、単発の検出では CPU 経路が有利です。この結論は変わりません。
+### CPU が有利な場面
+
+| 機体 | 場面 | 検出 | CPU | CUDA-Resident | 比 |
+| --- | --- | --- | --- | --- | --- |
+| DGX Spark GB10 | clean_640x480_n16_s64 | 1 | 0.539 ms | 0.744 ms | **1.38** |
+| DGX Spark GB10 | clean_640x480_n1_s128 | 1 | 0.416 ms | 0.568 ms | **1.36** |
+| DGX Spark GB10 | clean_640x480_n4_s128 | 4 | 0.557 ms | 0.708 ms | **1.27** |
+| DGX Spark GB10 | blur_640x480 | 4 | 0.539 ms | 0.636 ms | **1.18** |
+| DGX Spark GB10 | clean_1280x720_n1_s128 | 1 | 0.606 ms | 0.606 ms | **1.00** |
+| Jetson AGX Orin | clean_640x480_n1_s128 | 1 | 0.870 ms | 0.896 ms | **1.03** |
+| RTX 5070 Ti | clean_640x480_n1_s128 | 1 | 0.226 ms | 0.388 ms | **1.72** |
+| RTX 5070 Ti | clean_640x480_n16_s64 | 1 | 0.371 ms | 0.516 ms | **1.39** |
+| RTX 5070 Ti | clean_640x480_n4_s128 | 4 | 0.376 ms | 0.470 ms | **1.25** |
+| RTX 5070 Ti | blur_640x480 | 4 | 0.360 ms | 0.431 ms | **1.20** |
+
+**CPU が勝つのは 640x480 かつ検出が 1 件以上ある場面だけ**です。3 機で 10 件、28 場面中の 5 / 1 / 4 件です。同じ 640x480 でも検出 0 件なら GPU が勝ちます (0.38 から 0.58)。1280x720 以上ではマーカー 1 枚の同着 1 件を除き、すべて GPU が勝ちます。
+
+### 境界を決めているのは解像度でも候補数でもない
+
+原寸の解像度は説明変数になりません。ArUco3 は `fxfy = 32 / (32 + 0.05 x 長辺)` で縮小するため、**原寸が 27 倍変わっても segmentation 面は 2.2 倍しか変わりません**。
+
+| 原寸 | segmentation | 画素数 |
+| --- | --- | --- |
+| 640x480 | 320x240 | 76,800 |
+| 1280x720 | 427x240 | 102,480 |
+| 1920x1080 | 480x270 | 129,600 |
+| 3840x2160 | 549x309 | 169,641 |
+
+四角形の候補数も説明変数になりません。`noise_1280x720` は**検出 0 件**なのに CPU 経路で最も重い場面の 1 つです (2.7 ms)。
+
+効いているのは **二値化後の輪郭点数**です。`noise_1280x720` は 99,074 点、`clean_1280x720_n4` は 6,390 点で 15 倍違います。
+
+### 回帰: GPU は平坦、CPU は仕事量に比例
+
+`時間 = b0 + b1 x segMpx + b2 x Mpx + b3 x [検出あり] + b4 x 検出数 + b5 x (輪郭点 / 1e5)` を 28 場面で当てはめました。R2 は CPU 0.977 から 0.988、Hybrid 0.965 から 0.980、CUDA-Resident 0.894 から 0.973 です。
+
+**輪郭点 1e5 あたりの係数**が経路を分けます。
+
+| 機体 | CPU | Hybrid | CUDA-Resident | 比 (CPU / Resident) |
+| --- | --- | --- | --- | --- |
+| DGX Spark GB10 | 2.56 ms | 2.70 ms | **0.077 ms** | 33 倍 |
+| Jetson AGX Orin | 5.35 ms | 5.48 ms | **0.278 ms** | 19 倍 |
+| RTX 5070 Ti | 2.48 ms | 2.54 ms | **0.041 ms** | 60 倍 |
+
+**Hybrid の係数は CPU とほぼ同じ**です。Hybrid は GPU で前処理し、輪郭抽出から先を CPU で行うためです。CUDA-Resident だけが 19 から 60 倍小さく、ここが 3 経路の本質的な違いです。
+
+検出の有無による段差は CUDA-Resident だけに現れます (+0.25 から +0.38 ms)。S10 の四隅補正と S8 の decode が、検出 1 件目で立ち上がるためです。CPU と Hybrid では段差がほぼ 0 で、代わりに検出 1 件あたり 0.026 から 0.074 ms 増えます。
+
+結果として、場面による振れ幅が経路で大きく違います。
+
+| 機体 | CPU | Hybrid | CUDA-Resident |
+| --- | --- | --- | --- |
+| DGX Spark GB10 | 0.416 から 4.846 ms (**11.6 倍**) | 0.131 から 4.054 ms (**31.0 倍**) | 0.185 から 0.744 ms (**4.0 倍**) |
+| Jetson AGX Orin | 0.832 から 12.123 ms (**14.6 倍**) | 0.870 から 8.712 ms (**10.0 倍**) | 0.483 から 1.630 ms (**3.4 倍**) |
+| RTX 5070 Ti | 0.226 から 4.696 ms (**20.8 倍**) | 0.088 から 3.832 ms (**43.7 倍**) | 0.126 から 0.516 ms (**4.1 倍**) |
+
+**CUDA-Resident は 3.4 から 4.1 倍しか振れません。** CPU は 11.6 から 20.8 倍、Hybrid は 10.0 から 43.7 倍振れます。GPU 経路は「遅い場面が無い」ことが最大の価値です。
+
+### Hybrid と CUDA-Resident の切り替え
+
+輪郭点数の少ない順に並べると、切り替わる位置がはっきり出ます。
+
+| 場面 | 輪郭点 | DGX Spark | Jetson Orin | RTX 5070 Ti |
+| --- | --- | --- | --- | --- |
+| clean_640x480_n0_s16 | 0 | Hybrid (1.42) | **Resident** (0.41) | Hybrid (1.44) |
+| clean_1280x720_n0_s16 | 0 | Hybrid (1.97) | **Resident** (0.67) | **Resident** (0.94) |
+| clean_1920x1080_n0_s16 | 0 | Hybrid (1.13) | **Resident** (0.76) | **Resident** (0.66) |
+| clean_3840x2160_n0_s16 | 0 | **Resident** (0.71) | **Resident** (0.72) | **Resident** (0.32) |
+| clean_3840x2160_n1_s128 | 583 | **Resident** (0.78) | **Resident** (0.74) | **Resident** (0.37) |
+| clean_1920x1080_n1_s128 | 1,146 | Hybrid (1.22) | **Resident** (0.81) | **Resident** (0.83) |
+| blur_3840x2160 | 1,460 | **Resident** (0.78) | **Resident** (0.74) | **Resident** (0.37) |
+| clean_1280x720_n1_s128 | 1,587 | Hybrid (3.05) | **Resident** (0.83) | Hybrid (2.10) |
+| clean_3840x2160_n4_s128 | 2,189 | **Resident** (0.75) | **Resident** (0.74) | **Resident** (0.38) |
+| clean_640x480_n1_s128 | 2,612 | Hybrid (3.40) | **Resident** (0.71) | Hybrid (3.09) |
+| blur_1920x1080 | 2,703 | Hybrid (1.22) | **Resident** (0.80) | **Resident** (0.81) |
+| clean_3840x2160_n16_s64 | 3,669 | **Resident** (0.77) | **Resident** (0.73) | **Resident** (0.36) |
+| blur_1280x720 | 3,902 | Hybrid (1.57) | **Resident** (0.79) | Hybrid (1.23) |
+| clean_1920x1080_n4_s128 | 4,632 | Hybrid (1.62) | **Resident** (0.78) | **Resident** (0.85) |
+| clean_1280x720_n4_s128 | 6,390 | Hybrid (2.09) | **Resident** (0.75) | Hybrid (1.42) |
+| blur_640x480 | 6,840 | Hybrid (2.16) | **Resident** (0.67) | Hybrid (1.65) |
+| clean_1920x1080_n16_s64 | 7,160 | Hybrid (1.49) | **Resident** (0.77) | **Resident** (0.76) |
+| combined_1920x1080 | 8,237 | **Resident** (0.67) | **Resident** (0.53) | **Resident** (0.41) |
+| combined_640x480 | 9,831 | Hybrid (1.55) | **Resident** (0.57) | Hybrid (1.07) |
+| clean_640x480_n4_s128 | 10,178 | Hybrid (2.30) | **Resident** (0.66) | Hybrid (1.70) |
+| clean_1280x720_n16_s64 | 10,893 | Hybrid (1.65) | **Resident** (0.59) | Hybrid (1.01) |
+| clean_640x480_n16_s64 | 18,329 | Hybrid (2.56) | **Resident** (0.70) | Hybrid (1.92) |
+| combined_3840x2160 | 27,461 | **Resident** (0.28) | **Resident** (0.34) | **Resident** (0.15) |
+| combined_1280x720 | 31,181 | **Resident** (0.31) | **Resident** (0.24) | **Resident** (0.18) |
+| noise_640x480 | 35,437 | **Resident** (0.49) | **Resident** (0.30) | **Resident** (0.35) |
+| noise_1920x1080 | 59,902 | **Resident** (0.20) | **Resident** (0.19) | **Resident** (0.11) |
+| noise_1280x720 | 99,074 | **Resident** (0.14) | **Resident** (0.16) | **Resident** (0.09) |
+| noise_3840x2160 | 127,319 | **Resident** (0.14) | **Resident** (0.19) | **Resident** (0.07) |
+
+**DGX Spark と RTX 5070 Ti では、輪郭点が約 2 万点を超えると CUDA-Resident が勝ちます。** それ以下では Hybrid が速く、きれいな 640x480 では 2 から 3 倍の差がつきます。
+
+**Jetson AGX Orin では全 28 場面で CUDA-Resident が勝ちます。** CPU が最も弱いため、Hybrid の CPU 段が常に不利になります。
+
+## 判断: どの経路をいつ使うか
+
+Phase 3 と WP-4.1 が完了し、3 経路すべてが同じ検出結果を出す状態になりました (28 場面 x 3 経路 x 3 機の全 252 組で検出数が一致)。使い分けは次のとおりです。
+
+| 条件 | 選ぶ経路 | 根拠 |
+| --- | --- | --- |
+| 単発の検出 (1 枚だけ) | **CPU** | GPU 経路は文脈の生成に 58 から 174 ms かかる。下の表を参照 |
+| Jetson AGX Orin での連続処理 | **CUDA-Resident** | 全 28 場面で Hybrid より速い |
+| 輪郭が多い場面 (noise、複合劣化) | **CUDA-Resident** | 輪郭点 1e5 あたりの係数が CPU の 1/19 から 1/60 |
+| きれいな場面かつ輪郭点 2 万点未満 (DGX、RTX) | **Hybrid** | 640x480 で 2 から 3 倍速い |
+| 640x480 以下できれいな単発 | **CPU** | 上の crossover の表を参照 |
+| 最悪時間を抑えたい | **CUDA-Resident** | 場面による振れ幅が 3.4 から 4.1 倍。CPU は 11.6 から 20.8 倍 |
+
+**「常に最速の経路」はありません。** 場面によって 3 経路の順位が入れ替わります。
+
+### 起動の費用と相殺 frame 数
+
+1 process 1 枚で測った値です (1 process で複数枚を回すと 2 枚目以降は暖まった文脈を使うため、起動の費用が現れません)。1280x720 マーカー 4 枚です。
+
+| 機体 | 経路 | 1 枚目まで | 定常 | 相殺 frame |
+| --- | --- | --- | --- | --- |
+| DGX Spark GB10 | CPU | 3.3 ms | 0.699 ms | - |
+| DGX Spark GB10 | Hybrid | 171.0 ms | 0.301 ms | 約 420 |
+| DGX Spark GB10 | CUDA-Resident | 174.0 ms | 0.696 ms | **算出できない** |
+| Jetson AGX Orin | CPU | 6.1 ms | 1.676 ms | - |
+| Jetson AGX Orin | Hybrid | 57.6 ms | 1.144 ms | 約 100 |
+| Jetson AGX Orin | CUDA-Resident | 69.8 ms | 1.077 ms | 約 110 |
+| RTX 5070 Ti | CPU | 2.2 ms | 0.614 ms | - |
+| RTX 5070 Ti | Hybrid | 66.1 ms | 0.295 ms | 約 200 |
+| RTX 5070 Ti | CUDA-Resident | 70.0 ms | 0.421 ms | 約 350 |
+
+DGX Spark の CUDA-Resident で相殺 frame 数を出せないのは、この場面での定常が CPU とほぼ同じ (0.696 と 0.699) だからです。**差が小さいときの相殺 frame 数は、割り算の分母が 0 に近づくため意味を持ちません。** 同じ機の sweep では 0.626 と 0.702 で約 2300 frame になります。この場面は DGX Spark にとって境界そのものです。
+
+WP-4.1 前は相殺に 680 から 810 frame を要していました。定常が速くなった分だけ改善しています。
+
+### 実行間のばらつき
+
+独立した 3 process の p50 の幅です。
+
+| 機体 | CPU | Hybrid | CUDA-Resident |
+| --- | --- | --- | --- |
+| DGX Spark GB10 | 0.6% (最大 2.6%) | **17.7%** (最大 50.3%) | **14.1%** (最大 69.2%) |
+| Jetson AGX Orin | 0.4% (最大 1.7%) | 3.5% (最大 29.1%) | 0.5% (最大 38.5%) |
+| RTX 5070 Ti | 0.5% (最大 2.2%) | 0.4% (最大 6.3%) | 0.0% (最大 0.5%) |
+
+**GPU 経路のばらつきは CPU 経路より 1 桁大きくなります。** とくに DGX Spark で顕著です。GPU の動作周波数を固定していないためと見ています (未検証)。
+
+**したがって 1 回だけ測った値を採ってはいけません。** 独立した 3 process 以上の中央値を使ってください。報告の他の節も、断りが無い限り 3 process の中央値です。
+
+### 統合 GPU と単体 GPU
+
+評価計画は「統合 GPU の結果は単体 GPU へ一般化できない」ことを制約に挙げています。今回の 3 機では、**統合か単体かではなく GPU の絶対性能で順位が決まりました**。RTX 5070 Ti (単体) が最も GPU 有利、Jetson AGX Orin (統合) が最も CPU 有利で、DGX Spark (統合) がその間です。3 機とも同じ形の回帰式に乗ります。
+
+ただし**入力 memory の種別では統合と単体がはっきり分かれます**。managed は単体 GPU で 6.4 から 30 倍遅くなり、統合 GPU では 1.01 から 1.22 倍にとどまります。この軸では制約が生きています。
+
+機体が 3 台しかないため、一般化の可否を断定はできません。
 
 ## 未確定事項
 
-- 転送を消した場合に GPU 段がどこまで下がるか。kernel 実行だけなら DGX Spark 0.083 ms、RTX 5070 Ti 0.033 ms、Jetson Orin 0.928 ms である。Phase 3 の完了後に測る。
-- 8 回の同期転送を非同期化して重ねられるか。現在は 1 回ずつ blocking する。
-- 統合 GPU で転送費用が単体 GPU より大きく出る理由。
-- `M-Pinned` と `M-Managed` の値。
-- CUDA event による kernel 時間と wall-clock の分離 (WP-4.1)。現在の段階時間は wall-clock であり、host 同期を含む。
+- GPU の動作周波数を固定して測るか、既定のまま測るか。DGX Spark の GPU 経路の実行間ばらつき (中央 14 から 18%) はこれで説明できる可能性があるが未検証。固定するなら `nvidia-smi --lock-gpu-clocks` の可否を機種ごとに確かめる必要がある。
+- crossover の境界は corpus の下端 (640x480) にある。それより小さい場面は corpus に無いため、境界の内側を確かめられていない。
+- 実写 corpus では輪郭点数が合成 corpus より多い可能性が高く、その場合 crossover は CPU 不利側へ動く。今回の境界は合成 corpus 限定である。
+- 段ごとの GPU 時間 (CUDA event) はまだ記録していない。現在の段階時間は wall-clock であり host 同期を含む。
 - Jetson の CUDA Toolkit は 11.4 (JetPack 5.x)、他 2 機は 13.0。toolkit version の影響は切り分けていない。
 - 実写 corpus での測定。現在は合成 corpus のみ。
 - 起動の費用を減らせるか。CUDA の文脈生成は減らせないが、kernel の読み込みは
@@ -439,28 +586,39 @@ CPU 経路は core 種別で約 2 倍変わります。GPU 段も kernel 起動�
 
 B=./build/<preset>/bench/aruco3cuda_bench
 COMMON="--warmup 30 --latency-iterations 200 --throughput-frames 100 --cpu-list <cpu> --threads 1"
-IMGS="--input /tmp/benchcorpus/clean_640x480_n4_s128.png \
-      --input /tmp/benchcorpus/clean_1280x720_n4_s128.png \
-      --input /tmp/benchcorpus/clean_1920x1080_n4_s256.png \
-      --input /tmp/benchcorpus/clean_3840x2160_n4_s256.png \
-      --input /tmp/benchcorpus/clean_1280x720_n1_s128.png \
-      --input /tmp/benchcorpus/clean_1280x720_n16_s128.png \
-      --input /tmp/benchcorpus/blur_1280x720.png \
-      --input /tmp/benchcorpus/noise_1280x720.png \
-      --input /tmp/benchcorpus/combined_1280x720.png"
+# 28 場面。解像度 4 種 x マーカー 0/1/4/16 枚 + blur / noise / combined 各 4 解像度。
+# 9 場面では crossover の境界が範囲の外にあり、CPU 有利の条件を取りこぼす。
+IMGS=""
+for res in 640x480 1280x720 1920x1080 3840x2160; do
+  for n in n0_s16 n1_s128 n4_s128 n16_s64; do
+    IMGS="$IMGS --input /tmp/benchcorpus/clean_${res}_${n}.png"
+  done
+  for d in blur noise combined; do
+    IMGS="$IMGS --input /tmp/benchcorpus/${d}_${res}.png"
+  done
+done
 
 for run in 1 2 3; do
   taskset -c <cpu> $B $IMGS $COMMON --route CPU           --memory-mode N/A        >> results.jsonl
-  taskset -c <cpu> $B $IMGS $COMMON --route CUDA-Resident --memory-mode M-Device   >> results.jsonl
   taskset -c <cpu> $B $IMGS $COMMON --route Hybrid        --memory-mode M-Device   >> results.jsonl
-  taskset -c <cpu> $B $IMGS $COMMON --route Hybrid        --memory-mode M-Pageable >> results.jsonl
+  taskset -c <cpu> $B $IMGS $COMMON --route CUDA-Resident --memory-mode M-Device   >> results.jsonl
+done
+
+# memory 種別の比較は CUDA-E2E 経路で行う。
+for run in 1 2 3; do
+  for m in M-Pageable M-Pinned M-Managed; do
+    taskset -c <cpu> $B $IMGS $COMMON --route CUDA-E2E --memory-mode $m >> results.jsonl
+  done
 done
 python3 bench/aggregate.py results.jsonl
 ```
 
 実機への同期は `tools/sync-to-host.sh <user@host>` を使います。
 
-**測定の前に page cache を落としてください。**
+**測定の前に、次の 2 つを確かめてください。**
+
+1. 同じ機で Compute Sanitizer を走らせていないこと。同時に走らせると結果が壊れます。実際に RTX 5070 Ti で CUDA-Resident が全場面 2.9 から 3.7 ms に張り付きました (正しくは 0.13 から 0.56 ms)。`nvidia-smi --query-compute-apps=pid,name --format=csv` で確かめられます。
+2. page cache を落とすこと。
 
 ```
 sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
