@@ -36,7 +36,9 @@ flowchart TD
 
 検出のみを測った end-to-end 時間です。画像の読み込みと checksum は測定区間に含みません。28 場面 x 3 経路 x 3 機を、独立した 3 process の中央値で比較しています ([Benchmark 報告](docs/benchmark-report.md))。
 
-`Hybrid` は候補抽出から先を host で行う中間経路、`CUDA-Resident` は device 常駐入力で全段を GPU で処理する経路です。
+`CUDA-Resident` は device 常駐入力で全段を GPU で処理する経路で、これが本 library が提供する経路です。
+
+`Hybrid` は候補抽出まで GPU、以降を host で行う**比較用の経路**です。**公開 API には含まれません。** `hybrid/` にあり OpenCV を必要とします。GPU 実装の正しさを CPU 基準と突き合わせるために置いてあり、install もしません。表に載せているのは、GPU 化のどこが効いているかを示すためです。
 
 | 機体 | CPU | Hybrid | CUDA-Resident | CUDA-Resident / CPU (1280x720、マーカー 4 枚) | 同 (3840x2160) |
 | --- | --- | --- | --- | --- | --- |
@@ -46,7 +48,7 @@ flowchart TD
 
 左 3 列は 1280x720 にマーカー 4 枚を置いた場面の定常 p50 で、起動費用を測る 1 process 1 枚の測定 (200 反復) を独立した 3 process で行った中央値です。同じ場面を 28 場面 sweep で測ると多少違う値になります (例: DGX Spark の CUDA-Resident は 0.626 ms)。**GPU 経路は実行間のばらつきが大きく、この程度の差は測定間で生じます。** 詳細は [Benchmark 報告](docs/benchmark-report.md) にあります。比は 1 未満が GPU 有利を意味します。
 
-**CPU が勝つ条件があります。** 合成 corpus では、640x480 かつ検出が 1 件以上ある場面で CPU が `CUDA-Resident` を上回ります。28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。
+**CPU が勝つ条件があります。** **CPU が CUDA-Resident を上回るのは、輪郭点数が少ない小さな場面です。** 28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。**解像度だけでは決まりません。** 同じ 640x480 でも `noise_640x480` は輪郭点が多く、DGX Spark で CPU 1.406 ms に対し CUDA-Resident 0.612 ms と GPU が 2.3 倍速くなります。逆に DGX Spark の 5 場面には 1280x720 の場面が 1 つ含まれます。
 
 ただしこれは経路を `CUDA-Resident` に固定した場合です。**DGX Spark と GeForce RTX 5070 Ti では、CPU が `Hybrid` を上回る場面は 28 場面中 1 つもありません。** 場面ごとに速い方を選べるなら、この 2 機で CPU が勝つ場面は無くなります。Jetson AGX Orin だけは CPU が両経路を同時に上回る場面が 1 つあります。実画像では輪郭点が合成 corpus より多くなる可能性があり、この境界は動きます。まだ確かめていません。
 
@@ -102,6 +104,26 @@ docker compose -f docker/compose.yaml run --rm "$PROFILE" bash -c '
 `native` preset は実行機の architecture を自動判定します。3 機すべてを 1 つの binary で賄う場合は `portability` preset を使います。`sm_87`、`sm_120`、`sm_121` の 3 つを生成します。Compute Sanitizer は `sanitizer` preset を構成したうえで `ctest -L sanitizer` で走らせます。詳細は [Docker 環境設計](docs/design/docker-environment.md) を参照してください。
 
 ## 使い方
+
+### 導入
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DARUCO3CUDA_BUILD_REFERENCE=OFF -DARUCO3CUDA_BUILD_TESTS=OFF \
+  -DCMAKE_INSTALL_PREFIX=/your/prefix
+cmake --build build -j && cmake --install build
+```
+
+`ARUCO3CUDA_BUILD_REFERENCE=OFF` は OpenCV への依存を外します。library 本体は OpenCV を必要としません。
+
+利用側からは `find_package` で参照します。
+
+```cmake
+find_package(aruco3cuda REQUIRED)
+target_link_libraries(your_target PRIVATE aruco3cuda::core aruco3cuda::dictionary)
+```
+
+### 使用例
 
 公開 API は `include/aruco3cuda/` にあります。入力は device または managed 空間の 8-bit grayscale で、所有権は呼出側に残ります。
 

@@ -6,13 +6,15 @@ ArUco3 検出を CUDA へ移植する際の責務分割、memory 境界、同期
 
 ## 対象範囲
 
-検出器 core、OpenCV adapter、作業領域、設定、結果表現、評価用基準実装を対象とします。姿勢推定と ROS2 integration は対象外です。
+検出器 core、作業領域、設定、結果表現、評価用の基準実装と測定 harness を対象とします。姿勢推定と ROS2 integration は対象外です。
 
 ## 現状
 
-実装は存在しません。以下は目標アーキテクチャです。
+検出は入力から ID と四隅の出力まで CUDA で実装済みです。`aruco3cuda::Detector` が全段を 1 本に繋ぎ、host 同期なしで device 上の結果を返します。段ごとの設計は [検出パイプライン設計](design/detector-pipeline.md)、公開 API は [公開 API](design/public-api.md) にあります。
 
-## 目標
+OpenCV 型との変換 adapter (`adapter/opencv`) は**実装していません**。公開 API は OpenCV へ依存せず、`ImageViewU8` として device pointer を直接受け取ります。OpenCV を使う経路は評価用の `hybrid/` と `reference/` にあり、公開 API には含みません。
+
+## 構成
 
 ```mermaid
 flowchart TD
@@ -32,13 +34,20 @@ flowchart TD
 
 ### モジュール境界
 
-| モジュール | 責務 |
-| --- | --- |
-| core | CUDA による検出処理。OpenCV 型への依存を最小化する。 |
-| adapter/opencv | `cv::Mat`、`cv::cuda::GpuMat`、OpenCV Dictionary との変換。 |
-| reference | OpenCV ArUco3 CPU 実装の実行と比較結果生成。 |
-| benchmark | 測定条件固定、warm-up、統計、環境情報保存。 |
-| test | 合成画像、実画像、異常入力、境界値の自動検証。 |
+実際の directory 構成に対応します。
+
+| module | 場所 | 責務 | 公開 API か |
+| --- | --- | --- | --- |
+| core | `src/core/` | CUDA による検出処理。OpenCV へ依存しない | はい (`include/aruco3cuda/`) |
+| dictionary | `src/dictionary/` | packed codeword table と照合 | はい |
+| util | `src/util/` | CUDA にも OpenCV にも依存しない共通処理 | 一部 (`include/aruco3cuda/util/`) |
+| hybrid | `hybrid/` | 候補抽出まで GPU、以降を CPU で行う比較用経路。OpenCV を要する | いいえ |
+| reference | `reference/` | OpenCV ArUco3 CPU 実装の実行と結果保存 | いいえ |
+| bench | `bench/` | 測定条件の固定、warm-up、統計、環境情報の記録 | いいえ |
+| tools | `tools/` | corpus 生成、Dictionary 変換、差分報告、正確性評価 | いいえ |
+| test | `test/` | 合成画像、異常入力、境界値の自動検証 | いいえ |
+
+`hybrid` と `reference` は測定と比較のための道具であり、library の利用者へ提供する経路ではありません。どちらも OpenCV を必要とします。
 
 ### 処理段階
 
@@ -51,8 +60,8 @@ flowchart TD
 
 ### Memory 方針
 
-- 呼出側から device pointer または `GpuMat` を受け取れるようにする。
-- host 入力向け adapter は転送費用を明示的に測定できるようにする。
+- 呼出側から device pointer を `ImageViewU8` として受け取る。所有権は呼出側に残る。
+- 入力 memory の種別 (pageable、pinned、managed、device 常駐) を測定軸として分離する。
 - 中間 buffer は reusable workspace に保持し、フレームごとの確保を避ける。
 - 検出数は可変長のため、上限付き device buffer と最終 count を使用する。
 - overflow は無言で切り捨てず、明示的な状態として返す。
@@ -62,7 +71,7 @@ flowchart TD
 - API は caller-owned CUDA Stream を受け取る。
 - core は不要な `cudaDeviceSynchronize()` を行わない。
 - host 結果が必要な API だけが必要な同期を発生させる。
-- benchmark では CUDA event を使用し、カーネル時間と wall-clock を分離する。
+- benchmark は wall-clock を測る。CUDA event による kernel 時間との分離は未実装である。
 
 ### Hardware portability
 
@@ -73,18 +82,19 @@ flowchart TD
 
 ## 実装上の判断
 
-- 初期 API は grayscale `CV_8UC1` 相当の入力へ限定する。
-- 検出と姿勢推定を分離する。
-- CPU と GPU の役割分担を固定せず、段階別の測定結果からハイブリッド経路を判断する。
-- OpenCV CPU 実装の source code を直接 CUDA へ機械的にコピーせず、挙動と論文から独立実装する。
+- 公開 API は 8-bit grayscale の入力へ限定する。
+- 検出と姿勢推定を分離する。出力の四隅は原寸座標であり、`solvePnP` 等へそのまま渡せる。
+- OpenCV CPU 実装の source code を機械的にコピーせず、観測できる挙動と論文から独立に実装する。
+- 候補抽出は連結成分ラベリングと極点探索を主経路とする。根拠は [ADR-0003](adr/0003-candidate-extraction-approach.md) にある。
+- corner refinement は GPU 上で行う。ArUco3 の精度に直結するため CPU への委譲を許容しない。
+- result compaction は自前の 3 段 scan で行う。
+- Dictionary は 4 回転を事前展開した packed 表現で device 常駐にする。
 
 ## 未確定事項
 
-- 連結成分解析と contour tracing のどちらを主経路にするか。
-- corner refinement の実行場所。
-- result compaction に prefix sum、atomic counter、二段階収集のどれを使用するか。
-- Dictionary を constant memory、global memory、texture のどこに配置するか。
-- OpenCV adapter を同一 library に含めるか別 target にするか。
+- OpenCV 型との変換 adapter を提供するか。提供する場合、同一 library に含めるか別 target にするか。
+- 適応的二値化を integral image 方式へ変更するか。
+- CUDA event による段ごとの kernel 時間の記録。
 
 ## 関連
 

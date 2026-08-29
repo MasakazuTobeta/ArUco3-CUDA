@@ -61,9 +61,11 @@ Hybrid は二値化画像を host へ戻す点が費用の中心で、CUDA-Resid
 
 **性能 core へ固定します。** 性能 core と効率 core が混在する機では、どちらで測るかで CPU 経路の値が約 2 倍変わります。効率 core で測ると GPU 側の優位が実際より大きく出ます。
 
+DGX Spark GB10 の core は交互に並びます。`lscpu` では CPU 0-4 と 10-14 が Cortex-A725 (最大 2808/2860 MHz)、**CPU 5-9 と 15-19 が Cortex-X925 (最大 3900/3978 MHz)** です。測定に使う CPU 5 は性能 core です。この対応は測定結果の `environment` 行の `cpu_topology` にも `Cortex-X925 x10 (cpu 5-9,15-19)` として記録しており、**どの core で測ったかを結果から検算できます**。
+
 | 機体 | core 構成 | 測定に使う CPU |
 | --- | --- | --- |
-| DGX Spark GB10 | Cortex-X925 x10 (性能)、Cortex-A725 x10 (効率) | 5 (X925) |
+| DGX Spark GB10 | Cortex-A725 x10 (効率、cpu 0-4/10-14)、Cortex-X925 x10 (性能、cpu 5-9/15-19) | 5 (X925、性能) |
 | GeForce RTX 5070 Ti の機 | 4.80GHz x2、4.70GHz x6 (性能)、4.60GHz x12 (効率) | 2 (4.70GHz) |
 | Jetson AGX Orin | Cortex-A78AE x12 (均一) | 0 |
 
@@ -95,7 +97,7 @@ DGX Spark の CPU 0 は効率 core、GeForce RTX 5070 Ti の機の CPU 0 は性�
 ### 結果の要約
 
 1. **3 経路は同じ検出結果を出します。** 28 場面 x 3 経路 x 3 機の全 252 組で検出数が一致します。座標の一致度は [正確性評価の結果](accuracy-report.md) にあります。
-2. **CPU が CUDA-Resident を上回るのは 640x480 かつ検出が 1 件以上ある場面だけです。** 28 場面のうち DGX Spark 5 件、GeForce RTX 5070 Ti 4 件、Jetson AGX Orin 1 件です。
+2. **CPU が CUDA-Resident を上回るのは、輪郭点数が少ない小さな場面です。** 28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。**解像度だけでは決まりません。** 同じ 640x480 でも `noise_640x480` は輪郭点が多く、DGX Spark で CPU 1.406 ms に対し CUDA-Resident 0.612 ms と GPU が 2.3 倍速くなります。逆に DGX Spark の 5 場面には 1280x720 の場面が 1 つ含まれます。
 3. **ただしこれは経路を CUDA-Resident に固定した場合の話です。** DGX Spark と GeForce RTX 5070 Ti では、**CPU が Hybrid を上回る場面は 28 場面中 1 つもありません。** 場面ごとに速い方の GPU 経路を選べるなら、この 2 機で CPU が勝つ場面は無くなります。Jetson AGX Orin だけは、CPU が両経路を同時に上回る場面が 1 つあります (`clean_640x480_n1_s128`、CPU 0.870 ms に対し GPU の最良が 0.896 ms)。
 4. **境界を決めるのは解像度でも候補数でもなく、二値化後の輪郭点数です。** 輪郭点 1e5 あたりの係数は CPU 2.48 から 5.35 ms、Hybrid 2.54 から 5.48 ms に対し、CUDA-Resident は 0.041 から 0.278 ms です。
 5. **Hybrid の輪郭点係数は CPU とほぼ同じです。** 輪郭抽出から先を host で行うためで、ここが Hybrid と CUDA-Resident の本質的な違いです。
@@ -121,7 +123,7 @@ CPU 経路が CUDA-Resident を上回る、または同着になる場面は次�
 | GeForce RTX 5070 Ti | clean_640x480_n4_s128 | 4 | 0.376 ms | 0.470 ms | **1.25** |
 | GeForce RTX 5070 Ti | blur_640x480 | 4 | 0.360 ms | 0.431 ms | **1.20** |
 
-**CPU が上回るのは 640x480 かつ検出が 1 件以上ある場面です。** 同じ 640x480 でも検出 0 件なら CUDA-Resident が上回ります (比 0.38 から 0.58)。1280x720 以上では、マーカー 1 枚の同着 1 件を除きすべて CUDA-Resident が上回ります。
+**CPU が上回るのは輪郭点数が少ない場面です。** 640x480 でも `noise_640x480` と `combined_640x480` は輪郭点が多く CUDA-Resident が上回ります。1280x720 以上では、マーカー 1 枚の同着 1 件を除きすべて CUDA-Resident が上回ります。
 
 理由は、GPU が固定費を持ち仕事量に対して平坦であるのに対し、CPU が仕事量に比例するためです。仕事量が最も小さい 640x480 の検出あり場面では、GPU の固定費を仕事量が上回りません。
 
@@ -240,7 +242,7 @@ OpenCV の検出器が内部で行う処理と同じ設定です。**この数�
 
 DGX Spark の CUDA-Resident で相殺 frame 数を出せないのは、この場面の定常が CPU とほぼ同じ (0.696 ms と 0.699 ms) だからです。**差が小さいときの相殺 frame 数は、割り算の分母が 0 に近づくため意味を持ちません。** 同じ機の 28 場面 sweep では 0.626 ms と 0.702 ms になり、約 2300 frame と出ます。この場面は DGX Spark にとって境界そのものです。
 
-起動費用の内訳は機体で異なります。CUDA の文脈生成そのものは DGX Spark 17.0 ms、Jetson AGX Orin 20.6 ms に対し、GeForce RTX 5070 Ti は 180.4 ms と大きく出ます。文脈生成は実装側から減らせません。
+起動費用の内訳は機体で異なります。CUDA の文脈生成そのものは、測定結果の `environment` 行に記録した `cuda_context_ms` の中央値で DGX Spark 16.5 ms、Jetson AGX Orin 9.0 ms、GeForce RTX 5070 Ti 67.9 ms です (機体あたり 27 回)。ばらつきが大きく、Jetson AGX Orin は 6.3 ms から 116.2 ms、GeForce RTX 5070 Ti は 65.5 ms から 212.8 ms の幅があります。process の 1 本目は暖まっていないため大きく出ます。文脈生成は実装側から減らせません。
 
 ### 入力 memory 種別の比較
 

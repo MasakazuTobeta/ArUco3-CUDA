@@ -27,6 +27,7 @@ find_package(CUDAToolkit REQUIRED)
 
 include(Aruco3CudaOptions)
 include(Aruco3CudaSanitizer)
+include(Aruco3CudaInstall)
 
 add_subdirectory(src)
 
@@ -45,6 +46,7 @@ if(ARUCO3CUDA_BUILD_TESTS)
   add_subdirectory(test)
 endif()
 
+aruco3cuda_add_install_rules()
 aruco3cuda_add_format_targets()
 aruco3cuda_add_coverage_target()
 

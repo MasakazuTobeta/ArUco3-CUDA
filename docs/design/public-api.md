@@ -37,8 +37,8 @@ include/aruco3cuda/
   config.hpp       // CornerRefineMethod、DetectorConfig    実装済み
   dictionary.hpp   // DictionaryTable、照合                  実装済み
   device_probe.hpp // device の性質取得                      実装済み
-  detections.hpp   // DeviceDetections、HostDetections       未実装
-  detector.hpp     // Detector                               未実装
+  detections.hpp   // DeviceDetections、HostDetections       実装済み
+  detector.hpp     // Detector                               実装済み
 include/aruco3cuda/opencv/
   adapter.hpp      // cv::Mat / cv::cuda::GpuMat との変換    未実装
 ```

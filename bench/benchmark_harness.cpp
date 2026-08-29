@@ -14,8 +14,8 @@
 #include "hybrid_detector.hpp"
 
 #include <sched.h>  // sched_setaffinity は POSIX 拡張であり標準 header に無い
-#include <sys/personality.h>  // ASLR の状態確認。標準 header には無い
 #include <stdio.h>  // popen と pclose は POSIX であり <cstdio> の std 名前空間に無い
+#include <sys/personality.h>  // ASLR の状態確認。標準 header には無い
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -24,8 +24,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <fstream>
 #include <map>
@@ -148,8 +148,7 @@ bool parse_int_field(const std::map<std::string, std::string>& info, const std::
     }
 }
 
-std::string field_or_empty(const std::map<std::string, std::string>& info,
-                           const std::string& key) {
+std::string field_or_empty(const std::map<std::string, std::string>& info, const std::string& key) {
     const auto entry = info.find(key);
     return entry == info.end() ? std::string() : entry->second;
 }
@@ -166,8 +165,8 @@ std::string field_or_empty(const std::map<std::string, std::string>& info,
 std::vector<std::pair<long long, std::vector<int>>> read_frequency_groups(int cpu_count) {
     std::vector<std::pair<long long, std::vector<int>>> groups;
     for (int cpu = 0; cpu < cpu_count; ++cpu) {
-        const std::string path = "/sys/devices/system/cpu/cpu" + std::to_string(cpu) +
-                                 "/cpufreq/cpuinfo_max_freq";
+        const std::string path =
+                "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/cpuinfo_max_freq";
         std::ifstream file(path);
         long long value = 0;
         if (!file || !(file >> value) || value <= 0) {
@@ -208,9 +207,31 @@ std::string format_ghz(long long khz) {
 /// x86 には "CPU part" が無く、この経路だけでは空文字列になる。実際に
 /// GeForce RTX 5070 Ti を載せた Intel Core Ultra 7 265 の機で空になり、
 /// 環境情報の test が失敗した。x86 では最大周波数で分類へ切り替える。
+/// 昇順の processor 番号列を "0-4,10-14" の形へ畳む。
+///
+/// 連続する番号を範囲へまとめる。20 個を並べると環境情報が読みにくくなる。
+std::string format_processor_ranges(const std::vector<int>& processors) {
+    std::string result;
+    for (std::size_t i = 0; i < processors.size();) {
+        std::size_t j = i;
+        while (j + 1 < processors.size() && processors[j + 1] == processors[j] + 1) {
+            ++j;
+        }
+        if (!result.empty()) {
+            result += ",";
+        }
+        result += std::to_string(processors[i]);
+        if (j > i) {
+            result += "-" + std::to_string(processors[j]);
+        }
+        i = j + 1;
+    }
+    return result;
+}
+
 std::string read_cpu_topology() {
     static const std::map<std::string, std::string> kKnownParts = {
-            {"0xd85", "Cortex-X925"}, {"0xd87", "Cortex-A725"}, {"0xd8e", "Cortex-A720"},
+            {"0xd85", "Cortex-X925"},  {"0xd87", "Cortex-A725"},  {"0xd8e", "Cortex-A720"},
             {"0xd41", "Cortex-A78AE"}, {"0xd42", "Cortex-A78AE"},
     };
     std::ifstream info("/proc/cpuinfo");
@@ -256,12 +277,17 @@ std::string read_cpu_topology() {
         }
     }
     if (!groups.empty()) {
+        // core 種別ごとに processor 番号の範囲も残す。個数だけでは、どの
+        // core で測ったのか (--cpu-list が性能 core か効率 core か) を
+        // 結果から検算できない。性能 core と効率 core では CPU 経路の値が
+        // 約 1.6 倍違うため、この対応が無いと測定条件を確かめられない。
         std::string result;
         for (const auto& group : groups) {
             if (!result.empty()) {
                 result += ", ";
             }
             result += group.first + " x" + std::to_string(group.second.size());
+            result += " (cpu " + format_processor_ranges(group.second) + ")";
         }
         return result;
     }
@@ -359,8 +385,7 @@ std::string read_os_pretty_name() {
 /// 4 での変更: measurement 行へ startup を追加した。
 constexpr int kSchemaVersion = 4;
 
-void write_statistics(JsonWriter& writer, const std::string& name,
-                      const SampleStatistics& stats) {
+void write_statistics(JsonWriter& writer, const std::string& name, const SampleStatistics& stats) {
     writer.key(name);
     writer.begin_object();
     writer.member_int("count", static_cast<long long>(stats.count_));
@@ -468,9 +493,9 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
             // device 名と性質は CUDA から取得する。nvidia-smi が無い環境でも記録できる。
             environment.gpu_name_ = probe.name_;
             environment.gpu_integrated_ = probe.integrated_;
-            environment.gpu_compute_capability_ =
-                    std::to_string(probe.compute_capability_major_) + "." +
-                    std::to_string(probe.compute_capability_minor_);
+            environment.gpu_compute_capability_ = std::to_string(probe.compute_capability_major_) +
+                                                  "." +
+                                                  std::to_string(probe.compute_capability_minor_);
         }
     }
     environment.cuda_toolkit_version_ = read_command_line(
@@ -619,8 +644,7 @@ bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
     record->detection_count_ = result.detections_.size();
 
     return measure_iterations(
-            config, [&](Phase) { return detector.detect(&result, out_error); }, record,
-            out_error);
+            config, [&](Phase) { return detector.detect(&result, out_error); }, record, out_error);
 }
 
 /// hybrid 経路を測定する。
@@ -633,8 +657,9 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
                     MeasurementRecord* record, std::string* out_error) {
     if (config.memory_mode_ != MemoryMode::kDevice &&
         config.memory_mode_ != MemoryMode::kHostPageable) {
-        *out_error = std::string("hybrid 経路が対応する memory 種別は M-Device と M-Pageable。"
-                                 "指定された種別: ") +
+        *out_error = std::string(
+                             "hybrid 経路が対応する memory 種別は M-Device と M-Pageable。"
+                             "指定された種別: ") +
                      to_string(config.memory_mode_);
         return false;
     }
@@ -668,8 +693,8 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     }
     const auto upload = [&]() {
         return device.upload(image.data, image.cols, image.rows,
-                             static_cast<std::size_t>(image.step), &message) ==
-               aruco3cuda::Status::kOk;
+                             static_cast<std::size_t>(image.step),
+                             &message) == aruco3cuda::Status::kOk;
     };
     if (!upload()) {
         *out_error = message;
@@ -769,16 +794,18 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
                   MeasurementRecord* record, std::string* out_error) {
     const bool resident = config.route_ == Route::kCudaResident;
     if (resident && config.memory_mode_ != MemoryMode::kDevice) {
-        *out_error = std::string("CUDA-Resident 経路が対応する memory 種別は M-Device。"
-                                 "指定された種別: ") +
+        *out_error = std::string(
+                             "CUDA-Resident 経路が対応する memory 種別は M-Device。"
+                             "指定された種別: ") +
                      to_string(config.memory_mode_);
         return false;
     }
     if (!resident && config.memory_mode_ != MemoryMode::kHostPageable &&
         config.memory_mode_ != MemoryMode::kHostPinned &&
         config.memory_mode_ != MemoryMode::kManaged) {
-        *out_error = std::string("CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable、"
-                                 "M-Pinned、M-Managed。指定された種別: ") +
+        *out_error = std::string(
+                             "CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable、"
+                             "M-Pinned、M-Managed。指定された種別: ") +
                      to_string(config.memory_mode_);
         return false;
     }
@@ -844,12 +871,12 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
             return false;
         }
         for (int row = 0; row < image.rows; ++row) {
-            std::memcpy(static_cast<std::uint8_t*>(pinned.data_) +
-                                (static_cast<std::size_t>(row) *
-                                 static_cast<std::size_t>(image.cols)),
-                        image.data + (static_cast<std::size_t>(row) *
-                                      static_cast<std::size_t>(image.step)),
-                        static_cast<std::size_t>(image.cols));
+            std::memcpy(
+                    static_cast<std::uint8_t*>(pinned.data_) +
+                            (static_cast<std::size_t>(row) * static_cast<std::size_t>(image.cols)),
+                    image.data +
+                            (static_cast<std::size_t>(row) * static_cast<std::size_t>(image.step)),
+                    static_cast<std::size_t>(image.cols));
         }
         source = static_cast<const std::uint8_t*>(pinned.data_);
         source_pitch = static_cast<std::size_t>(image.cols);
@@ -898,8 +925,8 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
             // 区間に含める。含めないと発行の費用しか測らない。
             const cudaError_t synchronized = cudaStreamSynchronize(stream);
             if (synchronized != cudaSuccess) {
-                *out_error = std::string("stream を同期できない: ") +
-                             cudaGetErrorString(synchronized);
+                *out_error =
+                        std::string("stream を同期できない: ") + cudaGetErrorString(synchronized);
                 return false;
             }
             return true;
@@ -926,8 +953,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
 
     // 検出数は測定区間の外で 1 度だけ読む。device 常駐の経路でも記録は要る。
     const aruco3cuda::Status counted = detector.download(&detections, stream, &message);
-    if (counted != aruco3cuda::Status::kOk &&
-        counted != aruco3cuda::Status::kMarkerOverflow) {
+    if (counted != aruco3cuda::Status::kOk && counted != aruco3cuda::Status::kMarkerOverflow) {
         *out_error = "検出数を読めない: " + message;
         return false;
     }
@@ -966,10 +992,10 @@ aruco3cuda::DetectorConfig cuda_config_from_reference(
     // 画像で検出した四隅を段を登って原寸へ戻す必要があるためである。
     // したがって ArUco3 有効時は use_corner_subpix_refinement_ の指定に
     // 関わらず CPU 基準も補正しており、写す側もそれに合わせる。
-    result.corner_refine_method_ = (config.use_aruco3_detection_ ||
-                                    config.use_corner_subpix_refinement_)
-                                           ? aruco3cuda::CornerRefineMethod::kSubpix
-                                           : aruco3cuda::CornerRefineMethod::kNone;
+    result.corner_refine_method_ =
+            (config.use_aruco3_detection_ || config.use_corner_subpix_refinement_)
+                    ? aruco3cuda::CornerRefineMethod::kSubpix
+                    : aruco3cuda::CornerRefineMethod::kNone;
     result.corner_refinement_win_size_px_ = config.corner_refinement_win_size_px_;
     result.relative_corner_refinement_win_size_ = config.relative_corner_refinement_win_size_;
     result.corner_refinement_max_iterations_ = config.corner_refinement_max_iterations_;
@@ -1081,10 +1107,9 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
     writer.member_bool("use_aruco3_detection", config.detector_.use_aruco3_detection_);
     writer.member_int("min_side_length_canonical_img",
                       config.detector_.min_side_length_canonical_img_px_);
-    writer.member_double("min_marker_length_ratio_original_img",
-                         static_cast<double>(
-                                 config.detector_.min_marker_length_ratio_original_img_),
-                         6);
+    writer.member_double(
+            "min_marker_length_ratio_original_img",
+            static_cast<double>(config.detector_.min_marker_length_ratio_original_img_), 6);
     writer.member_double("fxfy_effective", record.fxfy_effective_, 6);
     writer.member_string("dictionary", config.detector_.dictionary_name_);
     writer.end_object();

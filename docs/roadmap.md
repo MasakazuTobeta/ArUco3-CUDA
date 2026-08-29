@@ -34,7 +34,7 @@
 
 検出のみを測った end-to-end 時間を 28 場面 x 3 経路 x 3 機で比較しています。画像の読み込みと checksum は測定区間に含みません。
 
-**CPU が勝つ条件があります。** 合成 corpus では 640x480 かつ検出が 1 件以上ある場面で CPU が CUDA-Resident を上回り、28 場面中 DGX Spark GB10 で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面がこれに当たります。経路を場面ごとに選べる場合、CPU が両 GPU 経路を同時に上回るのは Jetson AGX Orin の 1 場面だけです。境界を決めているのは解像度でも候補数でもなく二値化後の輪郭点数です。実画像では輪郭点数が合成 corpus より多くなりうるため境界は動く可能性がありますが、まだ確かめていません。詳細は [Benchmark 報告](benchmark-report.md) にあります。
+**CPU が勝つ条件があります。** 合成 corpus では輪郭点数が少ない小さな場面で CPU が CUDA-Resident を上回り、28 場面中 DGX Spark GB10 で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面がこれに当たります。解像度だけでは決まらず、同じ 640x480 でも輪郭点の多い場面では GPU が勝ちます。経路を場面ごとに選べる場合、CPU が両 GPU 経路を同時に上回るのは Jetson AGX Orin の 1 場面だけです。境界を決めているのは解像度でも候補数でもなく二値化後の輪郭点数です。実画像では輪郭点数が合成 corpus より多くなりうるため境界は動く可能性がありますが、まだ確かめていません。詳細は [Benchmark 報告](benchmark-report.md) にあります。
 
 ### device memory
 
