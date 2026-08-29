@@ -17,8 +17,12 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 ## 現状
 
-- Universidad de Córdoba の公式 ArUco ページは、配布 software を GPLv3 と表示しています。
-- 同ページには personal、research、educational purposes と commercial license への問い合わせも記載されています。GPLv3 自体は商用利用を一律に禁止する license ではないため、公式配布物へ追加条件があるかは、利用前に配布物内の license 本文または権利者へ確認が必要です。
+- Universidad de Córdoba の公式 ArUco ページの表記を 2026-08-29 に確認しました。原文は次のとおりです。
+
+  > This software is licensed under GPLv3 license for personal, research and educational purposes. For a commercial license please contact rmsalinas@uco.es
+
+- GPLv3 自体は商用利用を一律に禁止する license ではありません。上の表記が GPLv3 への追加条件を意図しているのか、単に商用向けの別 license を案内しているだけなのかは、この表記だけでは決まりません。**この点は未解決のままです。**
+- ただし**本 project はこの解釈に依存しません。** 公式 ArUco 配布物を取得も参照も利用もしていないためです。実装根拠は 2018 年論文と OpenCV 4.x に限定しており、Dictionary も OpenCV 由来です。上の表記が仮に厳しい側の意味であっても、本 project の成果物には及びません。
 - OpenCV は Apache-2.0 で配布され、OpenCV の ArUco3 対応は GPL 非互換 code に基づかないことを contribution checklist で確認して取り込まれています。
 - ただし **OpenCV 4.x は file ごとに license header が違います。** project 全体の LICENSE は Apache-2.0 ですが、`imgproc` の古い file は 3 条項 BSD の header を残し、Intel Corporation ほかを著作権者として挙げています。本 project が振る舞いを写した `cornersubpix.cpp`、`samplers.cpp`、`thresh.cpp`、`imgwarp.cpp`、`geometry.cpp` はいずれも 3 条項 BSD です。file ごとの内訳は [Code Provenance 記録](code-provenance.md) の PR-005 にあります。
 - 現在の OpenCV 4.x は従来方式だけではなく、`DetectorParameters::useAruco3Detection` によって 2018 年論文の高速検出戦略を有効化できます。
@@ -127,7 +131,7 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 ## 未確定事項
 
-- 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。
+- 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。表記そのものは 2026-08-29 に確認済み。解釈は未解決だが、本 project は公式配布物を使っていないため依存しない。
 - OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。現時点では `NOTICE` へ記載している。
 - patent clearance の対象国と実施担当。
 
