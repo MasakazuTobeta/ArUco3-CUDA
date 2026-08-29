@@ -104,6 +104,7 @@ Status reserve_corner_refine(const DetectorConfig& config, Workspace& workspace,
 /// @param pyramid 段ごとの画像。段 0 が原寸である。
 /// @param plan 縮小の計画。開始段と segmentation の幅を使う。
 /// @param config 反復回数と収束の閾値を含む設定。
+/// @param block_count 起こす block 数。refine_block_count() で求める。
 /// @param buffers 作業領域。counter を書く。
 /// @param detections 四隅を **その場で書き換える**。ids_ と count_ を読む。
 /// @param stream kernel を発行する stream。
@@ -117,8 +118,30 @@ Status reserve_corner_refine(const DetectorConfig& config, Workspace& workspace,
 /// 入力例: 1280x720 の pyramid、segmentation 427x240、検出 4 件
 /// 出力例: kOk。corner_x_ と corner_y_ が原寸 1280x720 の座標になる
 Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
-                            const DetectorConfig& config, CornerRefineBuffers* buffers,
-                            DeviceDetections* detections, cudaStream_t stream);
+                            const DetectorConfig& config, int block_count,
+                            CornerRefineBuffers* buffers, DeviceDetections* detections,
+                            cudaStream_t stream);
+
+/// device の SM 数から、補正で起こす block 数を決める。
+///
+/// block 数は「device が同時に走らせられる数」と「仕事の量」の小さい方で
+/// あるべきである。前者を SM 数の 2 倍で見積もり、後者 (評価計画の上限で
+/// あるマーカー 16 枚 = 64 隅) を上限にする。1 block が共有 memory を
+/// 約 5.5 KB 使うため、必要以上に起こすと検出が 0 件の frame でも損をする。
+///
+/// 固定値にすると、SM 数の桁が違う機で事故になる。実際に隅の上限 (4096) を
+/// そのまま block 数にしていたとき、Jetson AGX Orin (16 SM) で検出 0 件でも
+/// 7 倍遅くなった。
+///
+/// @param multi_processor_count device の SM 数。1 未満なら下限を返す。
+/// @return 起こす block 数。32 以上 64 以下。
+///
+/// 所有権: 資源を保持しない。
+/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+///
+/// 入力例: 16 (Jetson AGX Orin)
+/// 出力例: 32
+int refine_block_count(int multi_processor_count);
 
 }  // namespace aruco3cuda::detail
 

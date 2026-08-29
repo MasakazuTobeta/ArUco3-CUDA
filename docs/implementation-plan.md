@@ -453,10 +453,30 @@ GPU は固定費が高く仕事量に対して平坦、CPU は仕事量に比例
 | --- | --- | --- | --- | --- | --- |
 | WP-4.1 | kernel 起動数と待ち時間の最適化 | `src/core`、`bench`、[benchmark 結果まとめ](benchmark-report.md) | 最適化前後で正確性が不変であり、変化を測定値で示せる。**達成済み。** 転送の非同期化、S10 の要素並列化、Otsu の 3 相化、CUDA Graph 化を入れ、全場面・全機で GPU が CPU を上回った。丸めは不変 | WP-3.6 (転送の非同期化は hybrid 経路で先行実施) | L (当初 M) |
 | WP-4.2 | memory 経路 4 種の実装と測定 | `src/core`、`bench` | pageable、pinned、managed、device 常駐を別結果として記録できる。pageable と device 常駐は測定済み。managed と pinned は Phase 3 で転送が消えるなら不要 | WP-3.6 | M |
-| WP-4.3 | 機種別 tuning の設定化 | 設定 file | block size 等が source の固定値でなく設定から上書きできる | WP-4.1 | S |
+| WP-4.3 | 機種別 tuning | `src/core/corner_refine.{hpp,cu}` | **完了条件を変更した。** 当初は「設定から上書きできる」だったが、測定の結果 block size は 3 機とも 16 が最適で設定にする価値が無かった。代わりに「機に依存する値は device 属性から導き、固定値を残さない」とする。達成済み | WP-4.1 | S |
 | WP-4.4 | Jetson Orin での全評価 | 測定結果 | 同一 corpus が通り、環境情報と power mode が記録されている | B2、WP-4.3 | L |
 | WP-4.5 | crossover point の報告 | benchmark report | CPU が有利な条件を含めて境界を示せる | WP-4.4 | M |
 | WP-4.6 | Compute Sanitizer 全経路 | `cmake/Aruco3CudaSanitizer.cmake` | memcheck、racecheck、initcheck、synccheck で指摘が無い。**達成済み。** 3 機すべてで 8 件通過。`--leak-check full` と `--report-api-errors all` も追加 | WP-4.1 | M |
+
+#### WP-4.3 の判断: 設定を増やさず device 属性から導く
+
+当初の完了条件は「block size 等が source の固定値でなく設定から上書きできる」でした。**測定の結果、この条件を満たしても価値が無いことが分かったため、条件を変更しました。**
+
+**block size は 3 機とも 16 が最適でした。** `cuda_block_dim_` (前処理と二値化へ届く) と、labeling / candidate_filter / quad_extract が固定している 16 を独立に振った実測です。8 と 32 はどちらも悪化し、32 は 3 から 8% 遅くなります。設定として露出しても、変える理由がありません。
+
+なお現状の `cuda_block_dim_` は 2 次元 kernel 12 個のうち 5 個にしか届いていません。届く範囲を広げても、上の測定から得るものがないため**そのままにします**。この事実を [検出パイプライン設計](design/detector-pipeline.md) へ記録し、後から同じ sweep をやり直さないようにします。
+
+代わりに、**機に依存する値を device 属性から導く**形にしました。S10 の補正で起こす block 数を、SM 数の 2 倍と仕事量の上限 (マーカー 16 枚 = 64 隅) の小さい方にします。
+
+| 機体 | SM 数 | block 数 | 効果 (同一 session の交互測定) |
+| --- | --- | --- | --- |
+| Jetson AGX Orin | 16 | 32 | 検出 0 件 -6.0%、マーカー 4 枚 -3.3%、16 枚 -1.3% |
+| DGX Spark GB10 | 20 | 40 | **差は雑音の中** |
+| RTX 5070 Ti | 70 | 64 (上限) | 変化なし |
+
+効果は控えめです。それでも入れる理由は、固定値をやめること自体にあります。隅の上限 (4096) をそのまま block 数にしていたとき Jetson で 7 倍遅くなりました。SM 数の桁が違う機を足したときに同じ事故が構造的に起きなくなります。
+
+**測り方について。** 最初は別 session で前後を比べ、DGX で 11.7% の改善が出たと読みました。**これは誤りでした。** 同一 session で交互に測り直すと差は雑音の中で、8 回反復しても中央値の向きが run ごとに入れ替わります。各版の分布 (0.59 から 0.71 ms) が版どうしの差より広いためです。**この規模の差を別 session の比較で判断してはいけません。**
 
 #### WP-4.6 の実測: 3 機で Compute Sanitizer が通った
 

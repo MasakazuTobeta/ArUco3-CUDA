@@ -12,6 +12,7 @@
 
 #include "aruco3cuda/config.hpp"
 #include "aruco3cuda/detections.hpp"
+#include "aruco3cuda/device_probe.hpp"
 #include "aruco3cuda/dictionary.hpp"
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/types.hpp"
@@ -98,6 +99,8 @@ private:
     bool has_result_ = false;
     DetectorConfig config_;
     int marker_size_ = 0;
+    /// 補正で起こす block 数。device の SM 数から initialize 時に決める。
+    int refine_blocks_ = 0;
     /// 捕らえた発行列。以降は 1 回の起動で済む。
     ///
     /// graph は kernel の引数を焼き込む。workspace の切り出しや設定が変わった
@@ -241,6 +244,12 @@ Status Detector::Impl::initialize(const DictionaryTable& dictionary, const Detec
     // この行を落としても test は落ちない (変異で確認済み)。取り違えを
     // 防ぐため残す。
     this->release_graph();
+    // device の SM 数から補正の block 数を決める。取得できない場合は
+    // 下限が使われる。frame ごとに問い合わせない。
+    DeviceProbeResult probe;
+    this->refine_blocks_ = detail::refine_block_count(
+            (probe_device(0, &probe) == Status::kOk) ? probe.multi_processor_count_ : 0);
+
     this->config_ = config;
     this->marker_size_ = marker_size;
     this->has_result_ = false;
@@ -379,8 +388,8 @@ Status Detector::Impl::dispatch(const ImageViewU8& image, cudaStream_t stream) {
     if (status != Status::kOk) {
         return status;
     }
-    return detail::refine_corners_async(pyramid, this->plan_, this->config_, &this->refine_,
-                                        &this->detections_, stream);
+    return detail::refine_corners_async(pyramid, this->plan_, this->config_, this->refine_blocks_,
+                                        &this->refine_, &this->detections_, stream);
 }
 
 void Detector::Impl::release_graph() {

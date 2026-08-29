@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "aruco3cuda/config.hpp"
+#include "aruco3cuda/device_probe.hpp"
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/types.hpp"
 #include "aruco3cuda/workspace.hpp"
@@ -355,6 +356,10 @@ public:
         config.max_width_px_ = scene.cols;
         config.max_height_px_ = scene.rows;
 
+        aruco3cuda::DeviceProbeResult probe;
+        this->multi_processor_count_ = (aruco3cuda::probe_device(0, &probe) == Status::kOk)
+                                               ? probe.multi_processor_count_
+                                               : 0;
         if (this->image_.reserve(scene.cols, scene.rows) != Status::kOk ||
             this->image_.upload(scene.data, scene.cols, scene.rows, scene.step) != Status::kOk) {
             return false;
@@ -432,8 +437,10 @@ public:
         for (int level = 0; level < pyramid.level_count_; ++level) {
             this->pyramid_widths_.push_back(pyramid.width_[level]);
         }
-        if (aruco3cuda::detail::refine_corners_async(pyramid, plan, config, &refine, &detections,
-                                                     nullptr) != Status::kOk ||
+        if (aruco3cuda::detail::refine_corners_async(
+                    pyramid, plan, config,
+                    aruco3cuda::detail::refine_block_count(this->multi_processor_count_), &refine,
+                    &detections, nullptr) != Status::kOk ||
             cudaDeviceSynchronize() != cudaSuccess) {
             return false;
         }
@@ -477,6 +484,7 @@ private:
     }
 
     aruco3cuda::hybrid::DeviceImage image_;
+    int multi_processor_count_ = 0;
     Workspace workspace_;
     std::vector<cv::Point2f> corners_;
     std::vector<std::int32_t> counters_;
@@ -879,10 +887,10 @@ TEST(CornerRefineTest, rejects_invalid_arguments) {
     aruco3cuda::detail::PyramidRef pyramid;
     aruco3cuda::detail::ScalePlan plan;
     aruco3cuda::detail::DeviceDetections detections;
-    EXPECT_EQ(aruco3cuda::detail::refine_corners_async(pyramid, plan, config, nullptr, &detections,
-                                                       nullptr),
+    EXPECT_EQ(aruco3cuda::detail::refine_corners_async(pyramid, plan, config, 64, nullptr,
+                                                       &detections, nullptr),
               Status::kInvalidArgument);
-    EXPECT_EQ(aruco3cuda::detail::refine_corners_async(pyramid, plan, config, &buffers, nullptr,
+    EXPECT_EQ(aruco3cuda::detail::refine_corners_async(pyramid, plan, config, 64, &buffers, nullptr,
                                                        nullptr),
               Status::kInvalidArgument);
 

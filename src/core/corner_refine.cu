@@ -24,13 +24,15 @@ constexpr std::size_t kPlaneAlignment = 256U;
 /// 1 反復で触る要素は patch が最大 13x13 = 169、勾配が最大 11x11 = 121 で
 /// ある。169 を 1 巡で覆える最小の warp の倍数にする。
 constexpr int kRefineThreads = 192;
-/// 起こす block 数の上限。
+/// 起こす block 数の下限と上限。
 ///
-/// 1 block が共有 memory を約 5.5 KB 使うため、起こすだけでも費用がかかる。
-/// 検出が 0 件の frame でも block 数だけの起動費用は払うため、必要以上に
-/// 起こさない。評価計画の上限であるマーカー 16 枚 = 64 隅を 1 波で覆う数に
-/// する。これを超える隅は block が跨ぎながら処理する。
-constexpr int kRefineBlocks = 64;
+/// block 数は「device が同時に走らせられる数」と「仕事の量」の小さい方で
+/// あるべきである。上限は後者で決まる。評価計画の上限であるマーカー 16 枚
+/// = 64 隅を 1 波で覆えばよく、それ以上起こしても隅が無い block が増える
+/// だけである。1 block が共有 memory を約 5.5 KB 使うため、検出が 0 件の
+/// frame でも block 数だけの起動費用を払う。
+constexpr int kMinRefineBlocks = 32;
+constexpr int kMaxRefineBlocks = 64;
 /// OpenCV が cornerSubPix 内で反復回数へ掛ける上限。
 constexpr int kMaxIterations = 100;
 /// 窓の半径を切り替える段の大きさ。
@@ -460,9 +462,36 @@ Status reserve_corner_refine(const DetectorConfig& config, Workspace& workspace,
     return Status::kOk;
 }
 
+int refine_block_count(int multi_processor_count) {
+    // SM 数の 2 倍を目安にする。SM が少ない機では上限 64 より減り、起動の
+    // 費用が下がる。
+    //
+    // 同一 session で交互に測った結果 (別 session の比較は clock の状態差に
+    // 埋もれて意味を成さない):
+    //   Jetson AGX Orin (16 SM -> 32 block) 検出 0 件 -6.0%、
+    //     マーカー 4 枚 -3.3%、16 枚 -1.3%
+    //   DGX Spark (20 SM -> 40 block) 差は雑音の中。8 回反復でも中央値の
+    //     向きが run ごとに入れ替わり、各版の分布 (0.59 から 0.71 ms) が
+    //     版どうしの差より広い
+    //   RTX 5070 Ti (70 SM) 上限 64 に張り付くため変化しない
+    //
+    // 効果は控えめだが、固定値をやめること自体に意味がある。隅の上限 (4096)
+    // をそのまま block 数にしていたとき Jetson で 7 倍遅くなった。SM 数の
+    // 桁が違う機を足したときに同じ事故が起きなくなる。
+    const long long doubled = 2LL * static_cast<long long>(multi_processor_count);
+    if (doubled < kMinRefineBlocks) {
+        return kMinRefineBlocks;
+    }
+    if (doubled > kMaxRefineBlocks) {
+        return kMaxRefineBlocks;
+    }
+    return static_cast<int>(doubled);
+}
+
 Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
-                            const DetectorConfig& config, CornerRefineBuffers* buffers,
-                            DeviceDetections* detections, cudaStream_t stream) {
+                            const DetectorConfig& config, int block_count,
+                            CornerRefineBuffers* buffers, DeviceDetections* detections,
+                            cudaStream_t stream) {
     if (buffers == nullptr || detections == nullptr || buffers->diagnostics_.counters_ == nullptr ||
         detections->corner_x_ == nullptr || detections->corner_y_ == nullptr ||
         detections->count_ == nullptr) {
@@ -505,9 +534,12 @@ Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
     // 1 block が 1 隅を担当し、block 数を超える隅は跨ぎながら処理する。
     // 対象機の SM 数と、共有 memory から決まる 1 SM あたりの block 数を
     // 踏まえ、評価計画の上限 (マーカー 16 枚 = 64 隅) を 1 波で覆える数にする。
+    if (block_count < 1) {
+        return Status::kInvalidArgument;
+    }
     const auto corner_count = detections->capacity_ * kQuadCornerCount;
-    const auto blocks = static_cast<unsigned int>((corner_count < kRefineBlocks) ? corner_count
-                                                                                 : kRefineBlocks);
+    const auto blocks =
+            static_cast<unsigned int>((corner_count < block_count) ? corner_count : block_count);
     refine_kernel<<<blocks, static_cast<unsigned int>(kRefineThreads), 0, stream>>>(
             pyramid, *detections, masks, scale_init, plan.closest_level_index_, max_iterations, eps,
             buffers->diagnostics_.counters_);
