@@ -9,6 +9,7 @@
 #include "aruco3cuda/detector.hpp"
 #include "aruco3cuda/dictionary.hpp"
 #include "aruco3cuda/status.hpp"
+#include "aruco3cuda/types.hpp"
 #include "device_image.hpp"
 #include "hybrid_detector.hpp"
 
@@ -22,6 +23,8 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <exception>
 #include <fstream>
@@ -726,6 +729,19 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     return true;
 }
 
+/// page-locked な入力 buffer を必ず解放する。
+struct PinnedSource {
+    void* data_ = nullptr;
+    PinnedSource() = default;
+    PinnedSource(const PinnedSource&) = delete;
+    PinnedSource& operator=(const PinnedSource&) = delete;
+    ~PinnedSource() {
+        if (this->data_ != nullptr) {
+            static_cast<void>(cudaFreeHost(this->data_));
+        }
+    }
+};
+
 /// stream を必ず破棄する。早期 return が多いため RAII にする。
 struct StreamGuard {
     cudaStream_t stream_;
@@ -758,12 +774,11 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
                      to_string(config.memory_mode_);
         return false;
     }
-    // M-Pinned は受け付けない。入力は cv::Mat であり buffer は常に pageable で
-    // あるため、受理すると M-Pageable と同じ命令列を実行しながら別の種別として
-    // 記録することになる。page-locked な入力を用意する経路は WP-4.2 で足す。
-    if (!resident && config.memory_mode_ != MemoryMode::kHostPageable) {
-        *out_error = std::string("CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable のみ。"
-                                 "M-Pinned と M-Managed は未実装。指定された種別: ") +
+    if (!resident && config.memory_mode_ != MemoryMode::kHostPageable &&
+        config.memory_mode_ != MemoryMode::kHostPinned &&
+        config.memory_mode_ != MemoryMode::kManaged) {
+        *out_error = std::string("CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable、"
+                                 "M-Pinned、M-Managed。指定された種別: ") +
                      to_string(config.memory_mode_);
         return false;
     }
@@ -804,13 +819,44 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::hybrid::DeviceImage device;
     std::string message;
-    if (device.reserve(image.cols, image.rows, &message) != aruco3cuda::Status::kOk) {
+    // 入力 buffer の memory 種別が測定の軸である。種別ごとに確保のしかたと
+    // 転送の意味が変わる。
+    const aruco3cuda::MemorySpace space = (config.memory_mode_ == MemoryMode::kManaged)
+                                                  ? aruco3cuda::MemorySpace::kManaged
+                                                  : aruco3cuda::MemorySpace::kDevice;
+    if (device.reserve(space, image.cols, image.rows, &message) != aruco3cuda::Status::kOk) {
         *out_error = message;
         return false;
     }
+
+    // M-Pinned は「入力 buffer が page-locked である」場合を測る。cv::Mat の
+    // buffer は pageable なので、page-locked な領域へ**測定区間の外で 1 度
+    // だけ**写す。毎 frame 写すと、種別の差ではなく写しの費用を測ることに
+    // なる。
+    PinnedSource pinned;
+    const std::uint8_t* source = image.data;
+    auto source_pitch = static_cast<std::size_t>(image.step);
+    if (config.memory_mode_ == MemoryMode::kHostPinned) {
+        const auto bytes =
+                static_cast<std::size_t>(image.cols) * static_cast<std::size_t>(image.rows);
+        if (cudaMallocHost(&pinned.data_, bytes) != cudaSuccess) {
+            *out_error = "page-locked な入力 buffer を確保できない";
+            return false;
+        }
+        for (int row = 0; row < image.rows; ++row) {
+            std::memcpy(static_cast<std::uint8_t*>(pinned.data_) +
+                                (static_cast<std::size_t>(row) *
+                                 static_cast<std::size_t>(image.cols)),
+                        image.data + (static_cast<std::size_t>(row) *
+                                      static_cast<std::size_t>(image.step)),
+                        static_cast<std::size_t>(image.cols));
+        }
+        source = static_cast<const std::uint8_t*>(pinned.data_);
+        source_pitch = static_cast<std::size_t>(image.cols);
+    }
+
     const auto upload = [&]() {
-        return device.upload(image.data, image.cols, image.rows,
-                             static_cast<std::size_t>(image.step), &message) ==
+        return device.upload(source, image.cols, image.rows, source_pitch, &message) ==
                aruco3cuda::Status::kOk;
     };
     if (!upload()) {

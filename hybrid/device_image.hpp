@@ -50,6 +50,35 @@ public:
     /// 出力例: kOk。view() が有効になる
     Status reserve(int width_px, int height_px, std::string* out_message = nullptr);
 
+    /// memory 種別を指定して領域を確保する。
+    ///
+    /// 種別ごとに確保のしかたと upload() の意味が変わる。
+    ///
+    /// | space | 確保 | upload() |
+    /// | --- | --- | --- |
+    /// | kDevice | cudaMallocPitch | host から device へ転送する |
+    /// | kManaged | cudaMallocManaged | 同じ領域を host と device が見る。転送は起きない |
+    ///
+    /// **転送元が page-locked かどうかはここでは扱いません。** 渡された
+    /// pointer をそのまま読みます。page-locked な入力を用意するのは呼出側の
+    /// 責務です。この class が中継へ写すと、「入力 buffer の種別」ではなく
+    /// 「写しの費用」を測ることになります。
+    ///
+    /// @param space 確保する空間。kDevice、kHostPageable、kHostPinned は
+    ///              いずれも device 側へ確保する。kManaged だけが別扱い。
+    /// @param width_px 幅。1 以上。
+    /// @param height_px 高さ。1 以上。
+    /// @param out_message 失敗時に理由を格納する。nullptr を渡してよい。
+    /// @return kOk、または kInvalidArgument、kCudaError。
+    ///
+    /// 所有権: 確保した領域は本 instance が所有する。
+    /// 同期動作: 確保のみで同期点を持たない。
+    ///
+    /// 入力例: MemorySpace::kManaged、1280、720
+    /// 出力例: kOk。view() の space_ が kManaged になる
+    Status reserve(MemorySpace space, int width_px, int height_px,
+                   std::string* out_message = nullptr);
+
     /// host の 8-bit grayscale 画像を device へ転送する。
     ///
     /// @param data host 側の先頭 pointer。nullptr は不可。

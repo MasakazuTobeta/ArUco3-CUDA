@@ -189,4 +189,79 @@ TEST(DeviceImageTest, rejects_upload_larger_than_reserved) {
     EXPECT_EQ(image.upload(source.data(), 0, 16, 16U, &message), Status::kInvalidArgument);
 }
 
+// 正常系: memory 種別ごとに確保のしかたと view の空間が変わる。
+TEST(DeviceImageTest, reserves_each_memory_space) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    struct Case {
+        aruco3cuda::MemorySpace requested_;
+        aruco3cuda::MemorySpace expected_view_;
+        const char* name_;
+    };
+    const std::vector<Case> cases = {
+            {aruco3cuda::MemorySpace::kDevice, aruco3cuda::MemorySpace::kDevice, "device"},
+            {aruco3cuda::MemorySpace::kHostPinned, aruco3cuda::MemorySpace::kDevice, "pinned"},
+            {aruco3cuda::MemorySpace::kHostPageable, aruco3cuda::MemorySpace::kDevice, "pageable"},
+            {aruco3cuda::MemorySpace::kManaged, aruco3cuda::MemorySpace::kManaged, "managed"},
+    };
+    // 既知の模様を入れて、どの種別でも同じ内容が device 側へ届くことを見る。
+    std::vector<std::uint8_t> source(static_cast<std::size_t>(64) * 48U);
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        source[i] = static_cast<std::uint8_t>((i * 7U) % 251U);
+    }
+
+    for (const Case& item : cases) {
+        aruco3cuda::hybrid::DeviceImage image;
+        std::string message;
+        ASSERT_EQ(image.reserve(item.requested_, 64, 48, &message), aruco3cuda::Status::kOk)
+                << item.name_ << " " << message;
+        EXPECT_EQ(image.view().space_, item.expected_view_) << item.name_;
+        ASSERT_EQ(image.upload(source.data(), 64, 48, 64U, &message), aruco3cuda::Status::kOk)
+                << item.name_ << " " << message;
+
+        // 内容を読み戻す。managed は host から直接読める。
+        std::vector<std::uint8_t> received(source.size());
+        ASSERT_EQ(cudaMemcpy2D(received.data(), 64U, image.view().data_, image.view().pitch_bytes_,
+                               64U, 48U, cudaMemcpyDeviceToHost),
+                  cudaSuccess)
+                << item.name_;
+        EXPECT_EQ(received, source) << item.name_;
+    }
+}
+
+// 正常系: 種別を変えて確保し直すと、前の領域を使い回さない。
+TEST(DeviceImageTest, changing_space_reallocates) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+    }
+    aruco3cuda::hybrid::DeviceImage image;
+    std::string message;
+    ASSERT_EQ(image.reserve(aruco3cuda::MemorySpace::kDevice, 64, 48, &message),
+              aruco3cuda::Status::kOk)
+            << message;
+    ASSERT_EQ(image.view().space_, aruco3cuda::MemorySpace::kDevice);
+    ASSERT_EQ(image.reserve(aruco3cuda::MemorySpace::kManaged, 64, 48, &message),
+              aruco3cuda::Status::kOk)
+            << message;
+    // 空間が変わったので確保し直している。
+    //
+    // **pointer が変わることは主張しない。** 解放した番地を allocator が
+    // すぐ再利用してよく、実際 Jetson AGX Orin では同じ番地が返る。
+    // 確かめるべきは空間が変わったことと、その空間として使えることである。
+    EXPECT_EQ(image.view().space_, aruco3cuda::MemorySpace::kManaged);
+    // managed なら host から直接書ける。device 専用の領域では落ちる。
+    auto* writable = const_cast<std::uint8_t*>(image.view().data_);
+    writable[0] = 123U;
+    EXPECT_EQ(writable[0], 123U);
+
+    // 同じ空間で小さくするときは使い回す。
+    const aruco3cuda::ImageViewU8 managed = image.view();
+    ASSERT_EQ(image.reserve(aruco3cuda::MemorySpace::kManaged, 32, 24, &message),
+              aruco3cuda::Status::kOk)
+            << message;
+    EXPECT_EQ(image.view().data_, managed.data_);
+    EXPECT_EQ(image.view().width_px_, 32);
+}
+
 }  // namespace

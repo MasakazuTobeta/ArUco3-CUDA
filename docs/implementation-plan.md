@@ -452,7 +452,7 @@ GPU は固定費が高く仕事量に対して平坦、CPU は仕事量に比例
 | ID | 内容 | 成果物 | 完了条件 | 依存 | 規模 |
 | --- | --- | --- | --- | --- | --- |
 | WP-4.1 | kernel 起動数と待ち時間の最適化 | `src/core`、`bench`、[benchmark 結果まとめ](benchmark-report.md) | 最適化前後で正確性が不変であり、変化を測定値で示せる。**達成済み。** 転送の非同期化、S10 の要素並列化、Otsu の 3 相化、CUDA Graph 化を入れ、全場面・全機で GPU が CPU を上回った。丸めは不変 | WP-3.6 (転送の非同期化は hybrid 経路で先行実施) | L (当初 M) |
-| WP-4.2 | memory 経路 4 種の実装と測定 | `src/core`、`bench` | pageable、pinned、managed、device 常駐を別結果として記録できる。pageable と device 常駐は測定済み。managed と pinned は Phase 3 で転送が消えるなら不要 | WP-3.6 | M |
+| WP-4.2 | memory 経路 4 種の実装と測定 | `hybrid/device_image.{hpp,cpp}`、`bench`、[benchmark 結果まとめ](benchmark-report.md) | pageable、pinned、managed、device 常駐を別結果として記録できる。**達成済み。** 3 機で測定し、discrete GPU での managed が 6.4 から 30 倍遅いことを確認 | WP-3.6 | M |
 | WP-4.3 | 機種別 tuning | `src/core/corner_refine.{hpp,cu}` | **完了条件を変更した。** 当初は「設定から上書きできる」だったが、測定の結果 block size は 3 機とも 16 が最適で設定にする価値が無かった。代わりに「機に依存する値は device 属性から導き、固定値を残さない」とする。達成済み | WP-4.1 | S |
 | WP-4.4 | Jetson Orin での全評価 | 測定結果 | 同一 corpus が通り、環境情報と power mode が記録されている | B2、WP-4.3 | L |
 | WP-4.5 | crossover point の報告 | benchmark report | CPU が有利な条件を含めて境界を示せる | WP-4.4 | M |
@@ -610,6 +610,8 @@ OpenCV Issue #27118 の報告者は、CPU 実装の処理時間として 640x480
 - CUDA Toolkit の最低 version。[ADR-0002](adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じ。
 - CI を実行する環境。開発機、Jetson 実機、外部 runner のどれを使うか。
 - corpus に実画像を含める時期と、その入手・配布条件。
+- DGX Spark で `LabelingTest.large_image_matches_reference` が 1 度だけ落ちた。同じ組み合わせで 9 回続けて再現せず、単独では 5 回とも通る。失敗時の内訳を捕捉できていない。再現したら特定する。
+- DGX Spark で `M-Pinned` が `M-Pageable` より 1.09 から 1.15 倍遅い理由。統合 GPU で DMA の利点が無いことは説明できるが、遅くなる分の説明が付いていない。
 
 ## 関連
 

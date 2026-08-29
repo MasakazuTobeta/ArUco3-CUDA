@@ -31,24 +31,33 @@ public:
     Impl& operator=(const Impl&) = delete;
     ~Impl() { this->release(); }
 
-    Status reserve(int width_px, int height_px, std::string* out_message) {
+    Status reserve(MemorySpace space, int width_px, int height_px, std::string* out_message) {
         if (width_px <= 0 || height_px <= 0) {
             set_message(out_message, "画像の寸法は 1 以上である必要がある");
             return Status::kInvalidArgument;
         }
-        if (this->data_ != nullptr && width_px <= this->capacity_width_px_ &&
-            height_px <= this->capacity_height_px_) {
+        if (this->data_ != nullptr && space == this->space_ &&
+            width_px <= this->capacity_width_px_ && height_px <= this->capacity_height_px_) {
             // 既存の領域で足りる。frame ごとの確保を避ける。
             this->view_.width_px_ = width_px;
             this->view_.height_px_ = height_px;
             return Status::kOk;
         }
         this->release();
+        this->space_ = space;
 
         std::size_t pitch = 0;
-        const cudaError_t error =
-                cudaMallocPitch(&this->data_, &pitch, static_cast<std::size_t>(width_px),
-                                static_cast<std::size_t>(height_px));
+        cudaError_t error = cudaSuccess;
+        if (space == MemorySpace::kManaged) {
+            // managed では中継を作らず、この領域へ直接書く。pitch は自分で
+            // 決める。128 byte 境界へ揃えて、device 側の合体読み出しを保つ。
+            pitch = ((static_cast<std::size_t>(width_px) + 127U) / 128U) * 128U;
+            error = cudaMallocManaged(&this->data_,
+                                      pitch * static_cast<std::size_t>(height_px));
+        } else {
+            error = cudaMallocPitch(&this->data_, &pitch, static_cast<std::size_t>(width_px),
+                                    static_cast<std::size_t>(height_px));
+        }
         if (error != cudaSuccess) {
             this->data_ = nullptr;
             set_message(out_message,
@@ -61,8 +70,13 @@ public:
         this->view_.width_px_ = width_px;
         this->view_.height_px_ = height_px;
         this->view_.pitch_bytes_ = pitch;
-        this->view_.space_ = MemorySpace::kDevice;
+        this->view_.space_ =
+                (space == MemorySpace::kManaged) ? MemorySpace::kManaged : MemorySpace::kDevice;
         return Status::kOk;
+    }
+
+    Status reserve(int width_px, int height_px, std::string* out_message) {
+        return this->reserve(MemorySpace::kDevice, width_px, height_px, out_message);
     }
 
     Status upload(const std::uint8_t* data, int width_px, int height_px,
@@ -80,6 +94,27 @@ public:
             set_message(out_message, "確保済みの寸法を超える転送はできない");
             return Status::kInvalidArgument;
         }
+        if (this->space_ == MemorySpace::kManaged) {
+            // managed は device と host が同じ領域を見る。転送は起きない。
+            // 移送の費用は device 側が最初に触ったときに現れる。
+            const cudaError_t copied = cudaMemcpy2D(
+                    this->data_, this->view_.pitch_bytes_, data, source_pitch_bytes,
+                    static_cast<std::size_t>(width_px), static_cast<std::size_t>(height_px),
+                    cudaMemcpyHostToHost);
+            if (copied != cudaSuccess) {
+                set_message(out_message, std::string("managed 領域へ写せない: ") +
+                                                 cudaGetErrorString(copied));
+                return Status::kCudaError;
+            }
+            this->view_.width_px_ = width_px;
+            this->view_.height_px_ = height_px;
+            return Status::kOk;
+        }
+
+        // 転送元が page-locked かどうかは呼出側が決める。この class は
+        // 渡された pointer をそのまま読む。page-locked な入力を用意するのは
+        // 呼出側の責務であり、ここで中継へ写すと「入力 buffer の種別」では
+        // なく「写しの費用」を測ることになる。
         const cudaError_t error = cudaMemcpy2D(this->data_, this->view_.pitch_bytes_, data,
                                                source_pitch_bytes,
                                                static_cast<std::size_t>(width_px),
@@ -109,6 +144,7 @@ private:
     }
 
     void* data_ = nullptr;
+    MemorySpace space_ = MemorySpace::kDevice;
     int capacity_width_px_ = 0;
     int capacity_height_px_ = 0;
     ImageViewU8 view_;
@@ -121,6 +157,11 @@ DeviceImage& DeviceImage::operator=(DeviceImage&&) noexcept = default;
 
 Status DeviceImage::reserve(int width_px, int height_px, std::string* out_message) {
     return this->impl_->reserve(width_px, height_px, out_message);
+}
+
+Status DeviceImage::reserve(MemorySpace space, int width_px, int height_px,
+                            std::string* out_message) {
+    return this->impl_->reserve(space, width_px, height_px, out_message);
 }
 
 Status DeviceImage::upload(const std::uint8_t* data, int width_px, int height_px,

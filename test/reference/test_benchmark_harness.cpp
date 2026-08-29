@@ -134,10 +134,6 @@ TEST_F(BenchmarkHarnessTest, refuses_mismatched_memory_mode) {
             {Route::kCudaResident, aruco3cuda::bench::MemoryMode::kHostPageable},
             // 転送を含む経路に device 常駐を渡す。
             {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kDevice},
-            // 未実装の種別。受理すると M-Pageable と同じものを別の名前で
-            // 記録することになる。
-            {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kHostPinned},
-            {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kManaged},
             // CPU 経路に memory 種別は無い。
             {Route::kCpu, aruco3cuda::bench::MemoryMode::kManaged},
             {Route::kCpu, aruco3cuda::bench::MemoryMode::kHostPinned},
