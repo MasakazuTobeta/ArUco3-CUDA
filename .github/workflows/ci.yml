@@ -27,7 +27,7 @@ jobs:
     name: 整形と文書の検査
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # container と同じ 18 系を使う。version が違うと整形結果が変わり、
       # 手元で通るものが CI で落ちる。
@@ -61,7 +61,7 @@ jobs:
     name: build と CPU 側 test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 開発 container と同じ経路で導入する。third-party action を使わないのは
       # 供給元を NVIDIA の apt repository へ揃えるためである。
