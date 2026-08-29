@@ -3,7 +3,14 @@
 ArUco3-CUDA は、ArUco3 の高速検出戦略を CUDA で実装し、NVIDIA DGX Spark と Jetson Orin で有効性を評価するためのプロジェクトです。
 
 > [!IMPORTANT]
-> 現在は設計・評価準備段階です。CUDA 検出器はまだ実装されていません。
+> 検出は入力から ID・四隅の出力まで GPU 常駐で完結します。評価は合成 corpus のみで行っており、実画像での評価はまだです。OpenCV への提案は判断前です。
+
+## 現状
+
+- 検出の全 10 段が CUDA で動きます。`Detector` が host 同期なしで device 上の結果を返します。
+- 評価対象は DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の 3 機です。3 機とも 402 件の自動 test と Compute Sanitizer 4 tool が通ります。
+- 正確性は合成 corpus 91 場面・真値 480 個で、3 経路 x 3 機のすべてで precision 100%、ArUco3 の下限以上のマーカーで recall 94.44% です ([正確性評価の結果](docs/accuracy-report.md))。
+- 速度は 28 場面 x 3 経路 x 3 機で測りました。**CPU が有利な場面は残ります。** 640x480 かつ検出ありの場面では CPU が勝ちます ([Benchmark 報告](docs/benchmark-report.md))。
 
 ## 目的
 
@@ -79,6 +86,7 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 - [実装計画](docs/implementation-plan.md)
 - [評価計画](docs/evaluation-plan.md)
 - [Benchmark 報告](docs/benchmark-report.md)
+- [正確性評価の結果](docs/accuracy-report.md)
 - [Dictionary 方針](docs/dictionaries.md)
 - [ロードマップ](docs/roadmap.md)
 - [知的財産・ライセンス方針](docs/ip-and-licensing.md)

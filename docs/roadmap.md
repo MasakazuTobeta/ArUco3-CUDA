@@ -10,7 +10,13 @@
 
 ## 現状
 
-Phase 0 を完了しました。開発 container、build 基盤、CPU 基準 runner、test corpus 生成器、Dictionary 変換 tool、benchmark harness が DGX Spark と Jetson AGX Orin の両方で動作します。次は Phase 1 の最小成立版です。日付は hardware と開発時間を確認後に設定します。
+Phase 0 から Phase 4 までを完了しました。次は Phase 5 の提案判断です。日付は開発時間を確認後に設定します。
+
+検出は S1 から S10 まで GPU 常駐で完結し、`Detector` が host 同期なしで結果を返します。評価対象は DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の 3 機です。3 機とも 402 件の自動 test と Compute Sanitizer 4 tool が通ります。
+
+正確性は合成 corpus 91 場面・真値 480 個で測り、3 経路 x 3 機のすべてで precision 100%、ArUco3 の下限以上のマーカーで recall 94.44% です ([正確性評価の結果](accuracy-report.md))。速度は 28 場面 x 3 経路 x 3 機で測り、CPU が有利なのは 640x480 かつ検出ありの場面に限られます ([benchmark 報告](benchmark-report.md))。
+
+実画像 corpus はまだありません。
 
 ## 目標
 
@@ -55,7 +61,7 @@ flowchart TD
 - Dictionary 照合、rotation、error correction を実装する。
 - 重複候補を整理する。
 
-完了条件: ID と四隅の出力まで GPU 経路で完結する。
+完了条件: ID と四隅の出力まで GPU 経路で完結する。達成済み。
 
 ### Phase 4: 最適化と評価
 
@@ -63,7 +69,7 @@ flowchart TD
 - Jetson Orin と DGX Spark で全評価を実施する。
 - CPU、CUDA、ハイブリッドの crossover point を報告する。
 
-完了条件: [評価計画](evaluation-plan.md) の成果物が揃い、再現可能である。
+完了条件: [評価計画](evaluation-plan.md) の成果物が揃い、再現可能である。達成済み。実画像 corpus と段ごとの CUDA event 計測は Phase 5 以降へ送った。
 
 ### Phase 5: OpenCV 提案判断
 
@@ -86,4 +92,5 @@ flowchart TD
 - [実装計画](implementation-plan.md)
 - [評価計画](evaluation-plan.md)
 - [Benchmark 報告](benchmark-report.md)
+- [正確性評価の結果](accuracy-report.md)
 - [Docker 環境設計](design/docker-environment.md)

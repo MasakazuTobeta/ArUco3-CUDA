@@ -10,14 +10,21 @@ Phase 0 から Phase 4 までの作業単位、repository 構成、開発 contai
 
 ## 現状
 
-- Phase 0 の全作業単位 WP-0.0 から WP-0.7 が完了しました。開発 container、CMake build 基盤、`ctest`、Compute Sanitizer 経路、format と静的解析、CPU 基準 runner、合成 corpus 生成器、Dictionary 変換 tool、benchmark harness が DGX Spark と Jetson AGX Orin の両方で動作します。
-- core は build 基盤の疎通確認に必要な最小構成のみです。CUDA 検出器、adapter、benchmark harness、データセットはありません。
-- 開発機は DGX Spark GB10 です。実測値と build baseline の決定案は [ADR-0002](adr/0002-toolchain-and-target-baseline.md) にまとめています。
-- Jetson Orin 実機はこの環境から参照できていません。JetPack version と power mode は未確認です。
-- 開発機に OpenCV、`clang-format`、`ninja` が install されていません。`compute-sanitizer` は使用できます。これらは host へ直接 install せず、開発 container 側で供給します。
-- Docker 28.3.3、Docker Compose v2.39.1、NVIDIA Container Toolkit 1.18.0 が利用可能で、`nvidia` runtime が登録済みです。
-- 開発 container 環境は `dgx-spark` profile を構築済みで、CUDA Toolkit を image へ固定する `pinned` mode と host から mount する `mounted` mode の両方で環境検査と smoke test が合格しています。設計は [Docker 環境設計](design/docker-environment.md) を参照してください。
+Phase 0 から Phase 4 までの全作業単位が完了しました。次は Phase 5 の提案判断です。
+
+- 検出は S1 から S10 まで GPU 常駐で完結します。`Detector` が host 同期なしで device 上の結果を返し、`download()` で host へ取り出せます。発行列は CUDA Graph へ畳んでいます。
+- 評価対象は 3 機です。DGX Spark GB10 (統合、sm_121)、Jetson AGX Orin (統合、sm_87、CUDA 11.4)、GeForce RTX 5070 Ti (単体、sm_120)。**3 機すべてで 402 件の自動 test と Compute Sanitizer 4 tool が通ります。**
+- 正確性は合成 corpus 91 場面・真値 480 個で測りました。**3 経路 x 3 機のすべてで precision 100%**、ArUco3 の下限以上のマーカーで **recall 94.44%** です。詳細は [正確性評価の結果](accuracy-report.md) にあります。
+- 速度は 28 場面 x 3 経路 x 3 機で測りました。**CPU が有利なのは 640x480 かつ検出ありの場面に限られます。** 詳細は [benchmark 結果まとめ](benchmark-report.md) にあります。
+- 開発 container は `dgx-spark`、`jetson-orin`、`rtx-blackwell` の 3 profile が動作します。設計は [Docker 環境設計](design/docker-environment.md) を参照してください。
 - 互換対象である OpenCV 4.x の ArUco3 経路の観測仕様は [検出パイプライン設計](design/detector-pipeline.md) に記録済みです。
+
+未着手のまま Phase 5 以降へ送ったものは次のとおりです。
+
+- 実画像 corpus。現在は合成 corpus のみです。
+- 段ごとの CUDA event 計測。現在の段階時間は wall-clock であり host 同期を含みます。
+- `.cu` を含めた coverage 計測。現状と未達理由は下の「カバレッジの現状と未達理由」にあります。
+- patent clearance ([R7](#リスクと対策))。Phase 4 が完了したため、着手の期限に達しています。
 
 ### 着手前の blocker
 
