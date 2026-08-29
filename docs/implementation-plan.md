@@ -456,7 +456,25 @@ GPU は固定費が高く仕事量に対して平坦、CPU は仕事量に比例
 | WP-4.3 | 機種別 tuning の設定化 | 設定 file | block size 等が source の固定値でなく設定から上書きできる | WP-4.1 | S |
 | WP-4.4 | Jetson Orin での全評価 | 測定結果 | 同一 corpus が通り、環境情報と power mode が記録されている | B2、WP-4.3 | L |
 | WP-4.5 | crossover point の報告 | benchmark report | CPU が有利な条件を含めて境界を示せる | WP-4.4 | M |
-| WP-4.6 | Compute Sanitizer 全経路 | CI target | memcheck、racecheck、initcheck、synccheck で指摘が無い | WP-4.1 | M |
+| WP-4.6 | Compute Sanitizer 全経路 | `cmake/Aruco3CudaSanitizer.cmake` | memcheck、racecheck、initcheck、synccheck で指摘が無い。**達成済み。** 3 機すべてで 8 件通過。`--leak-check full` と `--report-api-errors all` も追加 | WP-4.1 | M |
+
+#### WP-4.6 の実測: 3 機で Compute Sanitizer が通った
+
+| 機体 | racecheck | 4 tool 全体 |
+| --- | --- | --- |
+| DGX Spark GB10 | 通過 | 8 / 8 |
+| Jetson AGX Orin | 81.5 s | 8 / 8 |
+| RTX 5070 Ti | 643.8 s | 8 / 8 |
+
+**これまで DGX Spark でしか sanitizer を走らせていませんでした。** 3 機で確かめたところ、RTX Blackwell の racecheck が失敗しました。`--force-synchronization-limit 1` を足すと通ります。racecheck は既定では block の完了まで解析を溜めるため、共有 memory を多く使う kernel があると解析の状態が上限に達します。
+
+あわせて次を入れました。
+
+- `--leak-check full` と `--report-api-errors all` — 資源の漏れと握り潰した CUDA API error を継続的に見る。現状 0 件
+- racecheck の timeout を 600 s から 1800 s へ (RTX の実測 643.8 s に対し旧設定では間に合わない)
+- `RUN_SERIAL` と `LABELS "sanitizer"` — GPU の取り合いを避け、`ctest -L sanitizer` で選べるようにする
+
+CI は本 repository にまだありません。完了条件の「CI target」は、`ctest -L sanitizer` として 1 command で走る形を用意することで代えます。CI を立てる時期は未確定事項のままです。
 
 G4 の完了条件: [評価計画](evaluation-plan.md) の成果物が揃い、再現手順で同じ結果が得られること。
 

@@ -67,12 +67,11 @@ protected:
     BenchmarkConfig config_;
 };
 
-/// 時間の大小を主張する test。
+/// 経路どうしの結果を突き合わせる test。
 ///
-/// Compute Sanitizer の下では 1 呼び出しが数十秒に伸び、経路の差より
-/// 負荷の差が大きくなる。suite 名に Timing を含めることで、sanitizer の
-/// 既定の除外規則 (*Timing*.*) に載る。
-class BenchmarkHarnessTimingTest : public ::testing::Test {
+/// 時間の大小は主張しないため suite 名に Timing を含めない。Compute Sanitizer
+/// の下でも走らせる。CUDA-EndToEnd 経路を通す唯一の test である。
+class BenchmarkHarnessRouteTest : public ::testing::Test {
 protected:
     void SetUp() override {
         const cv::aruco::Dictionary dictionary =
@@ -135,6 +134,14 @@ TEST_F(BenchmarkHarnessTest, refuses_mismatched_memory_mode) {
             {Route::kCudaResident, aruco3cuda::bench::MemoryMode::kHostPageable},
             // 転送を含む経路に device 常駐を渡す。
             {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kDevice},
+            // 未実装の種別。受理すると M-Pageable と同じものを別の名前で
+            // 記録することになる。
+            {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kHostPinned},
+            {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kManaged},
+            // CPU 経路に memory 種別は無い。
+            {Route::kCpu, aruco3cuda::bench::MemoryMode::kManaged},
+            {Route::kCpu, aruco3cuda::bench::MemoryMode::kHostPinned},
+            {Route::kCpu, aruco3cuda::bench::MemoryMode::kDevice},
     };
     for (const Case& item : cases) {
         BenchmarkConfig config = this->config_;
@@ -515,7 +522,7 @@ TEST(BenchmarkOutputTest, available_clock_is_written) {
 // 検出の 1 ms に対して 1% に届かない。実測でも clock の立ち上がりによる
 // ばらつきの方が大きく、測る順序で大小が入れ替わる。差が見える大きさの
 // 画像での比較は、実機の測定 (docs/measurements) の役目とする。
-TEST_F(BenchmarkHarnessTimingTest, cuda_routes_agree_on_detections) {
+TEST_F(BenchmarkHarnessRouteTest, cuda_routes_agree_on_detections) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";
     }
@@ -526,12 +533,9 @@ TEST_F(BenchmarkHarnessTimingTest, cuda_routes_agree_on_detections) {
     BenchmarkConfig end_to_end = resident;
     end_to_end.route_ = Route::kCudaEndToEnd;
     end_to_end.memory_mode_ = aruco3cuda::bench::MemoryMode::kHostPageable;
-    BenchmarkConfig pinned = end_to_end;
-    pinned.memory_mode_ = aruco3cuda::bench::MemoryMode::kHostPinned;
 
     MeasurementRecord resident_record;
     MeasurementRecord end_to_end_record;
-    MeasurementRecord pinned_record;
     std::string error;
     ASSERT_TRUE(
             aruco3cuda::bench::measure_image(this->image_path_, resident, &resident_record, &error))
@@ -539,19 +543,13 @@ TEST_F(BenchmarkHarnessTimingTest, cuda_routes_agree_on_detections) {
     ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, end_to_end, &end_to_end_record,
                                                  &error))
             << error;
-    ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, pinned, &pinned_record, &error))
-            << error;
 
-    // どの経路も同じ検出結果でなければ、経路の実装が食い違っている。
+    // どちらの経路も同じ検出結果でなければ、経路の実装が食い違っている。
     EXPECT_EQ(end_to_end_record.detection_count_, resident_record.detection_count_);
-    EXPECT_EQ(pinned_record.detection_count_, resident_record.detection_count_);
     EXPECT_GT(resident_record.end_to_end_ms_.min_, 0.0);
     EXPECT_GT(end_to_end_record.end_to_end_ms_.min_, 0.0);
-    std::printf(
-            "[bench] 最小 Resident %.3f ms / EndToEnd(pageable) %.3f ms / "
-            "EndToEnd(pinned) %.3f ms\n",
-            resident_record.end_to_end_ms_.min_, end_to_end_record.end_to_end_ms_.min_,
-            pinned_record.end_to_end_ms_.min_);
+    std::printf("[bench] 最小 Resident %.3f ms / EndToEnd(pageable) %.3f ms\n",
+                resident_record.end_to_end_ms_.min_, end_to_end_record.end_to_end_ms_.min_);
 }
 
 }  // namespace

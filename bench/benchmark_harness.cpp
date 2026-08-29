@@ -583,6 +583,13 @@ bool validate_iteration_counts(const BenchmarkConfig& config, std::string* out_e
 /// 8 割が PNG の復号になり、検出時間の比較にならない。
 bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
                  MeasurementRecord* record, std::string* out_error) {
+    // CPU 経路に memory 種別は無い。受理すると、種別と何の関係も無い測定が
+    // その種別の結果として集計へ並ぶ。
+    if (config.memory_mode_ != MemoryMode::kNotApplicable) {
+        *out_error = std::string("CPU 経路が対応する memory 種別は N/A のみ。指定された種別: ") +
+                     to_string(config.memory_mode_);
+        return false;
+    }
     // 起動の費用は 1 度しか現れない。instance を作り直して 1 枚目を測る。
     const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::reference::ReferenceDetector detector;
@@ -751,10 +758,12 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
                      to_string(config.memory_mode_);
         return false;
     }
-    if (!resident && config.memory_mode_ != MemoryMode::kHostPageable &&
-        config.memory_mode_ != MemoryMode::kHostPinned) {
-        *out_error = std::string("CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable と "
-                                 "M-Pinned。指定された種別: ") +
+    // M-Pinned は受け付けない。入力は cv::Mat であり buffer は常に pageable で
+    // あるため、受理すると M-Pageable と同じ命令列を実行しながら別の種別として
+    // 記録することになる。page-locked な入力を用意する経路は WP-4.2 で足す。
+    if (!resident && config.memory_mode_ != MemoryMode::kHostPageable) {
+        *out_error = std::string("CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable のみ。"
+                                 "M-Pinned と M-Managed は未実装。指定された種別: ") +
                      to_string(config.memory_mode_);
         return false;
     }

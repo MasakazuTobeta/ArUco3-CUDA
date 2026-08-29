@@ -9,7 +9,7 @@
 
 ## 対象範囲
 
-`CPU` 経路 (OpenCV ArUco3) と `Hybrid` 経路 (GPU で前処理と二値化、CPU で候補抽出と decode) を比較します。`CUDA-E2E` と `CUDA-Resident` は未実装のため対象外です。
+`CPU` 経路 (OpenCV ArUco3)、`Hybrid` 経路 (GPU で前処理と二値化、CPU で候補抽出と decode)、`CUDA-Resident` 経路 (S1 から S10 まで GPU) を比較します。`CUDA-E2E` は実装済みですが、まだ 3 機での測定を取っていません。
 
 ## 測定した区間
 
@@ -62,7 +62,9 @@ DGX Spark と RTX の機はいずれも CPU 0 が異なる種別です。DGX Spa
 | `M-Device` | 画像は既に device にある。転送は測定区間の外 |
 | `M-Pageable` | host の画像を毎 frame 転送する。転送は測定区間の内 |
 
-`M-Pinned` と `M-Managed` は未実装です (WP-4.2)。
+`M-Pinned` と `M-Managed` は**まだ実装していません** (WP-4.2)。
+
+**`M-Pinned` は CLI が受理しますが、実際には `M-Pageable` と同じ命令列を実行します。** 入力は `cv::Mat` であり、その buffer は常に pageable です。`DeviceImage` にも page-locked な host buffer を確保する経路がありません。実測でも両者の分布は完全に重なり、順序も入れ替わります (DGX Spark 1920x1080 で pageable 1.081/1.111/1.118 ms、pinned 1.129/1.163/1.068 ms)。**したがって `"memory_mode":"M-Pinned"` と記録された測定は偽の記録です。** 実装するまで受理しないようにしました。
 
 ## 対象機
 
@@ -232,7 +234,9 @@ WP-4.1 の調査で、同じ画像を使って段別に切り分けました (DG
 | Step 2 (Otsu) | 0.937 ms | 1.467 ms | 0.436 ms |
 | Step 3 (Graph) | 0.687 ms | 1.111 ms | 0.417 ms |
 
-**すべての場面、すべての機で GPU が CPU を上回りました。** WP-4.1 前は 1280x720 マーカー 4 枚で DGX Spark が CPU の 1.94 倍かかっていましたが、0.98 になりました。4K では 3 機とも 0.45 以下です。
+**640x480 を除くすべての場面で GPU が CPU を上回りました。** WP-4.1 前は 1280x720 マーカー 4 枚で DGX Spark が CPU の 1.94 倍かかっていましたが、0.98 になりました。4K では 3 機とも 0.45 以下です。
+
+640x480 マーカー 4 枚では DGX Spark が 1.32、RTX 5070 Ti が 1.25 で **CPU が速いまま**です (Jetson は 0.87 で上回りました)。最も仕事量が少ない場面であり、GPU の固定費を仕事量が上回りません。境界の詳しい分析は下の crossover の節にあります。
 
 **丸めは 1 bit も変わっていません。** S10 は逐語 oracle との bit 一致、Otsu は `cv::threshold` が返す閾値との整数一致 (256 件)、Graph は畳まない経路との結果一致で担保しています。
 

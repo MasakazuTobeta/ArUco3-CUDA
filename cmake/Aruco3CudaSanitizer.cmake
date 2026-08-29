@@ -41,10 +41,25 @@ function(aruco3cuda_add_sanitizer_tests target)
   # 対象は suite 名で識別する。該当が無い target では filter は何も除外しない。
   set(kSanitizerGtestFilter "-*DeliberateError*.*:*Timing*.*")
   foreach(tool IN LISTS ARUCO3CUDA_SANITIZER_TOOLS)
+    # 資源の漏れと、握り潰された CUDA API error も見る。追加の費用はほぼ無い。
+    set(kExtraArgs --leak-check full --report-api-errors all)
+    set(kTimeout 600)
+    if(tool STREQUAL "racecheck")
+      # racecheck は既定では block の完了まで解析を溜める。共有 memory を多く
+      # 使う kernel があると解析の状態が上限に達し、偽の指摘か失敗になる。
+      # 同期の粒度を下げて溜め込みを減らす。RTX Blackwell で必要だった。
+      list(APPEND kExtraArgs --force-synchronization-limit 1)
+      # 同期を細かく入れるため実行時間が伸びる。実測 565 秒に対し余裕を持たせる。
+      set(kTimeout 1800)
+    endif()
     add_test(NAME "sanitizer.${tool}.${target}"
-      COMMAND "${kComputeSanitizer}" --tool "${tool}" --error-exitcode 1
+      COMMAND "${kComputeSanitizer}" --tool "${tool}" --error-exitcode 1 ${kExtraArgs}
               "$<TARGET_FILE:${target}>" "--gtest_filter=${kSanitizerGtestFilter}")
     # sanitizer 経由では実行時間が延びるため timeout を個別に設定する。
-    set_tests_properties("sanitizer.${tool}.${target}" PROPERTIES TIMEOUT 600)
+    # GPU を取り合うと時間が伸びて timeout するため直列で走らせる。
+    set_tests_properties("sanitizer.${tool}.${target}" PROPERTIES
+      TIMEOUT ${kTimeout}
+      RUN_SERIAL TRUE
+      LABELS "sanitizer")
   endforeach()
 endfunction()
