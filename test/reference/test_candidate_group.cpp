@@ -239,7 +239,7 @@ TEST(CandidateGroupTest, empty_input_produces_no_group) {
 //
 // CPU 基準は、既に別々の group へ属している 2 つを統合しない。両端が
 // 直接は近接していないこの配置では、CPU 基準が 2 つ残すのに対し本実装は
-// 1 つにまとめる。差の大きさは WP-2.6 で実測する。
+// 1 つにまとめる。差の大きさは CPU 基準との比較で実測している。
 TEST(CandidateGroupTest, known_difference_chained_candidates_merge) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";

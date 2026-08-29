@@ -2,7 +2,7 @@
 //
 // ハイブリッド経路を CPU 基準実装と突き合わせる。
 //
-// WP-1.5 の完了条件は「合成画像の基本条件で ID と四隅を取得できる」ことである。
+// hybrid 経路が満たすべき条件は「合成画像の基本条件で ID と四隅を取得できる」ことである。
 // あわせて、CPU 基準との差異を分類できる状態にする。前処理と二値化が
 // OpenCV と一致しているため、ここで残る差は CPU 側の実装差に絞られる。
 #include "hybrid_detector.hpp"
@@ -191,7 +191,7 @@ TEST(HybridDetectorTest, rejects_invalid_image) {
     EXPECT_EQ(detector.detect(view, nullptr, &message), Status::kInvalidArgument);
 }
 
-// 正常系: 合成画像から ID と四隅を取得できる。WP-1.5 の完了条件である。
+// 正常系: 合成画像から ID と四隅を取得できる。hybrid 経路の最低条件である。
 TEST(HybridDetectorTest, detects_markers_in_synthetic_scene) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";
@@ -227,7 +227,7 @@ TEST(HybridDetectorTest, detects_markers_in_synthetic_scene) {
 }
 
 // 正常系: CPU 基準実装と ID が一致し、四隅の差を分類できる。
-// Phase 1 のゲート G1 に対応する。
+// hybrid 経路が成立していることの確認に対応する。
 TEST(HybridDetectorTest, matches_cpu_reference_and_reports_differences) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";

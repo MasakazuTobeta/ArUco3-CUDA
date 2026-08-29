@@ -54,7 +54,7 @@ struct HybridResult {
 /// 位置付け:
 ///   [検出パイプライン設計](../docs/design/detector-pipeline.md) の案 C にあたる。
 ///   GPU 側の段階を 1 つずつ置き換えていく際の基準となり、案 A が期待どおりに
-///   動かない場合の fallback でもある。Phase 2 以降も維持する。
+///   動かない場合の fallback でもある。全 GPU 経路が揃った後も維持する。
 ///
 /// 所有権:
 ///   workspace と OpenCV 側の一時 buffer をこの class が所有する。

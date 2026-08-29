@@ -87,8 +87,9 @@
 
 - 文書は原則として日本語で記述し、`docs/terminology.md` の推奨表現を使用する。
 - 仕様・構想では、`現状` と `目標` を明確に分ける。
-- C++ の同一 stem の program file 合計が 300 行以上の場合は、隣接する sidecar `*.md` を追加する。
+- 設計判断が code の Doxygen だけでは伝わらない module には、隣接する sidecar `*.md` を置く。
 - sidecar には `目的`、`対象範囲`、`現状`、`実装上の判断`、`目標`、`関連` を含める。
+- 設計判断の記録先は領域ごとに決まっている。`src/core` の各段は [検出パイプライン設計](docs/design/detector-pipeline.md) が正本であり、sidecar は置かない。`tools/`、`bench/`、`reference/` は独立した道具なので sidecar を置く。test file には置かない。
 - 将来の判断に影響する採用理由と制約は ADR または関連文書へ残す。
 
 ## Commit And Review

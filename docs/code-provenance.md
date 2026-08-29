@@ -10,7 +10,7 @@
 
 ## 現状
 
-Phase 3 の S10 まで実装済みです。GPU 側は前処理、二値化、候補抽出、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction、四隅の subpixel 補正までが記録の対象に含まれます。案 C のハイブリッド経路 (CPU) も引き続き対象です。
+GPU 側は前処理、二値化、候補抽出、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction、四隅の subpixel 補正までが記録の対象です。hybrid 経路の CPU 側も対象に含みます。
 
 ## 記録
 
@@ -23,7 +23,7 @@ Phase 3 の S10 まで実装済みです。GPU 側は前処理、二値化、候
 | Source version | `opencv/opencv` branch `4.x`、branch head `6dc8e409035489769b4fe7edf3cd63f55bd23ec0`（2026-08-27 取得） |
 | License | Apache-2.0 |
 | Reused expression | なし。parameter 名、既定値、段階の順序、縮小率と pyramid 段数の算出式を仕様として記述した。source code の control flow、関数分割、コメントは複製していない |
-| Patent review | 簡易検索済み (2026-08-29)。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。専門家確認は未実施 |
+| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
 
 参照した file と取得時 hash は次のとおりです。
 
@@ -43,7 +43,7 @@ Phase 3 の S10 まで実装済みです。GPU 側は前処理、二値化、候
 | Source version | `opencv/opencv` tag `4.14.0`、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
 | License | Apache-2.0 |
 | Reused expression | なし。改変せず build して image へ install するのみ |
-| Patent review | 簡易検索済み (2026-08-29)。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。専門家確認は未実施 |
+| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
 
 build option は `BUILD_LIST=core,imgproc,imgcodecs,calib3d,objdetect`、`WITH_CUDA=OFF` です。取得元 commit と build option は image 内の `/opt/opencv/share/aruco3cuda/opencv-provenance.json` へ記録し、`record-environment.sh` が出力する環境情報 JSON へ埋め込みます。
 
@@ -58,7 +58,7 @@ script は clone した commit が指定値と一致することを確認し、�
 | Source version | `cuda-nvcc-13-0` 13.0.88-1 ほか。実際の version は image 内 `/opt/aruco3cuda/cuda-provenance.json` に記録 |
 | License | NVIDIA CUDA Toolkit EULA |
 | Reused expression | なし。再配布せず、image build 時に NVIDIA の repository から取得する |
-| Patent review | 簡易検索済み (2026-08-29)。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。専門家確認は未実施 |
+| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
 
 image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を EULA で確認する必要があります。現時点では各機で build する運用を前提とします。
 
@@ -71,7 +71,7 @@ image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を 
 | Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
 | License | Apache-2.0 |
 | Reused expression | codeword data を packed 表現へ変換して格納した。source code の複製はない |
-| Patent review | 簡易検索済み (2026-08-29)。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。専門家確認は未実施 |
+| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
 
 生成物には取得元 OpenCV version と再生成手順を header comment として記録しています。公式 ArUco の GPLv3 配布物からは抽出していません。生成物が OpenCV と整合することは `aruco3cuda_dictgen --check` と `test/reference/test_dictionary_conformance.cpp` で継続的に検証します。
 
@@ -84,7 +84,7 @@ image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を 
 | Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
 | License | Apache-2.0 |
 | Reused expression | 振る舞いの再実装。判定式、閾値の適用順序、候補の並び替え規則は OpenCV と同一にした。識別子、コメント、関数分割は本 project の規約に従って独自に書いた |
-| Patent review | 簡易検索済み (2026-08-29)。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。専門家確認は未実施 |
+| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
 
 対応関係は次のとおりです。左が本 project、右が OpenCV の関数です。
 
@@ -117,7 +117,7 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 | Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7`（2026-08-28 取得） |
 | License | **file ごとに異なる。** `objdetect/aruco` と `core` の参照先は Apache-2.0。`imgproc` の `cornersubpix.cpp`、`samplers.cpp`、`thresh.cpp`、`imgwarp.cpp`、`geometry.cpp` は 3 条項 BSD の header を持つ。下の表を参照 |
 | Reused expression | 振る舞いの再実装。判定式、演算の順序、丸めの規則、打ち切りの位置は OpenCV と同一にした。識別子、コメント、関数分割、data 構造は本 project の規約に従って独自に書いた。ただし `test_corner_refine.cpp` の `oracle` namespace だけは演算と評価順序を逐語で写している |
-| Patent review | 簡易検索済み (2026-08-29)。記録は [特許 Clearance 下調べ記録](patent-clearance.md)。専門家確認は未実施 |
+| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
 
 対応関係は次のとおりです。
 
@@ -185,4 +185,3 @@ namespace であり、写し元の 2 file はいずれも 3 条項 BSD です。
 
 - [知的財産・ライセンス方針](ip-and-licensing.md)
 - [Dictionary 方針](dictionaries.md)
-- [特許 Clearance 下調べ記録](patent-clearance.md)

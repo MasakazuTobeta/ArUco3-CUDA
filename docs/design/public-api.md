@@ -10,8 +10,8 @@ CUDA 検出器の公開 API の型、所有権、同期動作、エラー通知�
 
 ## 現状
 
-**WP-3.6 で実装しました。** 以下は実装済みの内容です。段階ごとの CUDA event 計測
-(`set_stage_timing_enabled`) は WP-4.1 の担当として落としました。
+以下は実装済みの内容です。段階ごとの CUDA event 計測 (`set_stage_timing_enabled`)
+は実装していません。
 
 `Status`、`MemorySpace`、`ImageViewU8`、`CornerRefineMethod`、`DetectorConfig` と、それぞれの境界検証は実装済みです。`Dictionary` は `include/aruco3cuda/dictionary.hpp` として実装済みです。`DeviceDetections`、`HostDetections`、`Detector` も実装済みです。
 

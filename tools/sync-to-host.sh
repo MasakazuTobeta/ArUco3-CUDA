@@ -15,8 +15,8 @@
 #   .git も転送しない。実機では build と測定のみを行い、commit はしない。
 #
 # 使用方法:
-#   tools/sync-to-host.sh tobeta@192.168.20.30
-#   tools/sync-to-host.sh tobeta@192.168.20.30 ~/ArUco3-CUDA
+#   tools/sync-to-host.sh <user>@<host>
+#   tools/sync-to-host.sh <user>@<host> ~/ArUco3-CUDA
 #
 # 戻り値:
 #   0 = 同期して検証まで成功、1 = 失敗

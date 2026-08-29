@@ -8,7 +8,7 @@
 #
 # 位置付け:
 #   これは container 環境の smoke test であり、project の unit test ではない。
-#   project 側の test は WP-0.1 で `ctest` として整備する。
+#   project 側の test は `ctest` で実行する。
 set -euo pipefail
 
 readonly kCudaArch="${ARUCO3_CUDA_ARCH:?ARUCO3_CUDA_ARCH が未設定}"

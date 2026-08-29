@@ -66,10 +66,10 @@ __device__ void build_system(const float src_x[kQuadCornerCount],
 ///
 /// @return 解けたら true。ピボットが閾値を下回ったら false。
 __device__ bool solve_lu8(double a[8][8], double b[8]) {
-    constexpr int m = 8;
-    for (int i = 0; i < m; ++i) {
+    constexpr int kMatrixSize = 8;
+    for (int i = 0; i < kMatrixSize; ++i) {
         int k = i;
-        for (int j = i + 1; j < m; ++j) {
+        for (int j = i + 1; j < kMatrixSize; ++j) {
             if (fabs(a[j][i]) > fabs(a[k][i])) {
                 k = j;
             }
@@ -78,7 +78,7 @@ __device__ bool solve_lu8(double a[8][8], double b[8]) {
             return false;
         }
         if (k != i) {
-            for (int j = i; j < m; ++j) {
+            for (int j = i; j < kMatrixSize; ++j) {
                 const double swap = a[i][j];
                 a[i][j] = a[k][j];
                 a[k][j] = swap;
@@ -88,17 +88,17 @@ __device__ bool solve_lu8(double a[8][8], double b[8]) {
             b[k] = swap;
         }
         const double d = -1.0 / a[i][i];
-        for (int j = i + 1; j < m; ++j) {
+        for (int j = i + 1; j < kMatrixSize; ++j) {
             const double alpha = a[j][i] * d;
-            for (int c = i + 1; c < m; ++c) {
+            for (int c = i + 1; c < kMatrixSize; ++c) {
                 a[j][c] += alpha * a[i][c];
             }
             b[j] += alpha * b[i];
         }
     }
-    for (int i = m - 1; i >= 0; --i) {
+    for (int i = kMatrixSize - 1; i >= 0; --i) {
         double s = b[i];
-        for (int k = i + 1; k < m; ++k) {
+        for (int k = i + 1; k < kMatrixSize; ++k) {
             s -= a[i][k] * b[k];
         }
         b[i] = s / a[i][i];

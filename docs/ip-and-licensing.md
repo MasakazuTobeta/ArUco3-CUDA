@@ -17,9 +17,9 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 ## 現状
 
-- Universidad de Córdoba の公式 ArUco ページの表記を 2026-08-29 に確認しました。原文は次のとおりです。
+- Universidad de Córdoba の公式 ArUco ページの表記を 2026-08-29 に確認しました。原文は次のとおりです (連絡先の個人 mail address は伏せています)。
 
-  > This software is licensed under GPLv3 license for personal, research and educational purposes. For a commercial license please contact rmsalinas@uco.es
+  > This software is licensed under GPLv3 license for personal, research and educational purposes. For a commercial license please contact [権利者の連絡先]
 
 - GPLv3 自体は商用利用を一律に禁止する license ではありません。上の表記が GPLv3 への追加条件を意図しているのか、単に商用向けの別 license を案内しているだけなのかは、この表記だけでは決まりません。**この点は未解決のままです。**
 - ただし**本 project はこの解釈に依存しません。** 公式 ArUco 配布物を取得も参照も利用もしていないためです。実装根拠は 2018 年論文と OpenCV 4.x に限定しており、Dictionary も OpenCV 由来です。上の表記が仮に厳しい側の意味であっても、本 project の成果物には及びません。
@@ -46,52 +46,18 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 特許は著作権および open-source license とは別です。アルゴリズムを独立実装しても、対象国で有効な patent claim に該当すれば問題になり得ます。
 
-商用公開前には、少なくとも次を実施します。
+本 project は Apache License 2.0 で公開します。同 license 第 3 条により、寄稿者は自身が持つ必須特許について利用者へ license を許諾します。本 project は特許を保有していません。
+
+商用製品へ組み込む前には、販売予定国を定めたうえで、少なくとも次を実施します。
 
 1. 発明者名、大学名、論文名、優先日前後の patent family を検索する。
-2. 日本、米国、欧州および販売予定国の有効 claim を確認する。
+2. 対象国で有効な claim を確認する。
 3. marker Dictionary の生成方法と検出方法を分けて確認する。
 4. 専門家による freedom-to-operate review の要否を判断する。
 
-2026-08-29 に手順 1 と 3 を実施し、手順 2 を米国の登録 claim について一部実施しました。記録は [特許 Clearance 下調べ記録](patent-clearance.md) にあります。要点は次のとおりです。
+**上記の調査結果および freedom-to-operate に関する検討は、本 repository では公開しません。** 特許に関する評価は法律専門家の領域であり、公開文書で扱う性質のものではないためです。
 
-- **ArUco3 論文の著者 5 名と Universidad de Córdoba を発明者・出願人とする marker 検出・生成の特許は 1 件も見つかりませんでした。** 論文著者名は他社特許の引用文献としてのみ現れます。ただしこれは不存在の証明ではありません。表記ゆれ (`Muñoz` の発音区別符号) で検索結果が変わることも実測しています。
-- **ArUco3 の中核 (最小マーカー寸法からの縮小率決定、縮小画像での候補探索、pyramid による四隅復元) を claim する特許は見つかりませんでした。**
-- **Dictionary の生成方法 (MILP による符号集合設計) を claim する特許も見つかりませんでした。** 本 project はそもそも Dictionary を生成せず、OpenCV 収録済み Dictionary の変換物を保持するだけです。
-- 技術分野が最も近いのは **NVIDIA の GPU fiducial marker 検出 family** (`US11113819B2` ほか) です。独立 claim は候補 corner 点の検出と閾値画素距離・辺の角度による絞り込みを要件とし、本 project にはそのいずれも存在しません。これは事実の差異であり、非侵害の評価ではありません。
-- **日本にも登録特許が 2 件あります。** `JP7429542B2` (NVIDIA、登録 2024-02-08) と `JP7459051B2` (Magic Leap、登録 2024-04-01) で、いずれも存続中の表示です。請求項 1 の全文を確認しました。NVIDIA の日本請求項 1 は米国と同じ 3 要件 (色空間変換、候補コーナ点の検出、しきいピクセル距離) を持ち、**本 project にはいずれも存在しません**。Magic Leap の日本請求項 1 は**頭部装着装置**を前提部とし、本 project は library です。ただし**日米で限定が異なります** (米国の Harris 系定数 `k1` は日本の請求項に無い)。
-
-### 対象国の決定
-
-**2026-08-29 に販売予定国を日本と米国に決定しました。** これにより手順 2 の範囲が定まりました。
-
-| 国 | 扱い | 理由 |
-| --- | --- | --- |
-| 日本 | **対象** | 販売予定国 |
-| 米国 | **対象** | 販売予定国 |
-| 欧州 | **対象外** | 販売予定に含めないため。調べた結果として無かったのではなく、範囲から外した |
-| その他 | **対象外** | 同上 |
-
-手順 2 の条文は「日本、米国、欧州および販売予定国」と書いていますが、欧州を販売予定に含めない決定に従い、欧州は範囲から外します。**販売予定国を欧州へ広げる場合は手順 2 をやり直す必要があります。** この対応関係を残すため、条文はそのままにして本節で範囲を記録します。
-
-実施担当は未定のままです。
-
-手順 2 の進捗と、日本・米国それぞれの到達点は [特許 Clearance 下調べ記録](patent-clearance.md) にあります。手順 4 の判断はまだ行っていません。
-
-## 実装方針
-
-次の方針を本 project の必須条件とします。
-
-1. 公式 ArUco GPLv3 source code を閲覧、コピー、翻案または移植して実装しない。
-2. ArUco3 検出戦略は、2018 年論文のアルゴリズム、数式、公開評価条件を設計根拠とする。
-3. 互換性の確認と不足仕様の特定には、Apache-2.0 の OpenCV 4.x API、source code、test、観測可能な入出力を使用する。
-4. OpenCV code または定義済み Dictionary を利用する場合は、対象 version、commit、file、license、変更内容を code provenance に記録し、必要な copyright と notice を保持する。
-5. Dictionary は公式 ArUco GPLv3 配布物から抽出しない。OpenCV 4.x の Apache-2.0 配布物を正本とするか、公開アルゴリズムから独自生成する。
-6. 論文の本文、図、表、評価画像を repository へ転載しない。必要な内容は引用の範囲を超えない独自の文章、数式参照、実験条件として記述する。
-7. CUDA kernel の分割、memory layout、work queue、同期、Dictionary 照合、corner refinement は本 project の独自設計として記録する。
-8. CPU 基準との比較には OpenCV 4.x を使用し、公式 ArUco GPLv3 binary を build または link した成果物を配布しない。
-9. `ArUco` の名称は互換対象と技術方式を示す目的でのみ使用し、公式実装または Universidad de Córdoba との提携・承認を示唆しない。
-10. 商用製品へ組み込む前に、販売予定国を対象として有効な patent claim の freedom-to-operate review を行う。
+利用者への注意として、**本 project を利用した製品の特許上の適法性は、利用者が自ら確認する必要があります。** Apache License 2.0 第 7 条・第 8 条のとおり、本 project は無保証で提供されます。
 
 ## OSS として公開してよいか
 
@@ -107,21 +73,15 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 | copyleft 依存 | **無し** | 上記のとおり |
 | Dictionary data の出所 | **OpenCV** | Apache-2.0 の `getPredefinedDictionary()` 出力を変換。GPLv3 配布物からは抽出していない。OpenCV との byte 一致を test で継続検証 |
 | 写した code の attribution | **記載済み** | 3 条項 BSD の 5 file について著作権表示と license 本文を `NOTICE` へ保持 |
-| SPDX 表記 | **全 source file にあり** | 2026-08-29 に `tools/probe-memory-transfer.cu` の欠落を補って完了 |
+| SPDX 表記 | **全 source file にあり** | 新規 file への付与を規約で定めている |
 
 **この範囲では、Apache-2.0 での source 公開を妨げるものは見つかりませんでした。**
 
-### 特許: OSS にしても消えません
+### 特許
 
-**「OSS だから特許は関係ない」は成り立ちません。** 日本の特許法 2 条 3 項は program の譲渡・提供を実施に含み、米国でも頒布は §271 の対象です。無償であることは実施か否かを左右しません。
+**「OSS だから特許は関係ない」は成り立ちません。** 日本の特許法 2 条 3 項は program の譲渡・提供を実施に含み、米国でも頒布は 35 U.S.C. §271 の対象です。無償であることは実施か否かを左右しません。
 
-一方で、**source library の公開は製品の販売より対比が明確です。** [特許 Clearance 下調べ記録](patent-clearance.md) が挙げた差異のうち、製品形態に依存するもの (NVIDIA の色空間変換が製品側に存在しうる点、Magic Leap の頭部装着装置の前提部) は、**library の source を配布するだけなら成立しにくくなります。** 配布物が library そのものだからです。
-
-ただし次は未検討のままです。**OSS 公開でも消えません。**
-
-- 均等論とクレーム解釈。
-- 従属請求項。
-- 間接侵害。日本の特許法 101 条は「発明による課題の解決に不可欠なもの」の提供を侵害とみなす類型を持ち、**library の提供はこの類型で議論されうる位置にあります。**
+本 project は特許を保有せず、Apache License 2.0 第 3 条により寄稿者からの特許 license が利用者へ及びます。第三者特許との関係については上の「特許」を参照してください。
 
 ### 商標: 調査しました。第 9 類に一般の computer program は指定されていません
 
@@ -177,7 +137,7 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 残るのは次の 2 つです。
 
-1. **特許のうち OSS 公開でも消えない部分。** 均等論とクレーム解釈、従属請求項、間接侵害の 3 点で、いずれも [特許 Clearance 下調べ記録](patent-clearance.md) に残件として挙げてあります。
+1. **特許のうち OSS 公開でも消えない部分。** 上の「特許」のとおり、第三者特許との関係は本 repository では扱いません。
 2. **考案者側の未登録商標。** 登録は存在しませんが、不正競争防止法上の評価は行っていません。
 
 ## Dictionary の取扱い
@@ -245,12 +205,10 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 
 - 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。表記そのものは 2026-08-29 に確認済み。解釈は未解決だが、本 project は公式配布物を使っていないため依存しない。
 - OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。現時点では `NOTICE` へ記載している。
-- patent clearance の実施担当。対象国は 2026-08-29 に日本と米国へ決定しました (上の「対象国の決定」)。担当は未定です。
 - `ArUco` について、**考案者側の未登録商標としての保護** (不正競争防止法) の評価。登録は全世界に存在しないことを 2026-08-29 に確認済みです。学研ホールディングスの登録は同日、本 project の妨げにならないと判断しました。
 
 ## 関連
 
-- [特許 Clearance 下調べ記録](patent-clearance.md)
 - [Code Provenance 記録](code-provenance.md)
 - [Dictionary 方針](dictionaries.md)
 

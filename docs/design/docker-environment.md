@@ -220,7 +220,7 @@ device の確認に `nvidia-smi` を使用しません。Jetson の L4T には `
 
 `ARUCO3_VERIFY_ON_START=1` を設定すると、container 起動時に自動実行し、不合格なら起動を中止します。
 
-`smoke-test.sh` は環境検査より踏み込み、`nvcc` が OpenCV を含む translation unit を compile でき、生成した実行 file が GPU 上で動作し、ArUco3 検出戦略が期待どおり動くところまでを確認します。これは container 環境の smoke test であり、project の unit test ではありません。project 側の test は WP-0.1 で `ctest` として整備します。
+`smoke-test.sh` は環境検査より踏み込み、`nvcc` が OpenCV を含む translation unit を compile でき、生成した実行 file が GPU 上で動作し、ArUco3 検出戦略が期待どおり動くところまでを確認します。これは container 環境の smoke test であり、project の unit test ではありません。project 側の test は `ctest` で実行します。
 
 ### 環境情報の記録
 
@@ -238,7 +238,7 @@ device の確認に `nvidia-smi` を使用しません。Jetson の L4T には `
 
 - Jetson を JetPack 6.x へ更新する場合の base image tag と CUDA version。
 - `pinned` mode の package version を patch 単位まで固定するか。現在は package 名で CUDA 13.0 系までを固定し、実際の version を provenance へ記録する方式です。
-- Phase 4 の profiler (Nsight Systems、Nsight Compute) を image へ含めるか、host 側で実行するか。[ADR-0002](../adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じです。
+- profiler (Nsight Systems、Nsight Compute) を image へ含めるか、host 側で実行するか。[ADR-0002](../adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じです。
 - CI を container 内で実行する際の runner の種類。
 - image を registry へ配布するか、各機で build するか。
 - benchmark 時に clock と power mode を固定する操作を container 内から行うか、host 側の手順とするか。

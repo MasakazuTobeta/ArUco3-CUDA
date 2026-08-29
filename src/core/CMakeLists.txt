@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # core は CUDA による検出処理を担い、OpenCV 型へ依存しない。
-# 現時点では build 基盤の疎通確認に必要な最小構成のみを含む。
+# 検出の全段 (前処理、二値化、候補抽出、復号、Dictionary 照合、四隅補正) を含む。
 add_library(aruco3cuda_core
   status.cpp
   types.cpp

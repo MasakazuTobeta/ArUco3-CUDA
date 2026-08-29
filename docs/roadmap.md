@@ -2,95 +2,90 @@
 
 ## 目的
 
-独立 CUDA 実装から OpenCV への提案判断までの作業段階と完了条件を定義します。
+本 project が現在どこまでできていて、次に何へ取り組むかを 1 箇所へまとめます。個々の測定値は [Benchmark 報告](benchmark-report.md) と [正確性評価の結果](accuracy-report.md) が正本です。
 
 ## 対象範囲
 
-設計、最小成立版、正確性評価、性能最適化、hardware 検証、OpenCV への提案準備を対象とします。
+検出 (入力画像から ID と四隅まで) の実装、その正確性と速度の評価、対応 hardware の範囲を対象とします。姿勢推定は対象外であり、検出結果を OpenCV の `solvePnP` 等へ渡せる形で出力します。
 
 ## 現状
 
-Phase 0 から Phase 4 までを完了しました。次は Phase 5 の提案判断です。日付は開発時間を確認後に設定します。
+### できること
 
-検出は S1 から S10 まで GPU 常駐で完結し、`Detector` が host 同期なしで結果を返します。評価対象は DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の 3 機です。3 機とも 402 件の自動 test と Compute Sanitizer 4 tool が通ります。
+- 入力画像の縮小・二値化から、候補抽出、Dictionary 照合、四隅の subpixel 補正までを GPU 上で完結します。`Detector` は host 同期なしで device 上の結果を返し、1 frame の kernel 発行列は CUDA Graph へ畳んであります。段の一覧は [検出パイプライン設計](design/detector-pipeline.md) にあります。
+- CPU 基準 (OpenCV ArUco3)、Hybrid (前処理と二値化のみ GPU)、GPU 常駐の 3 経路を同じ条件で比較できます。
+- 3 機すべてで自動 test と Compute Sanitizer の 4 tool (memcheck、racecheck、initcheck、synccheck) が通ります。
 
-正確性は合成 corpus 91 場面・真値 480 個で測り、3 経路 x 3 機のすべてで precision 100%、ArUco3 の下限以上のマーカーで recall 94.44% です ([正確性評価の結果](accuracy-report.md))。速度は 28 場面 x 3 経路 x 3 機で測り、CPU が有利なのは 640x480 かつ検出ありの場面に限られます ([benchmark 報告](benchmark-report.md))。
+### 対象機
 
-実画像 corpus はまだありません。
+| 機体 | architecture | GPU | GPU の種別 | CC | CUDA |
+| --- | --- | --- | --- | --- | --- |
+| DGX Spark GB10 | aarch64 | NVIDIA GB10 | 統合 | 12.1 | 13.0 |
+| Jetson AGX Orin | aarch64 | Orin | 統合 | 8.7 | 11.4 |
+| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | 単体 | 12.0 | 13.0 |
+
+統合 GPU 2 機と単体 GPU 1 機という構成は、統合 GPU 固有の結果と一般に成り立つ結果を切り分けるためです。
+
+### 正確性
+
+合成 corpus 91 場面・真値 480 個に対し、3 経路 x 3 機の全 18 組合せで precision 100%、false positive 0 件、ID 誤り 0 件です。recall は ArUco3 検出戦略の検出下限以上の大きさで 94.44%、corpus 全体では 18.33% です。全体値が低いのは、corpus が下限を下回る大きさを意図的に含むためであり、実装の取りこぼしを表しません。解像度ごとの下限と条件別の内訳は [正確性評価の結果](accuracy-report.md) にあります。
+
+### 速度
+
+検出のみを測った end-to-end 時間を 28 場面 x 3 経路 x 3 機で比較しています。画像の読み込みと checksum は測定区間に含みません。
+
+**CPU が勝つ条件があります。** 合成 corpus では 640x480 かつ検出が 1 件以上ある場面で CPU が速く、28 場面中 DGX Spark GB10 で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面がこれに当たります。境界を決めているのは解像度でも候補数でもなく二値化後の輪郭点数です。実画像では輪郭点数が合成 corpus より多くなりうるため境界は動く可能性がありますが、まだ確かめていません。詳細は [Benchmark 報告](benchmark-report.md) にあります。
+
+### device memory
+
+workspace の最大使用量は ArUco3 検出戦略が有効で 17.51 MB、無効で 414.51 MB です。検出を 91 回繰り返しても確保回数は増えません。
+
+### 評価の制約
+
+- 評価は合成 corpus に限ります。実画像 corpus はありません。
+- 段ごとの時間は host 同期を含む end-to-end 時間です。CUDA event によるカーネル時間の分離は行っていません。
+- 単発の検出では GPU 経路の起動費用が支配します。1 枚目の結果が出るまでの時間は DGX Spark GB10 で CPU 3.3 ms に対し GPU 常駐 174.0 ms であり、定常の 0.696 ms とは桁が違います。
 
 ## 目標
 
+今後扱う範囲です。時期は定めていません。
+
 ```mermaid
-flowchart TD
-    P0["Phase 0: 仕様と基準"] --> P1["Phase 1: 最小成立版"]
-    P1 --> P2["Phase 2: GPU候補抽出"]
-    P2 --> P3["Phase 3: GPU decode"]
-    P3 --> P4["Phase 4: 最適化と評価"]
-    P4 --> P5["Phase 5: OpenCV提案判断"]
+flowchart LR
+    subgraph NOW["現在の範囲"]
+        A["GPU 常駐の検出"]
+        B["合成 corpus での正確性評価"]
+        C["3 機での end-to-end 時間の比較"]
+    end
+    subgraph NEXT["今後の範囲"]
+        D["実画像 corpus での評価"]
+        E["CUDA event による段別のカーネル時間"]
+        F["起動費用の削減"]
+        G["対応 Dictionary の拡張"]
+    end
+    NOW --> NEXT
 ```
 
-### Phase 0: 仕様と基準
-
-- DGX Spark と Jetson Orin で共通に使用する開発 container を用意する。
-- API、Dictionary、検出設定の初期範囲を決める。
-- OpenCV CPU 基準 runner と test corpus を作る。
-- build、format、lint、unit test、benchmark の Skeleton を作る。
-- Apache License 2.0 の適用範囲と第三者 notice の管理方法を確認する。
-
-完了条件: 両 profile の container 内で build とテストが通り、同一入力に対する CPU 基準結果と環境情報を保存できる。
-
-### Phase 1: 最小成立版
-
-- grayscale device 入力を受け取る。
-- CUDA 前処理と簡易候補生成を実装する。
-- CPU decode を使用したハイブリッド経路で正確性を確認する。
-
-完了条件: 合成画像の基本条件で ID と四隅を取得できる。達成済み。
-
-### Phase 2: GPU 候補抽出
-
-- 連結成分または contour 相当処理を実装する。
-- 四角形候補の生成、整理、上限管理を GPU 内で行う。
-- 可変長出力と overflow を検証する。
-
-完了条件: 候補抽出まで GPU 常駐し、CPU 基準との差異を分類できる。達成済み。主案の選択は [ADR-0003](adr/0003-candidate-extraction-approach.md) に記録した。
-
-### Phase 3: GPU decode
-
-- warp、セル sampling、border 検証を実装する。
-- Dictionary 照合、rotation、error correction を実装する。
-- 重複候補を整理する。
-
-完了条件: ID と四隅の出力まで GPU 経路で完結する。達成済み。
-
-### Phase 4: 最適化と評価
-
-- workspace、memory access、stream、kernel launch を最適化する。
-- Jetson Orin と DGX Spark で全評価を実施する。
-- CPU、CUDA、ハイブリッドの crossover point を報告する。
-
-完了条件: [評価計画](evaluation-plan.md) の成果物が揃い、再現可能である。達成済み。実画像 corpus と段ごとの CUDA event 計測は Phase 5 以降へ送った。
-
-### Phase 5: OpenCV 提案判断
-
-- 有効性、互換性、保守費用を評価する。
-- OpenCV Issue #27118 に結果と API 案を提示する。
-- maintainer と対象 branch、module、API を合意する。
-- 合意後に OpenCV 向け PR を分離して作成する。
-
-完了条件: upstream PR を作るか、独立 library として継続するかを ADR で決定する。
+- **実画像 corpus での評価。** 合成 corpus で得た crossover point と検出率が実画像でどう動くかを確かめます。
+- **段別のカーネル時間。** 現在の段階時間は host 同期を含む wall-clock です。CUDA event で分離すると、どの段を削るべきかを測定で決められます。
+- **起動費用の削減。** CUDA の文脈生成は減らせませんが、対象 architecture を絞る、または cubin を事前に読み込むことで kernel の読み込みを短縮できる可能性があります。
+- **対応 Dictionary の拡張。** 現在は `DICT_ARUCO_MIP_36h12` に固定して評価しています。方針は [Dictionary 方針](dictionaries.md) にあります。
+- **upstream への提案の検討。** 有効性と保守費用を評価できた場合に、OpenCV への提案を検討します。議論の場は [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118) です。
 
 ## 未確定事項
 
-- 各 Phase の担当と開始日・完了日。
-- Phase 1 のハイブリッド構成が十分な検証価値を持つか。
-- OpenCV 側の希望 module と API。
-- 対応 Dictionary の拡張順序。
+- 実画像で crossover point がどこへ動くか。
+- 対応 Dictionary をどの順序で広げるか。
+- 測定時に GPU の動作周波数を固定するか、既定のまま測るか。
+- Jetson の対象範囲。当面は Orin 系を対象とし、Nano、Xavier、Thor は対象外です。
+- 許容する四隅座標の誤差と、性能改善率の数値基準。
 
 ## 関連
 
-- [実装計画](implementation-plan.md)
+- [プロジェクト概要](project-overview.md)
 - [評価計画](evaluation-plan.md)
 - [Benchmark 報告](benchmark-report.md)
 - [正確性評価の結果](accuracy-report.md)
+- [検出パイプライン設計](design/detector-pipeline.md)
 - [Docker 環境設計](design/docker-environment.md)
+- [ADR-0003: 四角形候補抽出は案 A を主案とする](adr/0003-candidate-extraction-approach.md)

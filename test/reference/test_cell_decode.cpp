@@ -136,7 +136,7 @@ public:
         if (canonical.side_px_ != side) {
             return false;
         }
-        // canonical 画像を直接転送する。射影変換は WP-3.1 で確認済みのため
+        // canonical 画像を直接転送する。射影変換は別の test で確認済みのため
         // ここでは分離して比の算出だけを見る。
         const auto plane = static_cast<std::size_t>(side) * static_cast<std::size_t>(side);
         std::vector<std::uint8_t> raw(canonicals.size() * plane);

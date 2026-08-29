@@ -77,7 +77,7 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 /// CPU 基準との違いが 1 つある。OpenCV は近接する 2 つが既に別々の group
 /// へ属している場合、その 2 つを統合しない。本実装は近接関係の連結成分を
 /// そのまま group とするため、この場合も統合する。3 つ以上が数珠つなぎに
-/// 近接する配置でのみ差が出る。差の大きさは WP-2.6 で実測する。
+/// 近接する配置でのみ差が出る。差の大きさは CPU 基準との比較で実測している。
 ///
 /// @param input build_candidates_async が埋めた候補一式。
 /// @param config 検出設定。

@@ -74,7 +74,7 @@ OpenCV は 4.x 系の最新が 4.14.0、別系統として 5.0.0 が release さ
 3. C++ 標準を C++17、CUDA 言語標準も C++17 とする。
 4. CMake の最低 version を 3.24 とする。`CUDA_ARCHITECTURES` の扱いが安定する最初の version であり、開発機と JetPack 6 系のどちらも満たす。
 5. CPU 基準実装は OpenCV 4.14.0 に固定する。tag と build option を script へ記録し、測定結果へ埋め込む。
-6. 最初の対象を OpenCV 4.x とし、5.x への追随は Phase 5 の判断へ委ねる。
+6. 最初の対象を OpenCV 4.x とし、5.x への追随は後の判断へ委ねる。
 7. 生成する成果物は host 側で例外を使用してよいが、core の公開 API は `Status` を返す。詳細は [公開 API 草案](../design/public-api.md) に従う。
 8. toolchain の固定は host への直接 install ではなく開発 container で行う。CUDA Toolkit も image へ固定し、必要な package のみを install する。host から bind mount する mode は手元の試行用に残すが、測定を伴う実行には使用しない。詳細は [Docker 環境設計](../design/docker-environment.md) に従う。
 9. CUDA Toolkit の最低 version を 11.4 とする。対象とする Jetson AGX Orin が JetPack 5.1.2 (L4T R35.4.1) であり、同梱の CUDA が 11.4 であることを実機で確認した。共通経路はこの version で compile できる範囲に留める。

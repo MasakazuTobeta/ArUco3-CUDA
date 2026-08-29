@@ -32,7 +32,7 @@
 
 - 仕様、設計、評価文書には、少なくとも `目的`、`対象範囲`、`現状`、`目標`、`未確定事項` を設ける。
 - 振る舞い、設定、公開 API、評価条件が変わる場合は、関連する文書も同じ変更で更新する。
-- C++ の同一 stem に属する `.cpp` / `.hpp` / `.h` / `.cc` / `.cxx` の合計が 300 行以上になる場合は、同じディレクトリへ sidecar `*.md` を追加する。
+- 設計判断が Doxygen だけでは伝わらない module には sidecar `*.md` を置く。領域ごとの記録先は `CONTRIBUTING.md` の Documentation を参照する。
 - 概要図には差分確認しやすい Mermaid を優先する。
 
 ## Completion Checklist

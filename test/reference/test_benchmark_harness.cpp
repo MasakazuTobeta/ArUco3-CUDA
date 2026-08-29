@@ -173,7 +173,7 @@ TEST_F(BenchmarkHarnessTest, measures_cuda_resident_route) {
     EXPECT_GT(record.end_to_end_ms_.p50_, 0.0);
     EXPECT_EQ(record.end_to_end_ms_.count_, static_cast<std::size_t>(config.latency_iterations_));
     EXPECT_EQ(record.detection_count_, 1U);
-    // 段階の内訳は CUDA event を使う WP-4.1 の担当であり、まだ無い。
+    // 段階の内訳は CUDA event を要するため、まだ無い。
     EXPECT_FALSE(record.stage_times_available_);
     EXPECT_FALSE(record.kernel_time_available_);
     // 「1 枚目まで > 定常」は主張しない。Compute Sanitizer の下では定常側が

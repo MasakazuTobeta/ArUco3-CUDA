@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # 測定 harness。測定条件と環境情報を結果と一体で残す。
-# 実装があるのは CPU 経路と Hybrid 経路で、完全 GPU 経路は Phase 3 以降に追加する。
+# CPU、Hybrid、CUDA-Resident、CUDA-E2E の 4 経路を測定できる。
 add_library(aruco3cuda_bench STATIC benchmark_harness.cpp)
 add_library(aruco3cuda::bench ALIAS aruco3cuda_bench)
 

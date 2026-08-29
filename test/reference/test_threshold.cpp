@@ -326,7 +326,7 @@ TEST(ThresholdTest, rejects_size_mismatch) {
 }
 
 // 前段の resize に残る 1 階調差が、二値化へ与える実際の影響を測る。
-// WP-1.3 で受け入れた差の下流影響を、模擬ではなく実測で確認する。
+// 縮小段で受け入れた差の下流影響を、模擬ではなく実測で確認する。
 TEST(ThresholdTest, measures_impact_of_resize_difference) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";

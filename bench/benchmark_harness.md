@@ -6,13 +6,12 @@
 
 ## 対象範囲
 
-遅延と throughput の測定、統計の算出、環境情報の収集、JSONL 出力を対象とします。完全 GPU 経路の実装は Phase 3 以降で追加します。可視化は `aggregate.py` の責務とします。
+遅延と throughput の測定、統計の算出、環境情報の収集、JSONL 出力を対象とします。可視化は `aggregate.py` の責務とします。
 
 ## 現状
 
-- 実装があるのは `CPU` 経路と `Hybrid` 経路です。
-- `CUDA-E2E` と `CUDA-Resident` は識別子だけ定義し、指定すると未実装として失敗します。GPU decode (Phase 3) の完了後に追加します。
-- memory 種別は `M-Device` と `M-Pageable` を実装しています。`M-Pinned` と `M-Managed` は WP-4.2 です。
+- `CPU`、`Hybrid`、`CUDA-E2E`、`CUDA-Resident` の 4 経路を測定できます。
+- memory 種別は `M-Pageable`、`M-Pinned`、`M-Managed`、`M-Device` の 4 種を測定できます。経路と種別の組合せには制約があり、`CUDA-E2E` は host 入力の経路なので `M-Device` を受け付けません。
 - kernel 時間 (CUDA event) はどの経路でも未測定です。段階時間 (`stages`) は wall-clock であり、host 同期を含みます。両者を区別するため、段階時間で `kernel` を埋めることはしません。
 - 測定した結果は [benchmark 報告](../docs/benchmark-report.md) にあります。
 
@@ -130,7 +129,7 @@ GPU 名、Compute Capability、統合 GPU かどうかは CUDA から取得し�
 
 ## 目標
 
-- CUDA 経路を追加し、CUDA event による kernel 時間と wall-clock を分離して記録する。
+- CUDA event による kernel 時間と wall-clock を分離して記録する。
 - peak device memory とフレームごとの allocation 数を記録する。
 - 解像度、マーカー数、辺長を掃引した測定を 1 回の実行で行えるようにする。
 - clock と power mode を固定した状態での測定手順を確立する。

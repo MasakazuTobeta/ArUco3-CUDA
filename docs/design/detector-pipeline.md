@@ -51,7 +51,7 @@ side_px >= S + max(W, H) * tau_i
 
 ### 前処理と OpenCV の一致度
 
-WP-1.3 で S1 と S2 を実装し、OpenCV との差を実測しました。
+S1 と S2 について、OpenCV との差を実測しています。
 
 | 段階 | OpenCV の対応処理 | 差 |
 | --- | --- | --- |
@@ -65,13 +65,13 @@ segmentation は完全一致にできません。OpenCV の 8-bit `INTER_LINEAR`
 
 この差が下流の二値化へ与える影響は、S3 を実装したうえで実測しました。1280x720 を 427x240 へ縮小し、window 3、13、23 で二値化した場合、画素の白黒が入れ替わる割合は 0.039% から 0.054% です。無作為な 1 階調の付加を仮定した見積もりでは 0.45% でしたが、実際の差は構造を持ち、局所平均も同じ方向へ動くため影響はその 10 分の 1 に収まります。
 
-Phase 2 の差異分類では、この分を候補抽出の設計差と区別して扱います。将来ビット単位の一致が必要になった場合は、係数表を host 側で OpenCV と同じ手順で計算して転送し、kernel は整数演算だけを行う構成が候補になります。
+候補の差異分類では、この分を候補抽出の設計差と区別して扱います。将来ビット単位の一致が必要になった場合は、係数表を host 側で OpenCV と同じ手順で計算して転送し、kernel は整数演算だけを行う構成が候補になります。
 
 S3 は OpenCV と完全に一致します。平均は `boxFilter` を正規化ありで適用したものであり、境界は `BORDER_REPLICATE`、丸めは最近接偶数、判定は「画素 - 平均 <= -floor(定数)」で 255 とします。window の偶数は奇数へ切り上げます。行方向と列方向へ分けて合計するため、中間で丸めが入らず 2 次元の総和と同じ値になります。
 
 ### 案 C ハイブリッド経路と OpenCV の一致度
 
-WP-1.5 で案 C を実装し、CPU 基準との差を実測しました。合成 12 場面 (マーカー数、辺長、面内回転、射影歪み、ぼけ、noise、照度勾配、解像度 640x480 から 1920x1080) と設定 3 通り (ArUco3 有効、OpenCV 既定、OpenCV 既定 + subpixel 補正) の計 36 比較で、未検出 0、過検出 0、四隅の最大差 0.0000 pixel です。マーカーを黒枠が囲む入れ子の場面でも一致します。DGX Spark と Jetson AGX Orin で同じ結果を得ました。
+案 C について、CPU 基準との差を実測しています。合成 12 場面 (マーカー数、辺長、面内回転、射影歪み、ぼけ、noise、照度勾配、解像度 640x480 から 1920x1080) と設定 3 通り (ArUco3 有効、OpenCV 既定、OpenCV 既定 + subpixel 補正) の計 36 比較で、未検出 0、過検出 0、四隅の最大差 0.0000 pixel です。マーカーを黒枠が囲む入れ子の場面でも一致します。DGX Spark と Jetson AGX Orin で同じ結果を得ました。
 
 S2 に最大 1 階調の差があるにもかかわらず四隅まで一致するのは、二値化の反転が輪郭の頂点へ届いていないためです。将来の corpus で差が現れる可能性は残るため、テストは実測値そのものではなく 0.5 pixel の上限で判定します。
 
@@ -83,7 +83,7 @@ S2 に最大 1 階調の差があるにもかかわらず四隅まで一致す�
 
 ### S7 射影変換と OpenCV の一致度
 
-WP-3.1 で S7 を実装し、OpenCV の `getPerspectiveTransform` と `warpPerspective` を `INTER_NEAREST` で呼んだ場合と突き合わせました。
+S7 について、OpenCV の `getPerspectiveTransform` と `warpPerspective` を `INTER_NEAREST` で呼んだ場合と突き合わせました。
 
 | 比較対象 | 不一致画素 |
 | --- | --- |
@@ -133,7 +133,7 @@ canonical の 1 辺が 32 以下なら、OpenCV の水平 block 分割 (`bw0`) �
 
 ### S8 前半 Otsu と border 検証
 
-WP-3.2 で canonical 画像からセル比を求め、外周セルの誤り数で候補を篩う部分を実装しました。3 機すべてで CPU 基準と完全に一致します (比 0 / 4096 セル、誤り数 0 / 64 候補)。
+canonical 画像からセル比を求め、外周セルの誤り数で候補を篩います。3 機すべてで CPU 基準と完全に一致します (比 0 / 4096 セル、誤り数 0 / 64 候補)。
 
 S7 と違い機種差が出ませんでした。この段の計算は次の 3 つで、いずれも SIMD の積和融合が結果へ届きません。
 
@@ -153,7 +153,7 @@ CPU 基準が暗黙に使っていた「セル比を bit とみなす閾値 0.49
 
 ### S8 後半 Dictionary 照合
 
-WP-3.3 で照合を GPU へ移しました。全 250 ID の 4 回転 (1000 件) で CPU 基準とも OpenCV とも一致します。
+照合は GPU 上で行います。全 250 ID の 4 回転 (1000 件) で CPU 基準とも OpenCV とも一致します。
 
 OpenCV の `Dictionary::identify` には、bit 列を前提にすると再現できない規則が 2 つあります。
 
@@ -190,7 +190,7 @@ DICT_ARUCO_MIP_36h12 は収録間の最小距離が 12、許容距離が 3 な�
 
 ### S9 識別の打ち切りと compaction
 
-WP-3.4 で GPU へ移しました。**OpenCV に「重複除去」という段階はありません。** `detectMarkers` を全行読み、`identifyCandidates` より後に走るのは corner refinement、Multi dictionary 専用の rejected 掃除、fxfy の逆スケール、出力の複製だけであることを確認しています。ID による重複除去はどこにもなく、同じ ID のマーカーが離れた位置に 2 枚あれば 2 件とも出ます。
+この段は GPU 上で行います。**OpenCV に「重複除去」という段階はありません。** `detectMarkers` を全行読み、`identifyCandidates` より後に走るのは corner refinement、Multi dictionary 専用の rejected 掃除、fxfy の逆スケール、出力の複製だけであることを確認しています。ID による重複除去はどこにもなく、同じ ID のマーカーが離れた位置に 2 枚あれば 2 件とも出ます。
 
 重複が消えるのは包含木による識別の打ち切りの結果です。黒枠の外周と内周が両方候補になるため、内側でマーカーが見つかったら、それを囲む候補は識別せずに済ませます。
 
@@ -252,7 +252,7 @@ new[i] = old[(i + 4 - rotation) % 4]
 
 ### S10 四隅の subpixel 補正と原寸への復元
 
-WP-3.5 で GPU へ移しました。OpenCV の `findCornerInPyrImage` と `cv::cornerSubPix` を再現します。
+この段は GPU 上で行います。OpenCV の `findCornerInPyrImage` と `cv::cornerSubPix` を再現します。
 
 #### 段を登る手順
 
@@ -315,21 +315,21 @@ flowchart TD
 
 ### 段階ごとの並列化方針
 
-| 段階 | 並列単位 | 主な手法 | GPU 適性 | 初期割当 |
-| --- | --- | --- | --- | --- |
-| S0 入力検証 | - | host 側の境界検証 | 対象外 | host |
-| S1 pyramid | 出力 pixel | 分離型 downsample kernel を level ごとに起動 | 高 | Phase 1 |
-| S2 segmentation | 出力 pixel | bilinear または area 縮小 | 高 | Phase 1 |
-| S3 二値化 | 出力 pixel | integral image による定数時間 box mean、または shared memory の sliding window | 高 | Phase 1 |
-| S4 ラベリング | pixel と label | block 単位 union-find と block 間 merge | 中 | Phase 2 |
-| S5 候補抽出 | label | 極点探索による四隅推定 | 中 | Phase 2 |
-| S6 フィルタ | 候補 | 述語評価と stream compaction | 高 | Phase 2 |
-| S7 warp と sampling | 候補 | 1 候補 1 block、セル単位 sampling | 高 | 実装済み (WP-3.1) |
-| S8 border 検証 | 候補 | 1 候補 1 block、共有 memory の histogram と整数の和 | 高 | 実装済み (WP-3.2) |
-| S8 Dictionary 照合 | 候補と codeword | packed codeword に対する popcount と最小値 reduction | 高 | 実装済み (WP-3.3) |
-| S9 打ち切りと compaction | 候補 | 包含判定は候補ごと、走査は 1 block の逐次、詰め直しは scan | 中 | 実装済み (WP-3.4) |
-| S10 四隅補正 | 隅 | 1 thread が 1 隅。反復は逐次にする | 中 | 実装済み (WP-3.5) |
-| S11 出力 | - | device buffer または host 転送 | - | Phase 1 |
+| 段階 | 並列単位 | 主な手法 | GPU 適性 |
+| --- | --- | --- | --- |
+| S0 入力検証 | - | host 側の境界検証 | 対象外 (host で行う) |
+| S1 pyramid | 出力 pixel | 分離型 downsample kernel を level ごとに起動 | 高 |
+| S2 segmentation | 出力 pixel | bilinear または area 縮小 | 高 |
+| S3 二値化 | 出力 pixel | integral image による定数時間 box mean、または shared memory の sliding window | 高 |
+| S4 ラベリング | pixel と label | block 単位 union-find と block 間 merge | 中 |
+| S5 候補抽出 | label | 極点探索による四隅推定 | 中 |
+| S6 フィルタ | 候補 | 述語評価と stream compaction | 高 |
+| S7 warp と sampling | 候補 | 1 候補 1 block、セル単位 sampling | 高 |
+| S8 border 検証 | 候補 | 1 候補 1 block、共有 memory の histogram と整数の和 | 高 |
+| S8 Dictionary 照合 | 候補と codeword | packed codeword に対する popcount と最小値 reduction | 高 |
+| S9 打ち切りと compaction | 候補 | 包含判定は候補ごと、走査は 1 block の逐次、詰め直しは scan | 中 |
+| S10 四隅補正 | 隅 | 1 thread が 1 隅。反復は逐次にする | 中 |
+| S11 出力 | - | device buffer または host 転送 | - |
 
 S3 は既定で 3 通りの window size を評価します。CPU 実装では window ごとに輪郭抽出まで実行して結果を結合しますが、CUDA では S3 から S5 までを window 方向の 3 次元目として同時に処理し、S6 で統合する構成を初期案とします。
 
@@ -341,7 +341,7 @@ S4 と S5 は、輪郭追跡が候補ごとに逐次的であるため、この 
 | --- | --- | --- |
 | A | 連結成分ラベリングと極点探索で四隅を直接求める | 主案。[ADR-0003](../adr/0003-candidate-extraction-approach.md) で確定 |
 | B | GPU 上で境界追跡を行い、多角形近似を適用する | 未実装。案 A が要件を満たさなくなった場合に再検討 |
-| C | ラベリングまで GPU、四隅抽出を CPU へ委譲する | Phase 1 の基準かつ fallback。差分検証に使い続ける |
+| C | ラベリングまで GPU、四隅抽出を CPU へ委譲する | 互換性の基準かつ fallback。差分検証に使い続ける |
 
 #### 案 A の手順
 
@@ -368,7 +368,7 @@ flowchart TD
 - 制約: 多角形近似そのものではないため、CPU 基準結果と候補集合が一致しない場合があります。特に、遮蔽で角が欠けた成分や、複数マーカーが接触して 1 成分になった場合の挙動が異なります。
 - 判断: 案 A を主案とすることを [ADR-0003](../adr/0003-candidate-extraction-approach.md) で決定しました。ArUco3 有効時に案 C と候補集合が完全に一致し、四隅の差も 1.414 pixel 以内であることが根拠です。撤回条件も同 ADR にあります。
 
-#### 案 A の実測 (WP-2.6)
+#### 案 A の実測
 
 合成 9 場面 x 設定 2 通りで案 C と突き合わせました。前処理と二値化は共通の入力であるため、計測から除いています。
 
@@ -403,7 +403,7 @@ ArUco3 無効で案 C の候補が多いのは、案 C が輪郭ごとに候補�
 - 候補数と検出数は入力依存で可変です。上限付き device buffer と device 上の counter を使用します。
 - 上限は `DetectorConfig` の `max_candidates_` と `max_markers_` から決め、source の固定値にしません。
 - counter が上限を超えた場合は、書き込みを打ち切ったうえで overflow flag を立て、結果に明示的な状態値として返します。無言の切り捨てを行いません。
-- compaction は、まず atomic counter による素朴な実装で正しさを固定し、Phase 4 で prefix sum 方式と比較します。
+- compaction は、まず atomic counter による素朴な実装で正しさを固定し、その後 prefix sum 方式と比較します。
 
 ### workspace と memory 方針
 
@@ -427,10 +427,10 @@ ArUco3 無効で案 C の候補が多いのは、案 C が輪郭ごとに候補�
 
 ## 実装上の判断
 
-- 候補抽出は案 A を主案とし、案 C を Phase 1 の互換性基準かつ fallback として常に維持します。
+- 候補抽出は案 A を主案とし、案 C を互換性の基準かつ fallback として常に維持します。
 - S3 から S5 までを window size 方向に同時実行し、CPU 実装のように window ごとの逐次結合を行いません。
 - Dictionary 照合は 4 回転分を事前展開した packed codeword に対する popcount で行い、回転探索を分岐にしません。
-- 四隅の subpixel 補正は、ArUco3 の精度に直結するため CPU 委譲を許容せず、Phase 3 で GPU 実装します。
+- 四隅の subpixel 補正は、ArUco3 の精度に直結するため CPU 委譲を許容せず GPU で実装します。
 - 入力は 8-bit grayscale に限定し、色変換は adapter の責務とします。
 
 ### block size を設定にしない判断
@@ -441,7 +441,7 @@ ArUco3 無効で案 C の候補が多いのは、案 C が輪郭ごとに候補�
 
 同じ sweep をやり直さないよう、測定した事実をここに残します。
 
-機に依存する値のうち、実際に効くのは S10 の補正で起こす block 数だけでした。これは設定ではなく **device の SM 数から導いて**います。詳細は [実装計画](../implementation-plan.md) の WP-4.3 にあります。
+機に依存する値のうち、実際に効くのは S10 の補正で起こす block 数だけでした。これは設定ではなく **device の SM 数から導いて**います。詳細は [実装の構成と検証](../implementation-plan.md) にあります。
 
 ## 未確定事項
 

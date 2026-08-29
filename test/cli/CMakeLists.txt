@@ -118,9 +118,12 @@ aruco3cuda_add_cli_test(cli.bench.unknown_option aruco3cuda_bench_cli FALSE --no
 aruco3cuda_add_cli_test(cli.bench.missing_value aruco3cuda_bench_cli FALSE --warmup)
 aruco3cuda_add_cli_test(cli.bench.invalid_number aruco3cuda_bench_cli FALSE --warmup abc --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.unknown_route aruco3cuda_bench_cli FALSE --route CUDA-Nope --input /x.png)
-# 未実装の経路は無言で CPU へ読み替えず失敗する。
-aruco3cuda_add_cli_test(cli.bench.unimplemented_route aruco3cuda_bench_cli FALSE
-  --route CUDA-E2E --warmup 0 --latency-iterations 1 --throughput-frames 0 --input /x.png)
+# 経路と memory 種別の組合せが不正なら失敗する。CUDA-E2E は host 入力の経路であり
+# device 常駐入力 (M-Device) を受け付けない。この検査を欠くと、指定と異なる条件で
+# 測ったまま気付かない。
+aruco3cuda_add_cli_test(cli.bench.route_memory_mismatch aruco3cuda_bench_cli FALSE
+  --route CUDA-E2E --memory-mode M-Device --warmup 0 --latency-iterations 1
+  --throughput-frames 0 --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.missing_image aruco3cuda_bench_cli FALSE
   --warmup 0 --latency-iterations 1 --input /nonexistent/image.png)
 # 境界値: 遅延測定の回数が 0 は不正。

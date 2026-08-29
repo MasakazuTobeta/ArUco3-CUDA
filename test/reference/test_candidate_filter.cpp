@@ -479,7 +479,7 @@ TEST(CandidateFilterTest, rejects_triangles) {
 // 既知の限界: 重なって 1 成分になった 2 枚は 1 つの四角形になる。
 //
 // CPU 経路では輪郭が 8 角形になり多角形近似で落ちる。案 A では外接する
-// 四角形として受け入れられ、2 枚とも取りこぼす。この差は WP-2.6 の比較
+// 四角形として受け入れられ、2 枚とも取りこぼす。この差は候補抽出の比較
 // 対象であり、挙動を隠さず固定するためにこの test を置いている。
 TEST(CandidateFilterTest, known_limitation_overlapping_markers_merge) {
     if (!has_cuda_device()) {
@@ -498,7 +498,7 @@ TEST(CandidateFilterTest, known_limitation_overlapping_markers_merge) {
 // 既知の限界: 縦にずらして重ねた 2 枚は、四角形でない形になり落ちる。
 //
 // 重なり方によって「1 つの四角形になる」か「落ちる」かが変わる。どちらも
-// 2 枚を取りこぼす点は同じであり、CPU 基準との差として WP-2.6 で数える。
+// 2 枚を取りこぼす点は同じであり、CPU 基準との差として数える。
 TEST(CandidateFilterTest, known_limitation_staggered_markers_are_lost) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";

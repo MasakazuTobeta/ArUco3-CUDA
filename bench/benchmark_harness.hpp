@@ -15,10 +15,9 @@ namespace aruco3cuda::bench {
 
 /// 評価計画が定める比較経路。
 ///
-/// 実装があるのは kCpu と kHybrid である。kCudaEndToEnd と kCudaResident は
-/// GPU decode (Phase 3) の完了後に追加する。未実装の経路を指定した場合は
-/// CPU へ読み替えず失敗させる。読み替えると、記録された route と実際に
-/// 測った処理が食い違う。
+/// 4 経路すべてを測定できる。指定と実際の処理が食い違わないよう、扱えない
+/// 組合せは CPU へ読み替えず失敗させる。読み替えると、記録された route と
+/// 実際に測った処理が食い違い、結果を後から読み解けなくなる。
 enum class Route : int {
     kCpu = 0,        ///< OpenCV ArUco3。cv::Mat 入力から結果取得まで
     kCudaEndToEnd,   ///< host 入力 CUDA。upload、検出、download、同期を含む
@@ -126,7 +125,7 @@ struct MeasurementRecord {
     aruco3cuda::util::SampleStatistics end_to_end_ms_;
     /// CUDA event で測定する検出処理時間。現時点ではどの経路でも未測定とする。
     ///
-    /// wall-clock との分離は評価計画の要求であり、WP-4.1 で実装する。
+    /// wall-clock との分離は評価計画が求めているが、まだ実装していない。
     /// ここを段階時間で埋めると、記録された値が CUDA event 由来かどうかを
     /// 後から区別できなくなるため、埋めない。
     bool kernel_time_available_ = false;

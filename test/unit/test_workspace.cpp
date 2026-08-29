@@ -125,7 +125,7 @@ TEST(WorkspaceTest, allocates_aligned_buffers) {
 }
 
 // 正常系: 定常状態でフレームごとの確保が発生しない。
-// WP-1.2 の完了条件そのものである。
+// workspace が満たすべき最も重要な性質である。
 TEST(WorkspaceTest, steady_state_does_not_allocate_per_frame) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "CUDA device が無い環境のため skip する";
