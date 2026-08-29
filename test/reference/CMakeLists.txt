@@ -24,7 +24,8 @@ add_executable(aruco3cuda_reference_tests
   test_detector_probe.cu
   test_hybrid_detector.cpp
   test_device_image.cpp
-  test_report_diff.cpp)
+  test_report_diff.cpp
+  test_accuracy.cpp)
 
 target_link_libraries(aruco3cuda_reference_tests
   PRIVATE
@@ -35,6 +36,7 @@ target_link_libraries(aruco3cuda_reference_tests
     aruco3cuda::core
     aruco3cuda::hybrid
     aruco3cuda::report
+    aruco3cuda::evaluate
     aruco3cuda::warnings
     aruco3cuda::coverage
     GTest::gtest

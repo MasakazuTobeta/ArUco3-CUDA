@@ -10,43 +10,24 @@
 #include <vector>
 
 #include "aruco3cuda/util/json_writer.hpp"
+#include "geometry.hpp"
 
 namespace aruco3cuda::report {
 namespace {
 
 /// 四隅の重心。
 std::pair<double, double> centroid(const Detection& detection) {
-    double x = 0.0;
-    double y = 0.0;
-    for (std::size_t c = 0; c < 4U; ++c) {
-        x += detection.corners_[c * 2U];
-        y += detection.corners_[(c * 2U) + 1U];
-    }
-    return {x / 4.0, y / 4.0};
+    return quad_centroid(detection.corners_);
 }
 
 /// 四隅を結んだ四角形の平均辺長。対応付けの半径を決めるために使う。
 double average_side(const Detection& detection) {
-    double total = 0.0;
-    for (std::size_t c = 0; c < 4U; ++c) {
-        const std::size_t next = (c + 1U) % 4U;
-        const double dx = detection.corners_[c * 2U] - detection.corners_[next * 2U];
-        const double dy = detection.corners_[(c * 2U) + 1U] - detection.corners_[(next * 2U) + 1U];
-        total += std::sqrt((dx * dx) + (dy * dy));
-    }
-    return total / 4.0;
+    return quad_average_side(detection.corners_);
 }
 
 /// 対象の四隅を steps 段巡回させたときの、四隅の最大距離。
 double corner_error(const Detection& baseline, const Detection& target, int steps) {
-    double worst = 0.0;
-    for (std::size_t c = 0; c < 4U; ++c) {
-        const std::size_t shifted = (c + static_cast<std::size_t>(steps)) % 4U;
-        const double dx = baseline.corners_[c * 2U] - target.corners_[shifted * 2U];
-        const double dy = baseline.corners_[(c * 2U) + 1U] - target.corners_[(shifted * 2U) + 1U];
-        worst = std::max(worst, std::sqrt((dx * dx) + (dy * dy)));
-    }
-    return worst;
+    return quad_corner_error(baseline.corners_, target.corners_, steps);
 }
 
 /// 対応付けの候補 1 件。

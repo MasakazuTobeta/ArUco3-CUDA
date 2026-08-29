@@ -5,3 +5,4 @@
 add_subdirectory(dictgen)
 add_subdirectory(corpusgen)
 add_subdirectory(report)
+add_subdirectory(evaluate)
