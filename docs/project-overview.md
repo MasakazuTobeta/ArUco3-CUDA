@@ -107,7 +107,7 @@ CPU 基準との一致は、Hybrid 経路が 91/91 枚 (最大差 0.000 px)、CU
 
 検出のみを測った end-to-end 時間を、28 場面 x 3 経路 x 3 機で比較しています。画像の読み込みと checksum は測定区間に含みません。
 
-**CPU が勝つのは 640x480 かつ検出が 1 件以上ある場面だけです。** 28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。ただしこれは合成 corpus での境界であり、実画像では輪郭点数が増えて境界が動く可能性があります。
+**CPU が CUDA-Resident を上回るのは 640x480 かつ検出が 1 件以上ある場面だけです。** 28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。ただし DGX Spark と GeForce RTX 5070 Ti では **CPU が Hybrid を上回る場面は 1 つもなく**、場面ごとに速い方の GPU 経路を選べるならこの 2 機で CPU が勝つ場面は無くなります。CPU が両経路を同時に上回るのは Jetson AGX Orin の 1 場面だけです。これは合成 corpus での境界であり、実画像では輪郭点数が増えて境界が動く可能性があります。
 
 境界を決めるのは解像度でも候補数でもなく、二値化後の輪郭点数です。ArUco3 の縮小により原寸が 27 倍変わっても segmentation 面は 2.2 倍しか変わりません。
 

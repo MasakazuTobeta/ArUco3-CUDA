@@ -44,9 +44,11 @@ flowchart TD
 | Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.66 | 0.30 |
 | GeForce RTX 5070 Ti | 0.614 ms | 0.295 ms | 0.421 ms | 0.68 | 0.28 |
 
-左 3 列は 1280x720 にマーカー 4 枚を置いた場面の定常 p50 です。比は 1 未満が GPU 有利を意味します。
+左 3 列は 1280x720 にマーカー 4 枚を置いた場面の定常 p50 で、起動費用を測る 1 process 1 枚の測定 (200 反復) を独立した 3 process で行った中央値です。同じ場面を 28 場面 sweep で測ると多少違う値になります (例: DGX Spark の CUDA-Resident は 0.626 ms)。**GPU 経路は実行間のばらつきが大きく、この程度の差は測定間で生じます。** 詳細は [Benchmark 報告](docs/benchmark-report.md) にあります。比は 1 未満が GPU 有利を意味します。
 
-**CPU が勝つ条件があります。** 合成 corpus では、640x480 かつ検出が 1 件以上ある場面で CPU が速くなります。28 場面のうち CPU が勝つのは DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。実画像では輪郭点が合成 corpus より多くなる可能性があり、この境界は動きます。まだ確かめていません。
+**CPU が勝つ条件があります。** 合成 corpus では、640x480 かつ検出が 1 件以上ある場面で CPU が `CUDA-Resident` を上回ります。28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。
+
+ただしこれは経路を `CUDA-Resident` に固定した場合です。**DGX Spark と GeForce RTX 5070 Ti では、CPU が `Hybrid` を上回る場面は 28 場面中 1 つもありません。** 場面ごとに速い方を選べるなら、この 2 機で CPU が勝つ場面は無くなります。Jetson AGX Orin だけは CPU が両経路を同時に上回る場面が 1 つあります。実画像では輪郭点が合成 corpus より多くなる可能性があり、この境界は動きます。まだ確かめていません。
 
 境界を決めるのは解像度でも候補数でもなく、二値化後の輪郭点数です。輪郭点 1e5 あたりの係数は CPU 2.48-5.35 ms、Hybrid 2.54-5.48 ms、CUDA-Resident 0.041-0.278 ms で、**Hybrid は CPU とほぼ同じです**。輪郭抽出から先を host で行うためです。Hybrid と CUDA-Resident の切替点は輪郭点 約 20,000 点 (DGX Spark と GeForce RTX 5070 Ti) で、Jetson AGX Orin では全 28 場面で CUDA-Resident が勝ちます。
 
