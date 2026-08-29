@@ -1,0 +1,98 @@
+ArUco3-CUDA
+Copyright 2026 TriOrb Inc.
+
+This product includes software developed as part of the OpenCV project
+(https://opencv.org/).
+
+--------------------------------------------------------------------------------
+OpenCV, version 4.14.0, commit 0654a42e19215ef25b1d367d822f3c630447e7c7
+--------------------------------------------------------------------------------
+
+This repository contains no copy of OpenCV source code. It does contain code
+whose arithmetic, evaluation order and rounding were reproduced from OpenCV so
+that the CUDA implementation can be checked for bit-exact agreement against a
+host reference. The files concerned are recorded in docs/code-provenance.md.
+
+OpenCV 4.x is distributed under the Apache License 2.0, but a number of its
+files retain their original 3-clause BSD headers. The files this project
+reproduced behaviour from fall into both groups.
+
+Files carrying a 3-clause BSD header, with the copyright holders they name:
+
+  modules/imgproc/src/cornersubpix.cpp
+      Copyright (C) 2000, Intel Corporation, all rights reserved.
+      Copyright (C) 2013, OpenCV Foundation, all rights reserved.
+
+  modules/imgproc/src/samplers.cpp
+      Copyright (C) 2000, Intel Corporation, all rights reserved.
+      Copyright (C) 2013, OpenCV Foundation, all rights reserved.
+
+  modules/imgproc/src/thresh.cpp
+      Copyright (C) 2000-2008, Intel Corporation, all rights reserved.
+      Copyright (C) 2009, Willow Garage Inc., all rights reserved.
+
+  modules/imgproc/src/imgwarp.cpp
+      Copyright (C) 2000-2008, Intel Corporation, all rights reserved.
+      Copyright (C) 2009, Willow Garage Inc., all rights reserved.
+      Copyright (C) 2014-2015, Itseez Inc., all rights reserved.
+      Copyright (C) 2026, Advanced Micro Devices, all rights reserved.
+
+  modules/imgproc/src/geometry.cpp
+      Copyright (C) 2000, Intel Corporation, all rights reserved.
+
+  Third party copyrights are property of their respective owners.
+
+The 3-clause BSD license text carried by those files is reproduced below.
+
+    IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
+
+    By downloading, copying, installing or using the software you agree to this
+    license. If you do not agree to this license, do not download, install,
+    copy or use the software.
+
+                              License Agreement
+                   For Open Source Computer Vision Library
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+      * Redistribution's of source code must retain the above copyright notice,
+        this list of conditions and the following disclaimer.
+
+      * Redistribution's in binary form must reproduce the above copyright
+        notice, this list of conditions and the following disclaimer in the
+        documentation and/or other materials provided with the distribution.
+
+      * The name of the copyright holders may not be used to endorse or promote
+        products derived from this software without specific prior written
+        permission.
+
+    This software is provided by the copyright holders and contributors "as is"
+    and any express or implied warranties, including, but not limited to, the
+    implied warranties of merchantability and fitness for a particular purpose
+    are disclaimed. In no event shall the Intel Corporation or contributors be
+    liable for any direct, indirect, incidental, special, exemplary, or
+    consequential damages (including, but not limited to, procurement of
+    substitute goods or services; loss of use, data, or profits; or business
+    interruption) however caused and on any theory of liability, whether in
+    contract, strict liability, or tort (including negligence or otherwise)
+    arising in any way out of the use of this software, even if advised of the
+    possibility of such damage.
+
+Files carrying only a pointer to the OpenCV top-level LICENSE, which is the
+Apache License 2.0 for the 4.x branch:
+
+  modules/objdetect/src/aruco/aruco_detector.cpp
+  modules/objdetect/src/aruco/aruco_dictionary.cpp
+  modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp
+  modules/objdetect/include/opencv2/objdetect/aruco_dictionary.hpp
+  modules/core/src/matrix_decomp.cpp
+  modules/core/src/mean.dispatch.cpp
+
+The predefined dictionary data in src/dictionary/generated/ was converted from
+OpenCV's getPredefinedDictionary() output. It was not extracted from any GPLv3
+distribution of ArUco.
+
+The name OpenCV, and the names of the copyright holders above, are used here
+only to identify the compatibility target and the origin of the reproduced
+behaviour. Their use does not indicate endorsement of this project.

@@ -20,9 +20,10 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 - Universidad de Córdoba の公式 ArUco ページは、配布 software を GPLv3 と表示しています。
 - 同ページには personal、research、educational purposes と commercial license への問い合わせも記載されています。GPLv3 自体は商用利用を一律に禁止する license ではないため、公式配布物へ追加条件があるかは、利用前に配布物内の license 本文または権利者へ確認が必要です。
 - OpenCV は Apache-2.0 で配布され、OpenCV の ArUco3 対応は GPL 非互換 code に基づかないことを contribution checklist で確認して取り込まれています。
+- ただし **OpenCV 4.x は file ごとに license header が違います。** project 全体の LICENSE は Apache-2.0 ですが、`imgproc` の古い file は 3 条項 BSD の header を残し、Intel Corporation ほかを著作権者として挙げています。本 project が振る舞いを写した `cornersubpix.cpp`、`samplers.cpp`、`thresh.cpp`、`imgwarp.cpp`、`geometry.cpp` はいずれも 3 条項 BSD です。file ごとの内訳は [Code Provenance 記録](code-provenance.md) の PR-005 にあります。
 - 現在の OpenCV 4.x は従来方式だけではなく、`DetectorParameters::useAruco3Detection` によって 2018 年論文の高速検出戦略を有効化できます。
 - OpenCV 4.x は `DICT_ARUCO_MIP_36h12` を 6x6、250 code、最小 Hamming 距離 12 の定義済み Dictionary として収録しています。
-- 本リポジトリには、公式 ArUco または OpenCV の source code はまだ含まれていません。
+- 本リポジトリに、公式 ArUco または OpenCV の source code を貼り付けた file はありません。ただし `test/reference/test_corner_refine.cpp` の `oracle` namespace は、`cv::cornerSubPix` と `cv::getRectSubPix` の演算と評価順序を逐語で写しています。GPU 実装が写し間違えていないかを機の違いから切り離して測るためです。写し元は 3 条項 BSD であり、**保守的な扱いとして著作権表示と license 本文を repository root の `NOTICE` へ置きました。** 写しが法的に二次的著作物にあたるかの判断は専門家の確認を要します。
 - 本リポジトリの license は Apache License 2.0 とします。contribution も明示的な例外がない限り同 license で受け入れます。
 
 ## 著作権とアルゴリズムの区別
@@ -113,6 +114,8 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 - 新規 source file には `SPDX-License-Identifier: Apache-2.0` を記載する。
 - Apache-2.0 code を取り込む場合は、元の copyright、patent、trademark、attribution notice を保持する。
 - upstream に `NOTICE` がある第三者 code を配布する場合は、必要な attribution を本 repository の `NOTICE` へ追加する。
+- 3 条項 BSD の header を持つ file から振る舞いを写した場合も、著作権表示・条件・免責を `NOTICE` へ保持する。Apache-2.0 だけを前提にすると、この保持義務を落とす。
+- 著作権者の名称を、本 project の宣伝や推奨の示唆に使わない。3 条項 BSD の第 3 条による。
 - contribution は Apache License 2.0 Section 5 に従う。
 
 ## 目標
@@ -125,7 +128,7 @@ ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実�
 ## 未確定事項
 
 - 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。
-- OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。
+- OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。現時点では `NOTICE` へ記載している。
 - patent clearance の対象国と実施担当。
 
 ## 参考資料

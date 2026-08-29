@@ -100,4 +100,6 @@ CUDA が常に CPU より速いとは仮定しません。次の経路を同一�
 
 本プロジェクトは [Apache License 2.0](LICENSE) で提供します。公式 ArUco の GPLv3 code はコピーまたは翻案しません。詳細は [知的財産・ライセンス方針](docs/ip-and-licensing.md) を参照してください。
 
+第三者の著作権表示は [NOTICE](NOTICE) にあります。OpenCV 4.x は file ごとに license header が違い、本 project が振る舞いを写した `imgproc` の file は 3 条項 BSD です。
+
 実装根拠は ArUco3 論文と Apache-2.0 の OpenCV 4.x に限定します。定義済み Dictionary は GPLv3 の公式 ArUco 配布物から抽出せず、version と commit を固定した OpenCV 4.x のデータを正本として扱います。

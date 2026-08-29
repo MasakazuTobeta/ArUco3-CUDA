@@ -10,6 +10,15 @@
 //    一致した隅の数と最大差を表へ出す。
 // 2. 段を登る手順 (findCornerInPyrImage) そのものは決定的なので、
 //    scale と窓の半径の選び方を個別に固定する。
+//
+// 下の oracle namespace は OpenCV の cv::cornerSubPix と cv::getRectSubPix の
+// 演算と評価順序を写したものである。写し元の
+// modules/imgproc/src/cornersubpix.cpp と modules/imgproc/src/samplers.cpp は、
+// OpenCV 4.x 全体の Apache-2.0 ではなく 3 条項 BSD の header を持ち、
+// Intel Corporation と OpenCV Foundation を著作権者として挙げている。
+// 3 条項 BSD は source の再配布に著作権表示と免責の保持を求めるため、
+// 該当する表示を repository root の NOTICE へ置いた。
+// 詳細は docs/code-provenance.md の PR-005 を参照。
 #include "corner_refine.hpp"
 
 #include <gtest/gtest.h>
@@ -73,6 +82,8 @@ cv::Mat make_scene(int width, int height, const cv::Rect& square) {
 }
 
 /// cv::cornerSubPix と cv::getRectSubPix を host へ逐語で写したもの。
+///
+/// 写し元は 3 条項 BSD である。著作権表示は repository root の NOTICE にある。
 ///
 /// 目的は「実装が写し間違えていないか」を、機の違いから切り離して測ることに
 /// ある。cv::cornerSubPix そのものと比べると、OpenCV の build が積和を融合

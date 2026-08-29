@@ -98,3 +98,4 @@
 - PR 本文は原則として日本語で記述し、概要、変更点、検証結果、未実施項目、関連文書を含める。
 - secret、認証情報、ビルド生成物、測定用の大容量動画・画像を commit しない。
 - 新規 source file には `SPDX-License-Identifier: Apache-2.0` を記載する。
+- 第三者 code の license は project 全体の LICENSE ではなく **file の header** で判断する。OpenCV 4.x は全体が Apache-2.0 だが、`imgproc` の古い file は 3 条項 BSD の header を残している。写した場合の著作権表示は `NOTICE` へ保持する。

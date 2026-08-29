@@ -115,8 +115,8 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 | Implementation | `src/core/cell_sample.{hpp,cu}`、`src/core/cell_decode.{hpp,cu}`、`src/core/dictionary_match.{hpp,cu}`、`src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}`、`src/core/corner_refine.{hpp,cu}`、`src/dictionary/dictionary.cpp` の `build_cell_masks` と `identify_marker`、`test/reference/test_corner_refine.cpp` の oracle |
 | Basis | OpenCV `objdetect` の ArUco 検出器と `Dictionary::identify`、および `imgproc` の `warpPerspective`、`getPerspectiveTransform`、`threshold` の Otsu 経路、`pointPolygonTest`、`cornerSubPix`、`getRectSubPix`、`core` の `meanStdDev` |
 | Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7`（2026-08-28 取得） |
-| License | Apache-2.0 |
-| Reused expression | 振る舞いの再実装。判定式、演算の順序、丸めの規則、打ち切りの位置は OpenCV と同一にした。識別子、コメント、関数分割、data 構造は本 project の規約に従って独自に書いた |
+| License | **file ごとに異なる。** `objdetect/aruco` と `core` の参照先は Apache-2.0。`imgproc` の `cornersubpix.cpp`、`samplers.cpp`、`thresh.cpp`、`imgwarp.cpp`、`geometry.cpp` は 3 条項 BSD の header を持つ。下の表を参照 |
+| Reused expression | 振る舞いの再実装。判定式、演算の順序、丸めの規則、打ち切りの位置は OpenCV と同一にした。識別子、コメント、関数分割、data 構造は本 project の規約に従って独自に書いた。ただし `test_corner_refine.cpp` の `oracle` namespace だけは演算と評価順序を逐語で写している |
 | Patent review | 未実施 |
 
 対応関係は次のとおりです。
@@ -143,19 +143,30 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 
 参照した file と取得時 hash は次のとおりです。
 
-| File | SHA-256 |
-| --- | --- |
-| `modules/objdetect/src/aruco/aruco_dictionary.cpp` | `9fd90d079e62239683300625ad001f437278b75fce6523368ffa3e5a64198ac8` |
-| `modules/objdetect/include/opencv2/objdetect/aruco_dictionary.hpp` | `6b14b87c13dd3629d3fcfd82e63829e41f01f7cc60c166216e0ae99851f6f42e` |
-| `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` |
-| `modules/imgproc/src/imgwarp.cpp` | `d953cdd11db1bf7b562ba7cfb8b36f2aba3198f15714e5deb40840b01ae77912` |
-| `modules/imgproc/src/thresh.cpp` | `ec40ffd08c842c946213cdd46c2b8036e43770445a4c4b797017c96fd3f91117` |
-| `modules/imgproc/src/cornersubpix.cpp` | `7053a847022c929fdd638bb04c93e86eef163a5b1fc454b96f44f103b37bd56c` |
-| `modules/imgproc/src/samplers.cpp` | `aaae361d7a4d9f7131cb4a63c179bb7ad80bc9adddaa0a4ab347dab156bd2ab7` |
-| `modules/imgproc/src/geometry.cpp` | `05ec6cfba5ad82ac809118f7c9b657eee3bb2467f87046c6ed2f5606a2a59996` |
-| `modules/objdetect/src/aruco/aruco_detector.cpp` | `329ac3f0fd90939a23e1cbf21096352e2229a01998bd08d70ca50e17b99f11ed` |
-| `modules/core/src/mean.dispatch.cpp` | `8e52e41c7bf7f1942a5c366683d2742040f6d82db770f253b7d61cb18205133a` |
-| `modules/core/src/matrix_decomp.cpp` | `887deb3905e1f4fbcab426be4346b4ada863051579f19e3011721704dd2ac596` |
+| File | SHA-256 | header の license | 挙げられている著作権者 |
+| --- | --- | --- | --- |
+| `modules/objdetect/src/aruco/aruco_dictionary.cpp` | `9fd90d079e62239683300625ad001f437278b75fce6523368ffa3e5a64198ac8` | top-level LICENSE (Apache-2.0) | 明記なし |
+| `modules/objdetect/include/opencv2/objdetect/aruco_dictionary.hpp` | `6b14b87c13dd3629d3fcfd82e63829e41f01f7cc60c166216e0ae99851f6f42e` | top-level LICENSE (Apache-2.0) | 明記なし |
+| `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` | top-level LICENSE (Apache-2.0) | 明記なし |
+| `modules/imgproc/src/imgwarp.cpp` | `d953cdd11db1bf7b562ba7cfb8b36f2aba3198f15714e5deb40840b01ae77912` | **3 条項 BSD** | Intel (2000-2008)、Willow Garage (2009)、Itseez (2014-2015)、AMD (2026) |
+| `modules/imgproc/src/thresh.cpp` | `ec40ffd08c842c946213cdd46c2b8036e43770445a4c4b797017c96fd3f91117` | **3 条項 BSD** | Intel (2000-2008)、Willow Garage (2009) |
+| `modules/imgproc/src/cornersubpix.cpp` | `7053a847022c929fdd638bb04c93e86eef163a5b1fc454b96f44f103b37bd56c` | **3 条項 BSD** | Intel (2000)、OpenCV Foundation (2013) |
+| `modules/imgproc/src/samplers.cpp` | `aaae361d7a4d9f7131cb4a63c179bb7ad80bc9adddaa0a4ab347dab156bd2ab7` | **3 条項 BSD** | Intel (2000)、OpenCV Foundation (2013) |
+| `modules/imgproc/src/geometry.cpp` | `05ec6cfba5ad82ac809118f7c9b657eee3bb2467f87046c6ed2f5606a2a59996` | **3 条項 BSD** | Intel (2000) |
+| `modules/objdetect/src/aruco/aruco_detector.cpp` | `329ac3f0fd90939a23e1cbf21096352e2229a01998bd08d70ca50e17b99f11ed` | top-level LICENSE (Apache-2.0) | 明記なし |
+| `modules/core/src/mean.dispatch.cpp` | `8e52e41c7bf7f1942a5c366683d2742040f6d82db770f253b7d61cb18205133a` | top-level LICENSE (Apache-2.0) | 明記なし |
+| `modules/core/src/matrix_decomp.cpp` | `887deb3905e1f4fbcab426be4346b4ada863051579f19e3011721704dd2ac596` | top-level LICENSE (Apache-2.0) | 明記なし |
+
+**OpenCV 4.x は file ごとに license header が違います。** project 全体の LICENSE は
+Apache-2.0 ですが、`imgproc` の古い file は 3 条項 BSD の header を残しており、
+Intel Corporation ほかを著作権者として挙げています。3 条項 BSD の第 1 条は
+source の再配布に著作権表示・条件・免責の保持を求めます。
+
+本 project で写しの度合いが最も高いのは `test_corner_refine.cpp` の `oracle`
+namespace であり、写し元の 2 file はいずれも 3 条項 BSD です。**保守的な扱いとして、
+該当する著作権表示と license 本文を repository root の `NOTICE` へ置きました。**
+写しが法的に二次的著作物にあたるかの判断は本記録の範囲外であり、専門家の確認を
+要します。
 
 公式 ArUco の GPLv3 source code は参照していません。
 
@@ -163,12 +174,12 @@ OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対�
 
 - 実装 PR ごとに 1 行以上の記録を追加し、根拠を後から説明できる状態を保つ。
 - 定義済み Dictionary を取り込む際は、取得元 file、commit、変換手順、変換前後の hash を同じ表へ記録する。
-- 第三者 code を改変利用する場合は、必要な copyright と notice を `NOTICE` へ反映する。
+- 第三者 code を改変利用する場合は、必要な copyright と notice を `NOTICE` へ反映する。**license は project 全体ではなく file の header で判断する。**
 
 ## 未確定事項
 
 - 記録の粒度を PR 単位とするか module 単位とするか。
-- `NOTICE` の作成時期。現時点で第三者 code は含めていない。
+- `NOTICE` へ記載する粒度。現在は写し元 file と著作権者を列挙しているが、変換した Dictionary data の扱いを分けるかは決めていない。
 
 ## 関連
 
