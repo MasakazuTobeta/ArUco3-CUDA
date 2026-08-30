@@ -20,6 +20,11 @@ docker/.env
 # wheel from here.
 *.whl
 
+# Python bytecode. Two of these were committed by accident alongside the
+# tools/*.py scripts.
+__pycache__/
+*.pyc
+
 # editor
 .vscode/
 .idea/
