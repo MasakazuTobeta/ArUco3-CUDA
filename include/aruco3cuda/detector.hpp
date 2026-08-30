@@ -145,8 +145,11 @@ public:
     ///         detect_async() has never been called, and kCudaError if a CUDA API call
     ///         failed.
     ///
-    /// Synchronization: **synchronizes the stream.** This is the only place in this
-    ///                  class that synchronizes.
+    /// Synchronization: **synchronizes the stream.** In steady state this is the only
+    ///                  place in this class that synchronizes, but it is not the only one
+    ///                  overall: initialize() synchronizes the whole device, and
+    ///                  detect_async() synchronizes the stream once on a frame whose
+    ///                  input dimensions or pitch changed.
     ///
     /// Example input: a stream that wrote two detections
     /// Example output: kOk; out->ids_ has 2 elements and out->corners_ has 16

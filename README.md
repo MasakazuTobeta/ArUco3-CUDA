@@ -9,7 +9,7 @@ ArUco3-CUDA is a library that independently implements, in CUDA, the ArUco3 dete
 
 ## What it does
 
-- Detection runs entirely on the GPU, from preprocessing through subpixel corner refinement. `Detector` returns results on the device without host synchronization; only `download()`, which retrieves them to the host, synchronizes.
+- Detection runs entirely on the GPU, from preprocessing through subpixel corner refinement. `Detector` leaves the results on the device. In steady state `detect_async()` only issues kernels, so the synchronizing calls are `initialize()`, `download()`, and the first frame after the input dimensions or pitch change, where the stream is synchronized once to rebuild the buffer layout.
 - The kernel launch sequence for one frame is folded into a CUDA Graph. If you pass an explicit stream, every detection after the first takes a single launch.
 - The workspace is allocated at its worst-case size in `initialize()` and is not reallocated per frame. Peak usage is 17.51 MB with ArUco3 enabled and 414.51 MB with it disabled. Repeating detection 91 times does not increase the allocation count.
 - Detection results are cross-checked against the OpenCV CPU implementation. On the same corpus, precision is 100%, and on the Hybrid route the corners match the CPU baseline on 91 of 91 images ([Accuracy evaluation results](docs/accuracy-report.md)).
@@ -164,7 +164,7 @@ detector.detect_async(image, stream, &message);
 DeviceDetections on_device;
 detector.device_detections(&on_device);
 
-// Receive on the host. This is the only point that synchronizes.
+// Receive on the host. In steady state this is the only synchronizing call.
 HostDetections result;
 detector.download(&result, stream, &message);
 // result.ids_[i] and result.corners_[i * 8 .. i * 8 + 7] (x0, y0, ... x3, y3)
