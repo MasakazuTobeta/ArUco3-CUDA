@@ -26,11 +26,14 @@ HEADER_ROOTS = ["include", "reference", "tools", "bench", "src", "hybrid", "exam
 def discover_headers():
     found = []
     for root in HEADER_ROOTS:
-        for path in sorted(pathlib.Path(root).rglob("*.hpp")):
-            if "generated" in path.parts or "build" in path.parts:
-                continue
-            found.append(str(path))
-    return found
+        # .h as well as .hpp: the C ABI under include/aruco3cuda/c is public API
+        # and is held to the same documentation rule as the C++ headers.
+        for pattern in ("*.hpp", "*.h"):
+            for path in sorted(pathlib.Path(root).rglob(pattern)):
+                if "generated" in path.parts or "build" in path.parts:
+                    continue
+                found.append(str(path))
+    return sorted(found)
 
 
 HEADERS = discover_headers()
@@ -127,7 +130,10 @@ for path in HEADERS:
             if not re.search(r'@param\s+' + re.escape(p) + r'\b', doc): missing.append(f"@param {p}")
         # Constructors and destructors have no return value.
         is_ctor = (name == current_class) or name.startswith("~")
-        returns_void = (bool(re.match(r'^\s*(?:inline\s+)?void\s', line))
+        # The optional leading macro is the export attribute a C header puts in
+        # front of the return type. Without allowing it, every void function in
+        # the C ABI is asked for an @return it does not have.
+        returns_void = (bool(re.match(r'^\s*(?:[A-Z][A-Z0-9_]*\s+)?(?:inline\s+)?void\s', line))
                         or name == "operator()" or is_ctor)
         if not returns_void and "@return" not in doc: missing.append("@return")
         if "Ownership" not in doc and "Ownership" not in class_covers: missing.append("Ownership")

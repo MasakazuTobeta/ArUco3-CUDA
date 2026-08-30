@@ -190,6 +190,32 @@ detections   : 1 (accepted 1)
 
 They are built with the rest of the project by default. `examples/CMakeLists.txt` also configures standalone against an installed package, which is the form that exercises `find_package`. See [Samples](examples/README.md).
 
+Each sample exists twice, in C++ and in Python, taking the same options and printing the same lines.
+
+### Python
+
+`libaruco3cuda_c.so` exposes the detector through a C ABI, and the `aruco3cuda` package drives it with `ctypes`. Nothing is compiled for Python, so the same build works with any CPython 3, and the package depends on nothing outside the standard library.
+
+```bash
+export PYTHONPATH=build/native/python
+python3 -c "import aruco3cuda; print(aruco3cuda.version())"
+```
+
+```python
+import aruco3cuda
+
+config = aruco3cuda.Config(max_width_px=280, max_height_px=280)
+with aruco3cuda.Detector() as detector:
+    detector.initialize("DICT_ARUCO_MIP_36h12", config)
+    with aruco3cuda.DeviceImage.from_host(pixels, 280, 280) as image:
+        with aruco3cuda.Stream() as stream:
+            detector.detect(image, stream)
+            for detection in detector.download(stream):
+                print(detection.id, detection.corners)
+```
+
+`detect()` takes device-resident input: a `DeviceImage`, or anything exposing `__cuda_array_interface__`, which is how a CuPy or PyTorch array is handed over without a copy. A host buffer is rejected with a message naming `DeviceImage.from_host`, so that the transfer is visible where it happens rather than hidden inside every frame. See [C ABI and Python binding](docs/design/c-abi-and-python.md).
+
 ## Limitations
 
 - Evaluation covers the synthetic corpus only. A real-image corpus has not been prepared, and accuracy and the crossover point on real images have not been measured.
@@ -203,7 +229,7 @@ They are built with the rest of the project by default. `examples/CMakeLists.txt
 
 - [Project overview](docs/project-overview.md) / [Architecture](docs/architecture.md) / [Roadmap](docs/roadmap.md)
 - [Samples](examples/README.md)
-- [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
+- [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [C ABI and Python binding](docs/design/c-abi-and-python.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
 - [Evaluation plan](docs/evaluation-plan.md) / [Benchmark report](docs/benchmark-report.md) / [Accuracy evaluation results](docs/accuracy-report.md)
 - [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Glossary](docs/terminology.md)
 - [ADR-0001: Implement first in an independent repository](docs/adr/0001-independent-implementation.md) / [ADR-0002: Fix the build infrastructure and target environment baseline](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: Adopt approach A as the primary plan for quadrilateral candidate extraction](docs/adr/0003-candidate-extraction-approach.md)

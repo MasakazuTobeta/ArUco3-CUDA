@@ -35,3 +35,9 @@ if(ARUCO3CUDA_BUILD_REFERENCE)
   add_subdirectory(reference)
   add_subdirectory(cli)
 endif()
+
+# The Python tests need neither OpenCV nor the reference implementation, so they
+# are registered independently of ARUCO3CUDA_BUILD_REFERENCE.
+if(ARUCO3CUDA_BUILD_PYTHON)
+  add_subdirectory(python)
+endif()

@@ -56,7 +56,7 @@ The `jetson-orin` profile has also been built and verified on the machine itself
 | Image size | 5.0 GB |
 | `verify-environment.sh` | All 5 checks pass |
 | `smoke-test.sh` | Pass |
-| `ctest` | Pass. The suite registers 431 tests in the `portability` preset; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
+| `ctest` | Pass. The suite registers 455 tests in the `portability` preset; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
 
 The image is larger than DGX Spark's 1.64 GB because the base image is `l4t-cuda:11.4.19-devel`, which contains the full CUDA installation. On Jetson there is no way to select only the required packages from NVIDIA's apt repository, so this difference is accepted.
 

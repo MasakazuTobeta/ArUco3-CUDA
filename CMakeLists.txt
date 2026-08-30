@@ -45,9 +45,14 @@ if(ARUCO3CUDA_BUILD_REFERENCE)
   add_subdirectory(bench)
 endif()
 
-# Added before test/, because the CLI tests run the sample binaries.
+# Added before test/, because the CLI tests run the sample binaries and the
+# staged Python package.
 if(ARUCO3CUDA_BUILD_EXAMPLES)
   add_subdirectory(examples)
+endif()
+
+if(ARUCO3CUDA_BUILD_PYTHON)
+  add_subdirectory(python)
 endif()
 
 if(ARUCO3CUDA_BUILD_TESTS)
@@ -64,6 +69,7 @@ message(STATUS "  CUDA architectures : ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  build tests        : ${ARUCO3CUDA_BUILD_TESTS}")
 message(STATUS "  build reference    : ${ARUCO3CUDA_BUILD_REFERENCE}")
 message(STATUS "  build examples     : ${ARUCO3CUDA_BUILD_EXAMPLES}")
+message(STATUS "  build python       : ${ARUCO3CUDA_BUILD_PYTHON}")
 message(STATUS "  warnings as errors : ${ARUCO3CUDA_WARNINGS_AS_ERRORS}")
 message(STATUS "  compute-sanitizer  : ${ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER}")
 message(STATUS "  coverage           : ${ARUCO3CUDA_ENABLE_COVERAGE}")

@@ -2,3 +2,4 @@
 add_subdirectory(util)
 add_subdirectory(dictionary)
 add_subdirectory(core)
+add_subdirectory(capi)

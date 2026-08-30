@@ -6,10 +6,10 @@
 #   that deserves to be called a "library".
 #
 # Scope:
-#   Only the three targets that do not depend on OpenCV (core, dictionary, util)
-#   and the public headers. hybrid, reference, bench, and tools are instruments
-#   for evaluation and measurement, not artifacts we ship to consumers, so they
-#   are not installed.
+#   Only the four targets that do not depend on OpenCV (core, dictionary, util,
+#   and the c shared library holding the C ABI) and the public headers. hybrid,
+#   reference, bench, and tools are instruments for evaluation and measurement,
+#   not artifacts we ship to consumers, so they are not installed.
 function(aruco3cuda_add_install_rules)
   include(GNUInstallDirs)
   include(CMakePackageConfigHelpers)
@@ -19,6 +19,7 @@ function(aruco3cuda_add_install_rules)
   # contradicts the aruco3cuda::core shown in the documentation and makes the
   # installed library unusable through find_package.
   set_target_properties(aruco3cuda_core PROPERTIES EXPORT_NAME core)
+  set_target_properties(aruco3cuda_c PROPERTIES EXPORT_NAME c)
   set_target_properties(aruco3cuda_dictionary PROPERTIES EXPORT_NAME dictionary)
   set_target_properties(aruco3cuda_util PROPERTIES EXPORT_NAME util)
   set_target_properties(aruco3cuda_warnings PROPERTIES EXPORT_NAME warnings)
@@ -28,7 +29,7 @@ function(aruco3cuda_add_install_rules)
   # linking them PRIVATE into a STATIC library leaves them on the interface as
   # $<LINK_ONLY:>, so install(EXPORT) fails unless they are part of the export
   # set.
-  install(TARGETS aruco3cuda_core aruco3cuda_dictionary aruco3cuda_util
+  install(TARGETS aruco3cuda_core aruco3cuda_dictionary aruco3cuda_util aruco3cuda_c
                   aruco3cuda_warnings aruco3cuda_coverage
     EXPORT aruco3cudaTargets
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -37,7 +38,7 @@ function(aruco3cuda_add_install_rules)
 
   install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/aruco3cuda"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-    FILES_MATCHING PATTERN "*.hpp")
+    FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h")
 
   install(EXPORT aruco3cudaTargets
     FILE aruco3cudaTargets.cmake

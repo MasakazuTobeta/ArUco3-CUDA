@@ -2,7 +2,7 @@
 #
 # Only the checks that can run on a runner without a GPU.
 #
-# Detection correctness can only be confirmed on a GPU, so the 431 automated
+# Detection correctness can only be confirmed on a GPU, so the 455 automated
 # tests and Compute Sanitizer run on real hardware: DGX Spark GB10, Jetson AGX
 # Orin, and GeForce RTX 5070 Ti. What CI protects is that the code compiles and
 # that the documentation and formatting conventions hold; it is not a guarantee
@@ -55,7 +55,7 @@ jobs:
               echo "no SPDX identifier: $file"
               missing=1
             fi
-          done < <(git ls-files '*.cpp' '*.hpp' '*.cu' '*.cuh' '*.py' '*.sh')
+          done < <(git ls-files '*.cpp' '*.hpp' '*.h' '*.cu' '*.cuh' '*.py' '*.sh')
           exit "$missing"
 
   build:
@@ -132,3 +132,27 @@ jobs:
           ./build/ci-examples/generate_marker --id 42 --size 200 --margin 40 \
             --output "${{ runner.temp }}/marker.pgm"
           test -s "${{ runner.temp }}/marker.pgm"
+
+      # The Python package is ctypes over the C ABI, so there is nothing to
+      # compile, but loading the shared object and reading the dictionary and
+      # the default configuration through it needs no GPU and is exactly where a
+      # mismatch between the C header and the hand-written ctypes mirror would
+      # show up.
+      - name: Run the Python tests that need no device
+        env:
+          PYTHONPATH: build/ci/python
+          LD_LIBRARY_PATH: /usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib
+        run: python3 -m unittest discover -s test/python -p 'test_binding.py' -v
+
+      # The Python samples run against the same package. generate_marker.py
+      # needs no device, and its output has to match the C++ sample byte for
+      # byte, which is checked here rather than only on the GPU machines.
+      - name: Run the Python sample that needs no device
+        env:
+          PYTHONPATH: build/ci/python:examples/python
+          LD_LIBRARY_PATH: /usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib
+        run: |
+          set -eux
+          python3 examples/python/generate_marker.py --id 42 --size 200 --margin 40 \
+            --output "${{ runner.temp }}/marker-python.pgm"
+          cmp "${{ runner.temp }}/marker.pgm" "${{ runner.temp }}/marker-python.pgm"
