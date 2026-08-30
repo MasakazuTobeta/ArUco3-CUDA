@@ -20,7 +20,7 @@ import re, sys, pathlib
 
 # The targets are discovered automatically. A hand-maintained list would leave a
 # newly added header out of the check, so missing documentation would still pass.
-HEADER_ROOTS = ["include", "reference", "tools", "bench", "src", "hybrid"]
+HEADER_ROOTS = ["include", "reference", "tools", "bench", "src", "hybrid", "examples"]
 
 
 def discover_headers():

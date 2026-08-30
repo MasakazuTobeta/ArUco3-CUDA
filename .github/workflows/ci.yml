@@ -2,7 +2,7 @@
 #
 # Only the checks that can run on a runner without a GPU.
 #
-# Detection correctness can only be confirmed on a GPU, so the 402 automated
+# Detection correctness can only be confirmed on a GPU, so the 431 automated
 # tests and Compute Sanitizer run on real hardware: DGX Spark GB10, Jetson AGX
 # Orin, and GeForce RTX 5070 Ti. What CI protects is that the code compiles and
 # that the documentation and formatting conventions hold; it is not a guarantee
@@ -109,3 +109,26 @@ jobs:
         run: |
           ./build/ci/test/aruco3cuda_unit_tests \
             --gtest_filter=-AlignUpTest.*:CudaCheckTest.*:CudaCheckDeliberateErrorTest.*:DeviceProbeTest.*:WorkspaceTest.*
+
+      # The samples build in tree with everything else. They also have to build
+      # standalone against the installed package, which is the only form that
+      # exercises find_package and the exported target names. An in-tree build
+      # resolves the aliases directly, so a broken export set stays invisible
+      # there.
+      - name: Build the samples against the installed package
+        run: |
+          set -eux
+          cmake --install build/ci --prefix "${{ runner.temp }}/prefix"
+          cmake -S examples -B build/ci-examples -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ runner.temp }}/prefix"
+          cmake --build build/ci-examples -j "$(nproc)"
+
+      # generate_marker performs no detection, so it is the one sample that can
+      # actually run here. Rendering exercises the packed dictionary tables,
+      # which is worth confirming without a GPU.
+      - name: Run the sample that needs no device
+        run: |
+          ./build/ci-examples/generate_marker --id 42 --size 200 --margin 40 \
+            --output "${{ runner.temp }}/marker.pgm"
+          test -s "${{ runner.temp }}/marker.pgm"

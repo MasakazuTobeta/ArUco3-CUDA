@@ -199,6 +199,150 @@ aruco3cuda_add_cli_test(cli.report.unwritable_output aruco3cuda_report_cli FALSE
 set_tests_properties(cli.report.unwritable_output PROPERTIES FIXTURES_REQUIRED cli_corpus)
 
 
+# --- samples ---
+#
+# The samples are the first code a new user runs, so they are held to the same
+# standard as the tools: nominal, error, and boundary cases from ctest. The
+# round trip matters most. generate_marker renders from the packed dictionary
+# and detect_image reads it back through the full pipeline, so a break in either
+# the bit order, the border polarity, or the corner ordering shows up as a
+# missing id rather than as a plausible-looking picture nobody checks.
+if(TARGET aruco3cuda_example_generate_marker)
+  set(kExampleMarker "${CMAKE_CURRENT_BINARY_DIR}/example-marker.pgm")
+  set(kExampleTinyMarker "${CMAKE_CURRENT_BINARY_DIR}/example-tiny-marker.pgm")
+  set(kExampleAsciiPgm "${CMAKE_CURRENT_BINARY_DIR}/example-ascii.pgm")
+
+  # ASCII PGM must be rejected with a reason rather than misread. Written at
+  # configure time because no tool in this repository produces a P2 file.
+  file(WRITE "${kExampleAsciiPgm}" "P2\n2 2\n255\n0 0 0 0\n")
+
+  aruco3cuda_add_cli_test(cli.example.generate_marker.help
+    aruco3cuda_example_generate_marker TRUE --help)
+  aruco3cuda_add_cli_test(cli.example.generate_marker.list_dictionaries
+    aruco3cuda_example_generate_marker TRUE --list-dictionaries)
+  aruco3cuda_add_cli_test(cli.example.generate_marker.no_output
+    aruco3cuda_example_generate_marker FALSE --id 0)
+  aruco3cuda_add_cli_test(cli.example.generate_marker.unknown_option
+    aruco3cuda_example_generate_marker FALSE --nonexistent-option x)
+  aruco3cuda_add_cli_test(cli.example.generate_marker.missing_value
+    aruco3cuda_example_generate_marker FALSE --id)
+  aruco3cuda_add_cli_test(cli.example.generate_marker.invalid_integer
+    aruco3cuda_example_generate_marker FALSE --id abc --output "${kExampleMarker}")
+  aruco3cuda_add_cli_test(cli.example.generate_marker.unknown_dictionary
+    aruco3cuda_example_generate_marker FALSE --dictionary DICT_NOPE --output "${kExampleMarker}")
+  aruco3cuda_add_cli_test(cli.example.generate_marker.unwritable_output
+    aruco3cuda_example_generate_marker FALSE --output /nonexistent-dir/marker.pgm)
+  # Boundary: DICT_ARUCO_MIP_36h12 holds 250 ids, so 249 is the last valid one.
+  aruco3cuda_add_cli_test(cli.example.generate_marker.last_id
+    aruco3cuda_example_generate_marker TRUE --id 249 --size 64 --output "${kExampleMarker}")
+  aruco3cuda_add_cli_test(cli.example.generate_marker.id_past_end
+    aruco3cuda_example_generate_marker FALSE --id 250 --output "${kExampleMarker}")
+  # Boundary: the smallest renderable side is the cell count, 6 + 2 * 1 = 8.
+  aruco3cuda_add_cli_test(cli.example.generate_marker.smallest_size
+    aruco3cuda_example_generate_marker TRUE --size 8 --margin 0 --output "${kExampleMarker}")
+  aruco3cuda_add_cli_test(cli.example.generate_marker.size_below_cell_count
+    aruco3cuda_example_generate_marker FALSE --size 7 --margin 0 --output "${kExampleMarker}")
+
+  # Fixture: a marker large enough to be detected, and one deliberately below the
+  # ArUco3 lower bound.
+  add_test(NAME cli.example.marker.setup
+    COMMAND $<TARGET_FILE:aruco3cuda_example_generate_marker>
+            --id 42 --size 200 --margin 40 --output "${kExampleMarker}")
+  set_tests_properties(cli.example.marker.setup PROPERTIES
+    FIXTURES_SETUP example_marker TIMEOUT 60)
+  add_test(NAME cli.example.tiny_marker.setup
+    COMMAND $<TARGET_FILE:aruco3cuda_example_generate_marker>
+            --id 42 --size 40 --margin 400 --output "${kExampleTinyMarker}")
+  set_tests_properties(cli.example.tiny_marker.setup PROPERTIES
+    FIXTURES_SETUP example_tiny_marker TIMEOUT 60)
+endif()
+
+if(TARGET aruco3cuda_example_detect_image)
+  aruco3cuda_add_cli_test(cli.example.detect_image.help
+    aruco3cuda_example_detect_image TRUE --help)
+  aruco3cuda_add_cli_test(cli.example.detect_image.no_input
+    aruco3cuda_example_detect_image FALSE --repeat 1)
+  aruco3cuda_add_cli_test(cli.example.detect_image.unknown_option
+    aruco3cuda_example_detect_image FALSE --nonexistent-option x)
+  aruco3cuda_add_cli_test(cli.example.detect_image.missing_value
+    aruco3cuda_example_detect_image FALSE --input)
+  aruco3cuda_add_cli_test(cli.example.detect_image.missing_image
+    aruco3cuda_example_detect_image FALSE --input /nonexistent/image.pgm)
+  aruco3cuda_add_cli_test(cli.example.detect_image.ascii_pgm_rejected
+    aruco3cuda_example_detect_image FALSE --input "${kExampleAsciiPgm}")
+  # The exit code alone would also be produced by a missing file, so the reason
+  # is asserted separately. Naming P2 is the whole point of rejecting it: a
+  # reader who exported the wrong PGM variant needs to be told which one.
+  add_test(NAME cli.example.detect_image.ascii_pgm_reason
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image> --input "${kExampleAsciiPgm}")
+  set_tests_properties(cli.example.detect_image.ascii_pgm_reason PROPERTIES
+    TIMEOUT 60 PASS_REGULAR_EXPRESSION "ASCII PGM \\(P2\\) is not supported")
+
+  # These two take a readable image on purpose. Pointing them at a bad path
+  # would make them pass on the file error and never reach the option under
+  # test.
+  aruco3cuda_add_cli_test(cli.example.detect_image.invalid_repeat
+    aruco3cuda_example_detect_image FALSE --repeat 0 --input "${kExampleMarker}")
+  aruco3cuda_add_cli_test(cli.example.detect_image.unknown_dictionary
+    aruco3cuda_example_detect_image FALSE --dictionary DICT_NOPE --input "${kExampleMarker}")
+  set_tests_properties(cli.example.detect_image.invalid_repeat
+                       cli.example.detect_image.unknown_dictionary
+    PROPERTIES FIXTURES_REQUIRED example_marker)
+
+  # Nominal: the id that went in comes back out.
+  add_test(NAME cli.example.detect_image.round_trip
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image> --input "${kExampleMarker}")
+  # PASS_REGULAR_EXPRESSION passes when any one entry matches, so the count is
+  # asserted the other way round: any count other than 1 fails the test.
+  set_tests_properties(cli.example.detect_image.round_trip PROPERTIES
+    FIXTURES_REQUIRED example_marker TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "id=42"
+    FAIL_REGULAR_EXPRESSION "detections   : ([^1]|1[0-9])")
+
+  # The workspace must stop allocating. If a per-frame cudaMalloc ever creeps
+  # back in, allocation_count_ grows with --repeat and this fails.
+  add_test(NAME cli.example.detect_image.repeat_allocates_once
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image>
+            --input "${kExampleMarker}" --repeat 8)
+  set_tests_properties(cli.example.detect_image.repeat_allocates_once PROPERTIES
+    FIXTURES_REQUIRED example_marker TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "workspace    : 1 allocation\\(s\\), 0 reallocation")
+
+  # The default stream cannot be captured as a graph, so it takes the other
+  # dispatch path. Both must produce the same id.
+  add_test(NAME cli.example.detect_image.default_stream
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image>
+            --input "${kExampleMarker}" --default-stream)
+  set_tests_properties(cli.example.detect_image.default_stream PROPERTIES
+    FIXTURES_REQUIRED example_marker TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "id=42")
+
+  add_test(NAME cli.example.detect_image.without_aruco3
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image>
+            --input "${kExampleMarker}" --no-aruco3)
+  set_tests_properties(cli.example.detect_image.without_aruco3 PROPERTIES
+    FIXTURES_REQUIRED example_marker TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "id=42")
+
+  # Boundary: a marker below the ArUco3 lower bound is not found. This is the
+  # most common reason a first run reports nothing, so it is pinned down rather
+  # than left as a note in the documentation.
+  add_test(NAME cli.example.detect_image.below_aruco3_lower_bound
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image> --input "${kExampleTinyMarker}")
+  set_tests_properties(cli.example.detect_image.below_aruco3_lower_bound PROPERTIES
+    FIXTURES_REQUIRED example_tiny_marker TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "detections   : 0 ")
+
+  # The same image with ArUco3 off has no lower bound, so it must be found.
+  add_test(NAME cli.example.detect_image.small_marker_without_aruco3
+    COMMAND $<TARGET_FILE:aruco3cuda_example_detect_image>
+            --input "${kExampleTinyMarker}" --no-aruco3)
+  set_tests_properties(cli.example.detect_image.small_marker_without_aruco3 PROPERTIES
+    FIXTURES_REQUIRED example_tiny_marker TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "id=42")
+endif()
+
+
 # Continuously check the Doxygen requirements for the public API, so that a
 # missing entry becomes visible as soon as a declaration is added.
 find_package(Python3 COMPONENTS Interpreter)

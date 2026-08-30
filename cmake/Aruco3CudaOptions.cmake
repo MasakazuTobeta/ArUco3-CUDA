@@ -8,6 +8,18 @@ include_guard(GLOBAL)
 
 option(ARUCO3CUDA_BUILD_TESTS "Build the automated tests" ON)
 option(ARUCO3CUDA_BUILD_REFERENCE "Build the OpenCV based CPU baseline runner" ON)
+
+# The samples are built by default only when this project is the top-level one.
+# Someone pulling the library in with add_subdirectory wants the library, not two
+# extra executables. Someone working in the repository wants them compiled on
+# every build, because a sample that is never built is a sample that has already
+# stopped compiling.
+if(PROJECT_IS_TOP_LEVEL)
+  set(kExamplesDefault ON)
+else()
+  set(kExamplesDefault OFF)
+endif()
+option(ARUCO3CUDA_BUILD_EXAMPLES "Build the sample programs under examples/" ${kExamplesDefault})
 option(ARUCO3CUDA_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 option(ARUCO3CUDA_ENABLE_CLANG_TIDY "Apply clang-tidy to the C++ sources" OFF)
 option(ARUCO3CUDA_ENABLE_COVERAGE "Measure C0 / C1 coverage of the C++ code" OFF)

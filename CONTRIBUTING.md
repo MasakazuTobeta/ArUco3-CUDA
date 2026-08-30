@@ -95,8 +95,9 @@ GitHub Actions runs on runners without a GPU. Therefore **a green CI does not me
 | Relative links in documents | CI (`tools/check-doc-links.py`) |
 | SPDX notice in source files | CI |
 | Compilation for 3 architectures | CI (`ARUCO3CUDA_BUILD_REFERENCE=OFF`) |
+| Standalone `find_package` build of the samples | CI (`examples/`) |
 | 54 tests that need no device | CI |
-| **402 automated tests** | **3 physical machines** |
+| **431 automated tests** | **3 physical machines** |
 | **4 Compute Sanitizer tools** | **3 physical machines** |
 | **Cross-check against the CPU baseline** | **3 physical machines** (requires OpenCV) |
 

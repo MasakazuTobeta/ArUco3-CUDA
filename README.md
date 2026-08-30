@@ -173,6 +173,23 @@ detector.download(&result, stream, &message);
 
 Only two configuration combinations are accepted: ArUco3 enabled with subpixel corner refinement, or ArUco3 disabled without refinement. `initialize()` rejects the other two. The list of defaults and the meaning of each field are in `include/aruco3cuda/config.hpp` and [Public API](docs/design/public-api.md).
 
+### Samples
+
+`examples/` holds two programs that run the whole API without a camera, an image library, or any file not produced on the spot. `generate_marker` renders a marker from the built-in dictionary and writes it as a PGM; `detect_image` reads it back and prints the ids and corners.
+
+```bash
+cd build/native/examples
+./generate_marker --id 42 --size 200 --margin 40 --output marker.pgm
+./detect_image --input marker.pgm
+```
+
+```
+detections   : 1 (accepted 1)
+  [0] id=42 rotation=2 corners= (39.59, 39.59) (239.41, 39.59) (239.42, 239.42) (39.59, 239.41)
+```
+
+They are built with the rest of the project by default. `examples/CMakeLists.txt` also configures standalone against an installed package, which is the form that exercises `find_package`. See [Samples](examples/README.md).
+
 ## Limitations
 
 - Evaluation covers the synthetic corpus only. A real-image corpus has not been prepared, and accuracy and the crossover point on real images have not been measured.
@@ -185,9 +202,10 @@ Only two configuration combinations are accepted: ArUco3 enabled with subpixel c
 ## Documentation
 
 - [Project overview](docs/project-overview.md) / [Architecture](docs/architecture.md) / [Roadmap](docs/roadmap.md)
+- [Samples](examples/README.md)
 - [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
 - [Evaluation plan](docs/evaluation-plan.md) / [Benchmark report](docs/benchmark-report.md) / [Accuracy evaluation results](docs/accuracy-report.md)
-- [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Japanese terminology glossary](docs/terminology.md)
+- [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Glossary](docs/terminology.md)
 - [ADR-0001: Implement first in an independent repository](docs/adr/0001-independent-implementation.md) / [ADR-0002: Fix the build infrastructure and target environment baseline](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: Adopt approach A as the primary plan for quadrilateral candidate extraction](docs/adr/0003-candidate-extraction-approach.md)
 - [Intellectual property and licensing policy](docs/ip-and-licensing.md) / [Code provenance record](docs/code-provenance.md) / [Contribution guidelines](CONTRIBUTING.md)
 
