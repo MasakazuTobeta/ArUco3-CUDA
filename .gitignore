@@ -15,6 +15,11 @@ docker/.env
 *.mp4
 *.avi
 
+# Downloaded packages. clang_format-*.whl was committed by accident in
+# e55bf2f; the toolchain uses clang-format-18 from the container, never a
+# wheel from here.
+*.whl
+
 # editor
 .vscode/
 .idea/
