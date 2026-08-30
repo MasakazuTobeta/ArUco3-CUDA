@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 非同期であることを test から確かめるための道具。
+// Tooling that lets tests confirm that a call is genuinely asynchronous.
 //
-// 一定時間 device を占有する kernel を stream へ積んでおき、その後ろに
-// detect_async を積む。detect_async が host 同期していなければ、呼び出しから
-// 戻った時点で stream はまだ動いている。
+// A kernel that occupies the device for a while is enqueued onto the stream,
+// and detect_async is enqueued behind it. If detect_async does not synchronize
+// with the host, the stream is still running by the time the call returns.
 #include "test_detector_probe.hpp"
 
 #include <cuda_runtime_api.h>
@@ -12,7 +12,7 @@
 namespace aruco3cuda::test {
 namespace {
 
-/// clock64 を読みながら指定した cycle 数だけ回る。
+/// Spins for the requested number of cycles while polling clock64.
 __global__ void spin_kernel(long long cycles, int* sink) {
     const long long start = clock64();
     long long elapsed = 0;

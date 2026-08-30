@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// セル比と border 検証を CPU 基準と突き合わせる。
+// Cross-checks the cell ratios and the border verification against the CPU
+// reference.
 //
-// 比の 1 段の違い (既定では 1/16) は、Dictionary 照合の距離を変えて ID を
-// 変えうる。標準偏差の閾値と border 誤り数の境界を含めて確かめる。
+// A single step of difference in a ratio (1/16 by default) can change the
+// distance used for dictionary matching and therefore change the decoded ID.
+// These tests cover the standard-deviation threshold and the border error-count
+// boundary as well.
 #include "cell_decode.hpp"
 
 #include <gtest/gtest.h>
@@ -42,7 +45,8 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// CPU 基準のセル比。hybrid の extract_cell_pixel_ratio と同じ手順。
+/// CPU reference for the cell ratios; follows the same steps as the hybrid
+/// extract_cell_pixel_ratio.
 cv::Mat reference_ratio(const cv::Mat& canonical, int marker_size, const DetectorConfig& config) {
     const int cells = marker_size + (2 * config.marker_border_bits_);
     const int cell_size = config.perspective_remove_pixel_per_cell_;
@@ -72,7 +76,8 @@ cv::Mat reference_ratio(const cv::Mat& canonical, int marker_size, const Detecto
     return ratio;
 }
 
-/// CPU 基準の外周誤り数。hybrid の count_border_errors と同じ走査。
+/// CPU reference for the border error count; follows the same traversal as the
+/// hybrid count_border_errors.
 int reference_border_errors(const cv::Mat& ratio, int marker_size, const DetectorConfig& config) {
     const int cells = marker_size + (2 * config.marker_border_bits_);
     const auto threshold = static_cast<float>(config.valid_bit_threshold_);
@@ -100,7 +105,7 @@ int reference_border_errors(const cv::Mat& ratio, int marker_size, const Detecto
     return errors;
 }
 
-/// canonical 画像を直接与えてセル比を求める。
+/// Computes cell ratios from canonical images supplied directly.
 class DecodeRun {
 public:
     DecodeRun() = default;
@@ -136,8 +141,9 @@ public:
         if (canonical.side_px_ != side) {
             return false;
         }
-        // canonical 画像を直接転送する。射影変換は別の test で確認済みのため
-        // ここでは分離して比の算出だけを見る。
+        // Upload the canonical images directly. The perspective transform is
+        // already covered by a separate test, so this one is isolated to the
+        // ratio computation alone.
         const auto plane = static_cast<std::size_t>(side) * static_cast<std::size_t>(side);
         std::vector<std::uint8_t> raw(canonicals.size() * plane);
         for (std::size_t i = 0; i < canonicals.size(); ++i) {
@@ -206,7 +212,8 @@ private:
     std::vector<std::int32_t> thresholds_;
 };
 
-/// マーカーらしい canonical 画像を作る。外枠が黒、内側が乱数の bit。
+/// Builds a marker-like canonical image: a black outer border with random bits
+/// inside.
 cv::Mat make_marker_canonical(int marker_size, int cell_size, int border_bits, std::uint64_t seed,
                               int noise_levels) {
     const int cells = marker_size + (2 * border_bits);
@@ -226,7 +233,8 @@ cv::Mat make_marker_canonical(int marker_size, int cell_size, int border_bits, s
             }
         }
     }
-    // 外枠にも軽い noise を入れる。全て 0 だと Otsu の経路が変わる。
+    // Add slight noise to the border as well; an all-zero border would send
+    // Otsu down a different path.
     for (int y = 0; y < side; ++y) {
         for (int x = 0; x < side; ++x) {
             if (image.at<std::uint8_t>(y, x) == 0) {
@@ -237,7 +245,7 @@ cv::Mat make_marker_canonical(int marker_size, int cell_size, int border_bits, s
     return image;
 }
 
-/// 比と誤り数を突き合わせ、不一致セル数を返す。
+/// Compares two ratio maps and returns the number of mismatched cells.
 std::size_t compare_ratios(const cv::Mat& expected, const cv::Mat& actual) {
     std::size_t mismatched = 0;
     for (int y = 0; y < expected.rows; ++y) {
@@ -250,10 +258,10 @@ std::size_t compare_ratios(const cv::Mat& expected, const cv::Mat& actual) {
     return mismatched;
 }
 
-// 正常系: マーカーらしい画像でセル比が CPU 基準と一致する。
+// Happy path: cell ratios match the CPU reference on marker-like images.
 TEST(CellDecodeTest, matches_reference_ratios) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     std::vector<cv::Mat> canonicals;
@@ -274,27 +282,31 @@ TEST(CellDecodeTest, matches_reference_ratios) {
             ++mismatched_errors;
         }
     }
-    std::printf("[decode] %zu 枚: 比の不一致セル %zu / %zu、誤り数の不一致 %zu\n",
-                canonicals.size(), mismatched_cells, canonicals.size() * 64U, mismatched_errors);
+    std::printf(
+            "[decode] %zu images: mismatched ratio cells %zu / %zu, "
+            "mismatched error counts %zu\n",
+            canonicals.size(), mismatched_cells, canonicals.size() * 64U, mismatched_errors);
     EXPECT_EQ(mismatched_cells, 0U);
     EXPECT_EQ(mismatched_errors, 0U);
 }
 
-// 正常系: Otsu が選ぶ閾値そのものが OpenCV と一致する。
+// Happy path: the threshold Otsu selects matches OpenCV exactly.
 //
-// 比だけを突き合わせると、閾値が 1 階調ずれても境界に画素が無ければ気付け
-// ません。比は 1/16 刻みであり、境界に画素が無い場合は同じ比になります。
-// OpenCV の cv::threshold は THRESH_OTSU のとき選んだ閾値を戻り値で返すので、
-// 整数で直接比べます。
+// Comparing ratios alone would miss a threshold that is off by one gray level
+// whenever no pixel sits on the boundary: ratios are quantized to steps of
+// 1/16, so both thresholds produce the same ratio in that case. Since OpenCV's
+// cv::threshold returns the selected threshold when THRESH_OTSU is used, we
+// compare the integers directly.
 TEST(CellDecodeTest, otsu_threshold_matches_opencv_exactly) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     std::vector<cv::Mat> canonicals;
     canonicals.reserve(256);
-    // 階調の分布を広く振る。noise の幅を変えると histogram の形が変わり、
-    // 漸化式の途中で最大が入れ替わる位置も変わる。
+    // Sweep the gray-level distribution widely. Varying the noise amplitude
+    // changes the shape of the histogram, which also moves the point at which
+    // the running maximum in the recurrence changes hands.
     for (int i = 0; i < 256; ++i) {
         canonicals.push_back(make_marker_canonical(6, 4, 1, 20260830U + i, 1 + (i % 60)));
     }
@@ -307,7 +319,8 @@ TEST(CellDecodeTest, otsu_threshold_matches_opencv_exactly) {
     int smallest = 255;
     int largest = 0;
     for (std::size_t i = 0; i < canonicals.size(); ++i) {
-        // 低分散の経路へ入った候補は閾値を求めないので 0 が入る。
+        // Candidates that take the low-variance path never compute a
+        // threshold, so 0 is stored instead.
         cv::Mat mean;
         cv::Mat stddev;
         const int cell = config.perspective_remove_pixel_per_cell_;
@@ -329,20 +342,24 @@ TEST(CellDecodeTest, otsu_threshold_matches_opencv_exactly) {
         smallest = std::min(smallest, run.thresholds()[i]);
         largest = std::max(largest, run.thresholds()[i]);
     }
-    std::printf("[decode] 閾値 %zu 件: 不一致 %zu、低分散 %zu、範囲 %d から %d\n",
-                canonicals.size(), mismatched, uniform_cases, smallest, largest);
+    std::printf(
+            "[decode] %zu thresholds: mismatched %zu, low variance %zu, "
+            "range %d to %d\n",
+            canonicals.size(), mismatched, uniform_cases, smallest, largest);
     EXPECT_EQ(mismatched, 0U);
-    // 閾値が 1 つの値に張り付いていたら、この test は分布を振れていない。
+    // If every threshold landed on a single value, this test failed to sweep
+    // the distribution at all.
     EXPECT_LT(smallest, largest);
 }
 
-// 境界値: 分散が小さい画像では全セルが同じ比になる。
+// Boundary: on a low-variance image every cell gets the same ratio.
 TEST(CellDecodeTest, low_variance_fills_uniform_ratio) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
-    // 明るい定数と暗い定数。min_otsu_std_dev_ (既定 5.0) を下回る。
+    // Bright and dark constant images; both fall below min_otsu_std_dev_
+    // (5.0 by default).
     std::vector<cv::Mat> canonicals = {
             cv::Mat(32, 32, CV_8UC1, cv::Scalar(200)), cv::Mat(32, 32, CV_8UC1, cv::Scalar(30)),
             cv::Mat(32, 32, CV_8UC1, cv::Scalar(127)), cv::Mat(32, 32, CV_8UC1, cv::Scalar(128))};
@@ -353,22 +370,23 @@ TEST(CellDecodeTest, low_variance_fills_uniform_ratio) {
         EXPECT_EQ(compare_ratios(expected, run.ratios()[i]), 0U) << i;
         EXPECT_EQ(reference_border_errors(expected, 6, config), run.border_errors()[i]) << i;
     }
-    // 平均 200 は 1.0、平均 30 と 127 は 0.0、平均 128 は 1.0 になる。
+    // Mean 200 yields 1.0, means 30 and 127 yield 0.0, and mean 128 yields 1.0.
     EXPECT_FLOAT_EQ(run.ratios()[0].at<float>(0, 0), 1.0F);
     EXPECT_FLOAT_EQ(run.ratios()[1].at<float>(0, 0), 0.0F);
     EXPECT_FLOAT_EQ(run.ratios()[2].at<float>(0, 0), 0.0F);
     EXPECT_FLOAT_EQ(run.ratios()[3].at<float>(0, 0), 1.0F);
 }
 
-// 境界値: 標準偏差の閾値をまたぐ画像で判定が一致する。
+// Boundary: the decision agrees on images that straddle the standard-deviation
+// threshold.
 TEST(CellDecodeTest, otsu_threshold_boundary) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     std::vector<cv::Mat> canonicals;
     canonicals.reserve(21);
-    // 振幅を少しずつ変え、標準偏差が 5.0 の前後をまたぐようにする。
+    // Step the amplitude gradually so the standard deviation crosses 5.0.
     for (int amplitude = 0; amplitude <= 20; ++amplitude) {
         cv::Mat image(32, 32, CV_8UC1, cv::Scalar(128));
         for (int y = 0; y < 32; ++y) {
@@ -386,17 +404,18 @@ TEST(CellDecodeTest, otsu_threshold_boundary) {
         const cv::Mat expected = reference_ratio(canonicals[i], 6, config);
         mismatched += compare_ratios(expected, run.ratios()[i]);
     }
-    std::printf("[decode] 振幅 0 から 20 の不一致セル %zu\n", mismatched);
+    std::printf("[decode] mismatched cells for amplitudes 0 to 20: %zu\n", mismatched);
     EXPECT_EQ(mismatched, 0U);
 }
 
-// 境界値: border 誤り数の上限で合否が変わる。
+// Boundary: acceptance flips at the border error-count limit.
 TEST(CellDecodeTest, border_error_limit) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
-    // 外枠の白いセル数を 0 から 28 まで増やし、上限 12 で合否が変わることを見る。
+    // Grow the number of white border cells from 0 to 28 and observe the
+    // acceptance flip at the limit of 12.
     std::vector<cv::Mat> canonicals;
     canonicals.reserve(29);
     for (int white_cells = 0; white_cells <= 28; ++white_cells) {
@@ -423,31 +442,34 @@ TEST(CellDecodeTest, border_error_limit) {
     for (std::size_t i = 0; i < canonicals.size(); ++i) {
         const cv::Mat expected = reference_ratio(canonicals[i], 6, config);
         const int expected_errors = reference_border_errors(expected, 6, config);
-        EXPECT_EQ(run.border_errors()[i], expected_errors) << "白セル " << i;
-        // 既定は marker_size^2 * 0.35 = 12。12 は通り 13 で落ちる。
-        EXPECT_EQ(run.accepted()[i] != 0U, expected_errors <= 12) << "白セル " << i;
+        EXPECT_EQ(run.border_errors()[i], expected_errors) << "white cells " << i;
+        // The default is marker_size^2 * 0.35 = 12: 12 passes, 13 fails.
+        EXPECT_EQ(run.accepted()[i] != 0U, expected_errors <= 12) << "white cells " << i;
     }
 }
 
-// 境界値: cell 辺長を変えると余白が生じ、比の分母が変わる。
+// Boundary: changing the cell side length introduces a margin and changes the
+// denominator of the ratio.
 TEST(CellDecodeTest, cell_margin_changes_denominator) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     DetectorConfig config;
-    // cell 8 では余白が (int)(0.13 * 8) = 1 になり、分母が 36 になる。
+    // With a cell size of 8 the margin becomes (int)(0.13 * 8) = 1, making the
+    // denominator 36.
     config.perspective_remove_pixel_per_cell_ = 8;
     std::vector<cv::Mat> canonicals = {make_marker_canonical(6, 8, 1, 777U, 15)};
     DecodeRun run;
     ASSERT_TRUE(run.run(canonicals, 6, config));
     const cv::Mat expected = reference_ratio(canonicals[0], 6, config);
     EXPECT_EQ(compare_ratios(expected, run.ratios()[0]), 0U);
-    // 分母が 36 であることを、比が 1/36 の倍数であることで確かめる。
+    // Confirm the denominator is 36 by checking that the ratio is a multiple
+    // of 1/36.
     const float value = run.ratios()[0].at<float>(3, 3);
     EXPECT_NEAR(value * 36.0F, std::round(value * 36.0F), 1e-4F);
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: invalid arguments perform no work.
 TEST(CellDecodeTest, rejects_invalid_arguments) {
     Workspace workspace;
     const DetectorConfig config;

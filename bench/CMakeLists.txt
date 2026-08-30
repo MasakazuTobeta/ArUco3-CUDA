@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 測定 harness。測定条件と環境情報を結果と一体で残す。
-# CPU、Hybrid、CUDA-Resident、CUDA-E2E の 4 経路を測定できる。
+# Measurement harness. Keeps the measurement conditions and environment
+# information together with the results.
+# Can measure the four paths: CPU, Hybrid, CUDA-Resident and CUDA-E2E.
 add_library(aruco3cuda_bench STATIC benchmark_harness.cpp)
 add_library(aruco3cuda::bench ALIAS aruco3cuda_bench)
 

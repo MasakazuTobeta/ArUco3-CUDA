@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 収録済み Dictionary の一覧。generated/ の table をここで束ねる。
+// List of the bundled dictionaries. The tables under generated/ are gathered here.
 #include "aruco3cuda/dictionary.hpp"
 
 #include <cstddef>

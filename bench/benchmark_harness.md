@@ -1,141 +1,141 @@
 # benchmark_harness
 
-## 目的
+## Purpose
 
-測定条件と実行環境を結果と一体で記録し、後から再現・比較できる形で性能を残します。CPU、CUDA、ハイブリッドを同じ枠組みで測り、CPU が有利な条件も含めて crossover point を示せるようにします。
+Records the measurement conditions and the execution environment together with the results, so that performance data is kept in a form that can be reproduced and compared later. CPU, CUDA, and hybrid are measured within the same framework, so that the crossover point can be shown, including the conditions under which CPU is favorable.
 
-## 対象範囲
+## Scope
 
-遅延と throughput の測定、統計の算出、環境情報の収集、JSONL 出力を対象とします。可視化は `aggregate.py` の責務とします。
+Covers latency and throughput measurement, statistics computation, environment information collection, and JSONL output. Visualization is the responsibility of `aggregate.py`.
 
-## 現状
+## Current state
 
-- `CPU`、`Hybrid`、`CUDA-E2E`、`CUDA-Resident` の 4 経路を測定できます。
-- memory 種別は `M-Pageable`、`M-Pinned`、`M-Managed`、`M-Device` の 4 種を測定できます。経路と種別の組合せには制約があり、`CUDA-E2E` は host 入力の経路なので `M-Device` を受け付けません。
-- kernel 時間 (CUDA event) はどの経路でも未測定です。段階時間 (`stages`) は wall-clock であり、host 同期を含みます。両者を区別するため、段階時間で `kernel` を埋めることはしません。
-- 測定した結果は [benchmark 報告](../docs/benchmark-report.md) にあります。
+- The four routes `CPU`, `Hybrid`, `CUDA-E2E`, and `CUDA-Resident` can be measured.
+- Four memory types can be measured: `M-Pageable`, `M-Pinned`, `M-Managed`, and `M-Device`. Some combinations of route and type are not allowed; `CUDA-E2E` is a route with host input and therefore does not accept `M-Device`.
+- Kernel time (CUDA events) is not measured on any route. Stage times (`stages`) are wall-clock and include host synchronization. To keep the two distinct, `kernel` is never filled in with stage times.
 
-## 実装上の判断
+- The measured results are in the [benchmark report](../docs/benchmark-report.md).
 
-### 測定区間に画像の読み込みを含めない
+## Design decisions
 
-`CPU` 経路は読み込み済みの画像に対して検出だけを繰り返します。1 反復ごとに `cv::imread` と `sha256_file` を呼ぶと、合成 corpus の 1280x720 PNG では測定区間の 58% から 85% が PNG の復号になります。実時間処理では PNG を復号しないため、検出時間の比較として成立しません。
+### Image loading is not included in the measured interval
 
-この変更で `p50` の値は従来より小さくなります。`schema_version` を 3 へ上げ、version 2 以前の結果と混ぜて集計できないようにしています。
+The `CPU` route repeats detection alone on an already loaded image. If `cv::imread` and `sha256_file` were called once per iteration, PNG decoding would account for 58% to 85% of the measured interval for the 1280x720 PNGs of the synthetic corpus. Real-time processing does not decode PNGs, so this would not be a valid comparison of detection time.
 
-### 起動の費用を別に記録する
+With this change, `p50` values are smaller than before. `schema_version` has been raised to 3 so that results from version 2 and earlier cannot be aggregated together with these.
 
-warm-up は測定区間から分離しますが、捨てはしません。1 枚目の結果が出るまでの時間 (`startup.time_to_first_result_ms`) と、1 枚目の検出だけの時間 (`startup.first_frame_ms`) を記録します。CUDA の文脈生成は process ごとに 1 度だけ起きるため、経路ごとの測定ではなく環境情報 (`cuda_context_ms`) へ入れます。
+### Startup cost is recorded separately
 
-DGX Spark で実測すると、CPU 経路は 1 枚目まで 3.2 ms、hybrid 経路は 202 ms です。定常状態の差は 0.13 ms であり、相殺には約 1600 frame を要します。warm-up 後の分位点だけを見ると、この差が結果に現れません。
+Warm-up is separated from the measured interval, but it is not discarded. The time until the first result is available (`startup.time_to_first_result_ms`) and the time for detection on the first image alone (`startup.first_frame_ms`) are recorded. CUDA context creation happens only once per process, so it goes into the environment information (`cuda_context_ms`) rather than into the per-route measurements.
 
-1 process で複数の画像を測る場合、文脈の生成と kernel の読み込みは最初の 1 枚だけが負担します。起動の費用を測る場合は 1 process 1 画像で実行してください。
+Measured on DGX Spark, the CPU route takes 3.2 ms to the first image and the hybrid route takes 202 ms. The steady-state difference is 0.13 ms, so about 1600 frames are needed to break even. Looking only at the percentiles after warm-up, this difference does not appear in the results.
 
-### hybrid の memory 種別で測定区間を変える
+When several images are measured in one process, only the first image bears the cost of context creation and kernel loading. To measure startup cost, run one image per process.
 
-`M-Device` は画像が既に device にある想定で転送を測定区間の外へ置きます。camera から GPU へ直接入る構成の上限にあたります。`M-Pageable` は host の画像を毎 frame 転送し、転送を測定区間へ含めます。`CPU` 経路と同じく host の画像から始める場合の値です。
+### The measured interval differs by memory type for hybrid
 
-### 未実装の経路を CPU で代替しない
+`M-Device` assumes the image is already on the device and places the transfer outside the measured interval. This corresponds to the upper bound for a configuration where the camera feeds the GPU directly. `M-Pageable` transfers the host image every frame and includes the transfer in the measured interval. This is the value for starting from a host image, as the `CPU` route does.
 
-`--route CUDA-E2E` のように未実装の経路を指定した場合、無言で CPU 経路へ読み替えず失敗します。読み替えると結果の `route` と実際に測った処理が食い違い、後から気付けません。
+### Unimplemented routes are not substituted with CPU
 
-### 経路と memory 種別を独立した軸にする
+When an unimplemented route such as `--route CUDA-E2E` is specified, the run fails rather than silently falling back to the CPU route. A silent fallback would make the reported `route` disagree with the processing actually measured, and this could not be noticed afterwards.
 
-DGX Spark と Jetson Orin はいずれも統合 GPU であり、明示的な copy の費用が discrete GPU と大きく異なります。`M-Pageable`、`M-Pinned`、`M-Managed`、`M-Device` を経路とは別の軸として記録します。識別子は [評価計画](../docs/evaluation-plan.md) の表記に揃えます。
+### Route and memory type are independent axes
 
-### 遅延と throughput を分けて測る
+DGX Spark and Jetson Orin are both integrated GPUs, and the cost of an explicit copy differs greatly from a discrete GPU. `M-Pageable`, `M-Pinned`, `M-Managed`, and `M-Device` are recorded as an axis separate from the route. The identifiers follow the notation in the [evaluation plan](../docs/evaluation-plan.md).
 
-遅延は 1 フレームずつ独立に測り、throughput は連続処理の総時間から求めます。両者は別の指標であり、片方から他方を換算しません。
+### Latency and throughput are measured separately
 
-### kernel 時間を 0 で埋めない
+Latency is measured one frame at a time, independently; throughput is derived from the total time of continuous processing. They are different metrics, and neither is converted from the other.
 
-CPU 経路には kernel 時間が存在しません。JSON では `null` とし、0 を書きません。0 を書くと集計時に「非常に速い kernel」と誤読されます。
+### Kernel time is not filled in with 0
 
-### 測定条件を core 種別まで固定する
+There is no kernel time on the CPU route. It is `null` in JSON, not 0. Writing 0 would be misread during aggregation as "a very fast kernel".
 
-DGX Spark GB10 は Cortex-X925 (性能) と Cortex-A725 (効率) の混成です。同じ条件でも割り当て先の core 種別で 1.64 倍の差が出るため、`--cpu-list` で固定できるようにしています。core 構成と実際の親和性は結果へ記録します。Jetson AGX Orin は Cortex-A78AE 12 個の均一構成であり、この影響を受けません。
+### Measurement conditions are fixed down to the core type
 
-### 実行間ばらつきを 1 回の実行内の分位点と混同しない
+The DGX Spark GB10 is a mix of Cortex-X925 (performance) and Cortex-A725 (efficiency). Under identical conditions, the assigned core type produces a 1.64x difference, so `--cpu-list` is provided to pin it. The core configuration and the actual affinity are recorded in the results. The Jetson AGX Orin has a uniform configuration of 12 Cortex-A78AE cores and is not subject to this effect.
 
-全解像度を扱う CPU 経路では、process ごとの memory 配置 (ASLR) の違いだけで p50 が 9% 変動します。`setarch -R` で無効化すると実行間で完全に一致することを確認しました。1 回の実行内の p50、p95、p99 はこの変動を捉えません。
+### Run-to-run variance is not confused with percentiles within a single run
 
-このため ASLR の状態を結果へ記録し、`aggregate.py` が同一条件の複数実行をまとめて実行間ばらつきを表示します。測定は独立した process として複数回行います。
+On the CPU route across all resolutions, p50 varies by 9% from differences in per-process memory layout (ASLR) alone. Disabling it with `setarch -R` was confirmed to make runs match exactly. The p50, p95, and p99 within a single run do not capture this variation.
 
-### 経路の差が雑音の下にあるときは大小を主張しない
+For this reason the ASLR state is recorded in the results, and `aggregate.py` collects multiple runs under identical conditions and displays the run-to-run variance. Measurements are performed several times as independent processes.
 
-`CUDA-Resident` と `CUDA-EndToEnd` の違いは、host との転送と結果の取り出しだけです。
-640x480 では転送が 307 KB であり、統合 GPU の帯域では 10 us 未満です。検出の 1 ms に
-対して 1% に届きません。実測でも clock の立ち上がりによるばらつきの方が大きく、
-測る順序で大小が入れ替わりました。
+### No claim is made about which is larger when the difference between routes is below the noise
+
+The difference between `CUDA-Resident` and `CUDA-EndToEnd` is only the transfer to and from the host and the retrieval of the results.
+At 640x480 the transfer is 307 KB, which is under 10 us at the bandwidth of an integrated GPU. Against the 1 ms of detection,
+that does not reach 1%. In actual measurements the variation from clocks ramping up is larger, and
+the ordering flipped depending on the order in which they were measured.
 
 ```
-最小 Resident 1.071 ms / EndToEnd(pageable) 1.493 ms / EndToEnd(pinned) 1.208 ms
-最小 Resident 1.228 ms / EndToEnd(pageable) 1.110 ms / EndToEnd(pinned) 2.262 ms
-最小 Resident 1.226 ms / EndToEnd(pageable) 1.242 ms / EndToEnd(pinned) 1.160 ms
+min Resident 1.071 ms / EndToEnd(pageable) 1.493 ms / EndToEnd(pinned) 1.208 ms
+min Resident 1.228 ms / EndToEnd(pageable) 1.110 ms / EndToEnd(pinned) 2.262 ms
+min Resident 1.226 ms / EndToEnd(pageable) 1.242 ms / EndToEnd(pinned) 1.160 ms
 ```
 
-そのため test では大小を主張せず、**3 経路が同じ検出結果を出すこと**だけを検査し、
-時間は表示します。差が見える大きさでの比較は実機の測定 (docs/measurements) の役目です。
+The tests therefore make no claim about which is larger; they check only that **the three routes produce the same detection results**,
+and the times are displayed. Comparison at a magnitude where the difference is visible is the job of measurements on real machines (docs/measurements).
 
-前節の「時刻で挟む」も効きません。挟むと基準側の最小値が最も暖まった時点のものに
-なり、逆向きの偏りが入ります。差そのものが雑音より小さい場合、測り方を工夫しても
-向きは決まりません。
+The "bracketing by time" of the previous section does not help either. Bracketing makes the minimum on the baseline side come from the most warmed-up
+moment, which introduces a bias in the opposite direction. When the difference itself is smaller than the noise, no refinement of the measurement method
+settles the direction.
 
-### 完全 GPU 経路の測定区間には stream の同期を含める
+### The measured interval of the full GPU route includes stream synchronization
 
-`Detector::detect_async` は kernel を発行するだけで戻ります。同期を含めないと発行の
-費用しか測りません。`CUDA-Resident` では区間の末尾で `cudaStreamSynchronize` を呼び、
-`CUDA-EndToEnd` では `download` が同期します。どちらも「GPU 常駐画像から結果まで」を
-測っていることになります。
+`Detector::detect_async` only issues kernels and returns. Without including synchronization, only the cost of issuing
+would be measured. `CUDA-Resident` calls `cudaStreamSynchronize` at the end of the interval, and
+`CUDA-EndToEnd` synchronizes in `download`. Both therefore measure "from a GPU-resident image to the results".
 
-### 時間の大小を主張する test は測定を時刻で挟む
+### Tests that claim an ordering of times bracket the measurement by time
 
-「読み込みを含む方が遅い」「1 枚目は定常より遅い」のような主張を test に書くと、
-機が混んでいるときに向きが入れ替わります。Jetson AGX Orin で `ctest -j 8` を
-15 回回すと、`cpu_route_excludes_image_loading` が 5 回落ちました。落ちたときの
-値は「検出のみ 5.308 ms、読み込み込み 2.898 ms」で、雑音ではなく 2 倍近い逆転です。
+Claims written into tests such as "including loading is slower" or "the first image is slower than steady state"
+flip direction when the machine is busy. Running `ctest -j 8` 15 times on a Jetson AGX Orin,
+`cpu_route_excludes_image_loading` failed 5 times. The values on failure
+were "detection only 5.308 ms, with loading 2.898 ms" — not noise, but a reversal of nearly 2x.
 
-原因は測定した時刻の違いです。Jetson は負荷で動作周波数が大きく動くため、先に
-取った標本と後に取った標本では機の速さ自体が違います。中央値でも最小値でも、
-別々の時刻に取った標本を比べる限り解決しません。
+The cause is the difference in the time at which the measurements were taken. The Jetson's operating frequency moves a great deal under load, so
+the speed of the machine itself differs between an earlier sample and a later one. Neither the median nor the minimum
+resolves this as long as samples taken at different times are compared.
 
-現在は基準側の測定を harness の測定の前後で 2 度取り、両方の最小値と比べています。
-周波数がどちらへ動いても、近い時刻の標本が必ず片側に残ります。標本数もこの test
-だけ 5 から 15 へ増やしました。5 個では最小値が偶然に左右されます。
+The baseline measurement is now taken twice, before and after the harness measurement, and compared against the minimum of both.
+Whichever way the frequency moves, a sample taken at a nearby time always remains on one side. The sample count for this test
+alone was also raised from 5 to 15. With 5, the minimum is left to chance.
 
-負荷に依らない関係だけを検査する、という判断もしています。`records_startup_cost`
-は「1 枚目は cache が冷えているため定常より遅い」を主張していましたが、CPU 経路の
-起動の費用は数 ms しかなく、容易に逆転します。定義上必ず成り立つ関係
-(1 枚目までの時間 >= 1 枚目の検出時間) だけを残し、値は表示して目視できるように
-しました。
+A decision was also made to test only relationships that do not depend on load. `records_startup_cost`
+claimed that "the first image is slower than steady state because the cache is cold", but the startup cost of the CPU
+route is only a few ms and reverses easily. Only the relationship that holds by definition
+(time to the first image >= detection time of the first image) was kept, and the values are displayed so they can be inspected
+by eye.
 
-なお同じ調査で、`compute-sanitizer` を 4 本並列に走らせると reference test が
-落ちる件も解けました。こちらは時間ではなく `/tmp` の固定 path の衝突で、
-process 番号を path へ入れて解消しています。
+Note that the same investigation also resolved the issue where reference tests fail when
+`compute-sanitizer` is run 4 at a time in parallel. That one was not about time but a collision on a fixed path in `/tmp`,
+resolved by putting the process number into the path.
 
-### 外れ値を除去しない
+### Outliers are not removed
 
-統計は全標本から算出します。分位点は nearest-rank 法で求め、補間しません。返る値は必ず実測値のいずれかになります。集計方法が実装依存になると、環境をまたいだ比較が成立しません。詳細は `aruco3cuda::util::compute_statistics` を参照してください。
+Statistics are computed from all samples. Percentiles are obtained by the nearest-rank method, without interpolation. The returned value is always one of the measured values. If the aggregation method were implementation-dependent, comparison across environments would not hold. See `aruco3cuda::util::compute_statistics` for details.
 
-`--save-samples` を指定すると全標本を結果へ含められます。分布そのものを保存する必要がある場合に使用します。
+Specifying `--save-samples` includes all samples in the results. Use it when the distribution itself needs to be saved.
 
-### 縮小率を測定条件へ必ず記録する
+### The downscale factor is always recorded in the measurement conditions
 
-ArUco3 の実効縮小率 `fxfy` を条件として記録します。`minMarkerLengthRatioOriginalImg` の既定値は 0.0 であり、この場合 `useAruco3Detection` を有効にしても縮小が発生しません。この値が残らないと、ArUco3 の効果を測ったのかどうかを後から判別できません。
+The effective downscale factor `fxfy` of ArUco3 is recorded as a condition. The default value of `minMarkerLengthRatioOriginalImg` is 0.0, in which case no downscaling occurs even with `useAruco3Detection` enabled. Without this value on record, it is impossible to tell afterwards whether the effect of ArUco3 was measured at all.
 
-### 環境情報を可能な限り library から取得する
+### Environment information is obtained from libraries wherever possible
 
-GPU 名、Compute Capability、統合 GPU かどうかは CUDA から取得します。`nvidia-smi` が無い container でも記録できます。driver version と Jetson の power mode は library から取得できないため外部 command を使い、取得できない場合は空文字列のままとします。推測で埋めません。
+The GPU name, Compute Capability, and whether the GPU is integrated are obtained from CUDA. This allows them to be recorded even in a container without `nvidia-smi`. The driver version and the Jetson power mode cannot be obtained from a library, so external commands are used; when they cannot be obtained, the fields are left as empty strings. They are not filled in by guesswork.
 
-## 目標
+## Goals
 
-- CUDA event による kernel 時間と wall-clock を分離して記録する。
-- peak device memory とフレームごとの allocation 数を記録する。
-- 解像度、マーカー数、辺長を掃引した測定を 1 回の実行で行えるようにする。
-- clock と power mode を固定した状態での測定手順を確立する。
+- Record kernel time from CUDA events separately from wall-clock.
+- Record peak device memory and the number of allocations per frame.
+- Allow a sweep over resolution, marker count, and side length in a single run.
+- Establish a measurement procedure with the clocks and power mode fixed.
 
-## 関連
+## See also
 
-- [評価計画](../docs/evaluation-plan.md)
-- [実装計画](../docs/implementation-plan.md)
+- [Evaluation plan](../docs/evaluation-plan.md)
+- [Implementation plan](../docs/implementation-plan.md)
 - [reference_runner](../reference/reference_runner.md)

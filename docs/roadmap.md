@@ -1,91 +1,91 @@
-# ロードマップ
+# Roadmap
 
-## 目的
+## Purpose
 
-本 project が現在どこまでできていて、次に何へ取り組むかを 1 箇所へまとめます。個々の測定値は [Benchmark 報告](benchmark-report.md) と [正確性評価の結果](accuracy-report.md) が正本です。
+This document gathers in one place how far this project has gotten and what we take on next. For individual measurements, the [Benchmark Report](benchmark-report.md) and the [Accuracy Evaluation Results](accuracy-report.md) are authoritative.
 
-## 対象範囲
+## Scope
 
-検出 (入力画像から ID と四隅まで) の実装、その正確性と速度の評価、対応 hardware の範囲を対象とします。姿勢推定は対象外であり、検出結果を OpenCV の `solvePnP` 等へ渡せる形で出力します。
+We cover the implementation of detection (from the input image through to IDs and corners), its accuracy and speed evaluation, and the range of supported hardware. Pose estimation is out of scope; we output detection results in a form that can be passed to OpenCV's `solvePnP` and similar.
 
-## 現状
+## Current state
 
-### できること
+### What works
 
-- 入力画像の縮小・二値化から、候補抽出、Dictionary 照合、四隅の subpixel 補正までを GPU 上で完結します。`Detector` は host 同期なしで device 上の結果を返し、1 frame の kernel 発行列は CUDA Graph へ畳んであります。段の一覧は [検出パイプライン設計](design/detector-pipeline.md) にあります。
-- CPU 基準 (OpenCV ArUco3)、Hybrid (前処理と二値化のみ GPU)、GPU 常駐の 3 経路を同じ条件で比較できます。
-- 3 機すべてで自動 test と Compute Sanitizer の 4 tool (memcheck、racecheck、initcheck、synccheck) が通ります。
+- Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and corner subpixel refinement completes on the GPU. `Detector` returns results on the device without host synchronization, and one frame's sequence of kernel launches is folded into a CUDA Graph. The list of stages is in the [Detection Pipeline Design](design/detector-pipeline.md).
+- We can compare three routes under the same conditions: the CPU reference (OpenCV ArUco3), Hybrid (only preprocessing and thresholding on the GPU), and GPU-resident.
+- The automated tests and the four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass on all three machines.
 
-### 対象機
+### Target machines
 
-| 機体 | architecture | GPU | GPU の種別 | CC | CUDA |
+| Machine | Architecture | GPU | GPU type | CC | CUDA |
 | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | aarch64 | NVIDIA GB10 | 統合 | 12.1 | 13.0 |
-| Jetson AGX Orin | aarch64 | Orin | 統合 | 8.7 | 11.4 |
-| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | 単体 | 12.0 | 13.0 |
+| DGX Spark GB10 | aarch64 | NVIDIA GB10 | Integrated | 12.1 | 13.0 |
+| Jetson AGX Orin | aarch64 | Orin | Integrated | 8.7 | 11.4 |
+| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | Discrete | 12.0 | 13.0 |
 
-統合 GPU 2 機と単体 GPU 1 機という構成は、統合 GPU 固有の結果と一般に成り立つ結果を切り分けるためです。
+The configuration of two integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally.
 
-### 正確性
+### Accuracy
 
-合成 corpus 91 場面・真値 480 個に対し、3 経路 x 3 機の全 18 組合せで precision 100%、false positive 0 件、ID 誤り 0 件です。recall は ArUco3 検出戦略の検出下限以上の大きさで 94.44%、corpus 全体では 18.33% です。全体値が低いのは、corpus が下限を下回る大きさを意図的に含むためであり、実装の取りこぼしを表しません。解像度ごとの下限と条件別の内訳は [正確性評価の結果](accuracy-report.md) にあります。
+Over a synthetic corpus of 91 scenes and 480 ground truth markers, all 18 combinations of 3 routes x 3 machines give 100% precision, 0 false positives, and 0 ID errors. Recall is 94.44% for sizes at or above the ArUco3 detection strategy's detection limit, and 18.33% over the whole corpus. The overall value is low because the corpus deliberately includes sizes below the limit; it does not represent misses by the implementation. The limit per resolution and the breakdown by condition are in the [Accuracy Evaluation Results](accuracy-report.md).
 
-### 速度
+### Speed
 
-検出のみを測った end-to-end 時間を 28 場面 x 3 経路 x 3 機で比較しています。画像の読み込みと checksum は測定区間に含みません。
+We compare end-to-end time measuring detection only, across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not included in the measured interval.
 
-**CPU が勝つ条件があります。** 合成 corpus では輪郭点数が少ない小さな場面で CPU が CUDA-Resident を上回り、28 場面中 DGX Spark GB10 で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面がこれに当たります。解像度だけでは決まらず、同じ 640x480 でも輪郭点の多い場面では GPU が勝ちます。経路を場面ごとに選べる場合、CPU が両 GPU 経路を同時に上回るのは Jetson AGX Orin の 1 場面だけです。境界を決めているのは解像度でも候補数でもなく二値化後の輪郭点数です。実画像では輪郭点数が合成 corpus より多くなりうるため境界は動く可能性がありますが、まだ確かめていません。詳細は [Benchmark 報告](benchmark-report.md) にあります。
+**There are conditions where the CPU wins.** On the synthetic corpus, the CPU beats CUDA-Resident on small scenes with few contour points: out of 28 scenes, this applies to 5 scenes on the DGX Spark GB10, 4 scenes on the GeForce RTX 5070 Ti, and 1 scene on the Jetson AGX Orin. Resolution alone does not decide it; even at the same 640x480, the GPU wins on scenes with many contour points. When the route can be chosen per scene, the only case where the CPU beats both GPU routes at once is 1 scene on the Jetson AGX Orin. What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. Since the contour point count on real images can be higher than on the synthetic corpus, the boundary may move, but we have not confirmed this yet. For details, see the [Benchmark Report](benchmark-report.md).
 
-### device memory
+### Device memory
 
-workspace の最大使用量は ArUco3 検出戦略が有効で 17.51 MB、無効で 414.51 MB です。検出を 91 回繰り返しても確保回数は増えません。
+Peak workspace usage is 17.51 MB with the ArUco3 detection strategy enabled and 414.51 MB with it disabled. Repeating detection 91 times does not increase the allocation count.
 
-### 評価の制約
+### Constraints on the evaluation
 
-- 評価は合成 corpus に限ります。実画像 corpus はありません。
-- 段ごとの時間は host 同期を含む end-to-end 時間です。CUDA event によるカーネル時間の分離は行っていません。
-- 単発の検出では GPU 経路の起動費用が支配します。1 枚目の結果が出るまでの時間は DGX Spark GB10 で CPU 3.3 ms に対し GPU 常駐 174.0 ms であり、定常の 0.696 ms とは桁が違います。
+- The evaluation is limited to the synthetic corpus. There is no real-image corpus.
+- The per-stage times are end-to-end times that include host synchronization. We do not separate out kernel time with CUDA events.
+- For a single detection, the startup cost of the GPU routes dominates. On the DGX Spark GB10, the time until the first image produces a result is 174.0 ms for GPU-resident against 3.3 ms for the CPU, an order of magnitude away from the steady-state 0.696 ms.
 
-## 目標
+## Goals
 
-今後扱う範囲です。時期は定めていません。
+This is the range we take on going forward. We have not set dates.
 
 ```mermaid
 flowchart LR
-    subgraph NOW["現在の範囲"]
-        A["GPU 常駐の検出"]
-        B["合成 corpus での正確性評価"]
-        C["3 機での end-to-end 時間の比較"]
+    subgraph NOW["Current range"]
+        A["GPU-resident detection"]
+        B["Accuracy evaluation on the synthetic corpus"]
+        C["End-to-end time comparison on three machines"]
     end
-    subgraph NEXT["今後の範囲"]
-        D["実画像 corpus での評価"]
-        E["CUDA event による段別のカーネル時間"]
-        F["起動費用の削減"]
-        G["対応 Dictionary の拡張"]
+    subgraph NEXT["Future range"]
+        D["Evaluation on a real-image corpus"]
+        E["Per-stage kernel time with CUDA events"]
+        F["Reducing startup cost"]
+        G["Widening dictionary support"]
     end
     NOW --> NEXT
 ```
 
-- **実画像 corpus での評価。** 合成 corpus で得た crossover point と検出率が実画像でどう動くかを確かめます。
-- **段別のカーネル時間。** 現在の段階時間は host 同期を含む wall-clock です。CUDA event で分離すると、どの段を削るべきかを測定で決められます。
-- **起動費用の削減。** CUDA の文脈生成は減らせませんが、対象 architecture を絞る、または cubin を事前に読み込むことで kernel の読み込みを短縮できる可能性があります。
-- **対応 Dictionary の拡張。** 現在は `DICT_ARUCO_MIP_36h12` に固定して評価しています。方針は [Dictionary 方針](dictionaries.md) にあります。
-- **upstream への提案の検討。** 有効性と保守費用を評価できた場合に、OpenCV への提案を検討します。議論の場は [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118) です。
+- **Evaluation on a real-image corpus.** We will confirm how the crossover point and the detection rates obtained on the synthetic corpus move on real images.
+- **Per-stage kernel time.** The current per-stage times are wall-clock values that include host synchronization. Separating them with CUDA events would let us decide by measurement which stage to cut.
+- **Reducing startup cost.** CUDA context creation cannot be reduced, but narrowing the target architectures, or preloading cubins, may shorten kernel loading.
+- **Widening dictionary support.** We currently evaluate with the dictionary fixed to `DICT_ARUCO_MIP_36h12`. The policy is in the [Dictionary Policy](dictionaries.md).
+- **Considering an upstream proposal.** If we can assess the effectiveness and the maintenance cost, we will consider proposing this to OpenCV. The venue for discussion is [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118).
 
-## 未確定事項
+## Open questions
 
-- 実画像で crossover point がどこへ動くか。
-- 対応 Dictionary をどの順序で広げるか。
-- 測定時に GPU の動作周波数を固定するか、既定のまま測るか。
-- Jetson の対象範囲。当面は Orin 系を対象とし、Nano、Xavier、Thor は対象外です。
-- 許容する四隅座標の誤差と、性能改善率の数値基準。
+- Where the crossover point moves on real images.
+- In what order to widen dictionary support.
+- Whether to lock the GPU clock frequency during measurement or measure at the default.
+- The scope of Jetson support. For now we target the Orin family; Nano, Xavier, and Thor are out of scope.
+- The acceptable corner coordinate error, and numeric criteria for the performance improvement rate.
 
-## 関連
+## See also
 
-- [プロジェクト概要](project-overview.md)
-- [評価計画](evaluation-plan.md)
-- [Benchmark 報告](benchmark-report.md)
-- [正確性評価の結果](accuracy-report.md)
-- [検出パイプライン設計](design/detector-pipeline.md)
-- [Docker 環境設計](design/docker-environment.md)
-- [ADR-0003: 四角形候補抽出は案 A を主案とする](adr/0003-candidate-extraction-approach.md)
+- [Project Overview](project-overview.md)
+- [Evaluation Plan](evaluation-plan.md)
+- [Benchmark Report](benchmark-report.md)
+- [Accuracy Evaluation Results](accuracy-report.md)
+- [Detection Pipeline Design](design/detector-pipeline.md)
+- [Docker Environment Design](design/docker-environment.md)
+- [ADR-0003: Adopt approach A as the primary approach for quad candidate extraction](adr/0003-candidate-extraction-approach.md)

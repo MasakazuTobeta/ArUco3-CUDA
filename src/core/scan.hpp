@@ -12,81 +12,86 @@
 
 namespace aruco3cuda::detail {
 
-/// 排他 scan の作業領域。
+/// Scratch space for the exclusive scan.
 ///
-/// GPU で「条件を満たす要素だけを詰める」処理は、要素ごとの 1/0 を
-/// 排他 scan して書き込み先を決める形になる。atomicAdd で場所を取ると
-/// 到着順で並びが変わり、実行ごとに結果の順序が変わってしまう。
+/// On the GPU, "compact only the elements that satisfy a condition" takes the
+/// shape of an exclusive scan over a per-element 1/0 flag that decides the
+/// destination. Claiming a slot with atomicAdd instead would order the output by
+/// arrival, which makes the result order vary from run to run.
 ///
-/// 所有権: pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: the regions the pointers refer to are owned by the workspace.
+/// Synchronization: a plain set of references, so it carries no synchronization point.
 ///
-/// 入力例: 要素数 102480 に対する reserve_scan
-/// 出力例: block_count_ = 401
+/// Example input: reserve_scan for an element count of 102480
+/// Example output: block_count_ = 401
 struct ScanBuffers {
-    /// block ごとの開始位置。
+    /// Start position per block.
     std::int32_t* block_offsets_ = nullptr;
-    /// 総和。要素数 1。
+    /// Grand total. One element.
     std::int32_t* total_ = nullptr;
     int block_count_ = 0;
     int capacity_ = 0;
 };
 
-/// 要素数から scan の block 数を返す。
+/// Returns the scan block count for an element count.
 ///
-/// @param count 走査する要素数。
-/// @return block 数。count が 0 以下なら 0。
+/// @param count Number of elements to scan.
+/// @return Block count. 0 when count is 0 or less.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 102480
-/// 出力例: 401
+/// Example input: 102480
+/// Example output: 401
 int scan_block_count(int count);
 
-/// scan に必要な workspace の容量を返す。
+/// Returns the workspace capacity the scan requires.
 ///
-/// @param count 走査する要素数。
-/// @return 必要な byte 数。引数が不正なら 0。
+/// @param count Number of elements to scan.
+/// @return Required byte count. 0 when an argument is invalid.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 102480
-/// 出力例: block 401 個分と総和 1 個分を収める byte 数
+/// Example input: 102480
+/// Example output: the byte count that holds 401 blocks plus 1 grand total
 std::size_t scan_workspace_bytes(int count);
 
-/// workspace から scan 用の領域を切り出す。
+/// Carves the scan regions out of the workspace.
 ///
-/// @param count 走査する要素数。1 以上。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer 一式を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param count Number of elements to scan. At least 1.
+/// @param workspace Source of the carve-out. Owned by the caller.
+/// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument when an argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the carved-out regions stay owned by the workspace.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 102480 と十分な容量の workspace
-/// 出力例: block_count_ = 401 で pointer が入る
+/// Example input: 102480 and a workspace with sufficient capacity
+/// Example output: the pointers are filled in with block_count_ = 401
 Status reserve_scan(int count, Workspace& workspace, ScanBuffers* out);
 
-/// 配列をその場で排他 scan する。
+/// Exclusive-scans an array in place.
 ///
-/// 加算は整数であり、block へ分けても結果は分割の仕方に依存しない。
-/// 同じ入力からは常に同じ出力が得られる。
+/// The addition is over integers, so splitting the work into blocks leaves the
+/// result independent of how it was split. The same input always yields the same
+/// output.
 ///
-/// @param values 走査する配列。入力を上書きする。nullptr は不可。
-/// @param count 要素数。reserve_scan へ渡した値以下である必要がある。
-/// @param buffers reserve_scan が返した buffer 一式。nullptr は不可。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param values Array to scan. The input is overwritten. Must not be nullptr.
+/// @param count Element count. Must not exceed the value passed to reserve_scan.
+/// @param buffers The set of buffers returned by reserve_scan. Must not be nullptr.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: 引数が指す領域の所有権は呼出側と workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
-///           総和は buffers.total_ へ書かれ、host から読むには同期が要る。
+/// Ownership: the regions the arguments refer to stay owned by the caller and by
+///            the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization. The grand total is written to buffers.total_,
+///                  and reading it from the host requires synchronization.
 ///
-/// 入力例: {1, 0, 1, 1}
-/// 出力例: {0, 1, 1, 2}、total_ = 3
+/// Example input: {1, 0, 1, 1}
+/// Example output: {0, 1, 1, 2}, total_ = 3
 Status exclusive_scan_async(std::int32_t* values, int count, ScanBuffers* buffers,
                             cudaStream_t stream);
 

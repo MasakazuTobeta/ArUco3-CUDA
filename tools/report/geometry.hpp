@@ -8,30 +8,31 @@
 #include <cstddef>
 #include <utility>
 
-/// 四隅を持つ検出どうしを突き合わせるための幾何計算。
+/// Geometry helpers for matching detections that carry four corners.
 ///
-/// 目的:
-///     基準との差分分類 (report_diff) と ground truth との照合 (evaluate) は、
-///     同じ規則で対応付けを行う必要がある。片方だけ規則が変わると 2 つの報告が
-///     食い違い、どちらが正しいか判断できなくなる。共有する形で 1 か所に置く。
+/// Purpose:
+///     Classifying differences against the baseline (report_diff) and matching
+///     against the ground truth (evaluate) must pair detections by the same rule. If
+///     the rule changes on only one side, the two reports disagree and there is no
+///     way to tell which one is right. They are kept in one shared place.
 namespace aruco3cuda::report {
 
-/// 四隅の並び。x0, y0, x1, y1, x2, y2, x3, y3 の順。
+/// Corner ordering: x0, y0, x1, y1, x2, y2, x3, y3.
 using Quad = std::array<double, 8>;
 
-/// 四隅の数。
+/// Number of corners.
 constexpr std::size_t kQuadCorners = 4U;
 
-/// 四隅の重心を返す。
+/// Returns the centroid of the four corners.
 ///
-/// @param quad 四隅。参照するだけで保持しない。
-/// @return (x, y) の組。単位は pixel。
+/// @param quad The four corners. Only read, never retained.
+/// @return An (x, y) pair in pixels.
 ///
-/// 所有権: 引数を保持しない。戻り値は値として返る。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the argument is not retained. The result is returned by value.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: {0,0, 2,0, 2,2, 0,2}
-/// 出力例: (1.0, 1.0)
+/// Example input: {0,0, 2,0, 2,2, 0,2}
+/// Example output: (1.0, 1.0)
 inline std::pair<double, double> quad_centroid(const Quad& quad) {
     double x = 0.0;
     double y = 0.0;
@@ -42,19 +43,20 @@ inline std::pair<double, double> quad_centroid(const Quad& quad) {
     return {x / static_cast<double>(kQuadCorners), y / static_cast<double>(kQuadCorners)};
 }
 
-/// 四隅を結んだ四角形の平均辺長を返す。
+/// Returns the mean side length of the quadrilateral formed by the four corners.
 ///
-/// 対応付けの半径を絶対値ではなく辺長比で決めるために使う。解像度と
-/// マーカーの大きさによって妥当な距離が変わるためである。
+/// Used so that the matching radius is a ratio of the side length rather than an
+/// absolute value, because the reasonable distance changes with the resolution and
+/// the size of the marker.
 ///
-/// @param quad 四隅。参照するだけで保持しない。
-/// @return 平均辺長。単位は pixel。
+/// @param quad The four corners. Only read, never retained.
+/// @return The mean side length in pixels.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the argument is not retained.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: {0,0, 2,0, 2,2, 0,2}
-/// 出力例: 2.0
+/// Example input: {0,0, 2,0, 2,2, 0,2}
+/// Example output: 2.0
 inline double quad_average_side(const Quad& quad) {
     double total = 0.0;
     for (std::size_t c = 0; c < kQuadCorners; ++c) {
@@ -66,18 +68,19 @@ inline double quad_average_side(const Quad& quad) {
     return total / static_cast<double>(kQuadCorners);
 }
 
-/// 対象の四隅を steps 段巡回させたときの、対応する四隅の最大距離を返す。
+/// Returns the largest distance between corresponding corners after rotating the
+/// target corners by steps positions.
 ///
-/// @param baseline 基準の四隅。参照するだけで保持しない。
-/// @param target 対象の四隅。参照するだけで保持しない。
-/// @param steps 巡回段数。0 から 3。
-/// @return 4 隅の距離の最大値。単位は pixel。
+/// @param baseline The baseline corners. Only read, never retained.
+/// @param target The target corners. Only read, never retained.
+/// @param steps Number of rotation steps, from 0 to 3.
+/// @return The maximum of the four corner distances, in pixels.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the arguments are not retained.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 同じ四隅どうし、steps = 0
-/// 出力例: 0.0
+/// Example input: two identical corner sets, steps = 0
+/// Example output: 0.0
 inline double quad_corner_error(const Quad& baseline, const Quad& target, int steps) {
     double worst = 0.0;
     for (std::size_t c = 0; c < kQuadCorners; ++c) {
@@ -89,21 +92,23 @@ inline double quad_corner_error(const Quad& baseline, const Quad& target, int st
     return worst;
 }
 
-/// 対象の四隅を steps 段巡回させたときの、対応する四隅の距離の二乗和を返す。
+/// Returns the sum of squared distances between corresponding corners after
+/// rotating the target corners by steps positions.
 ///
-/// RMSE は最大値と別の情報を持つ。1 隅だけ大きく外れた場合と 4 隅が一様に
-/// ずれた場合を区別するため、二乗和も取れるようにする。
+/// The RMSE carries information the maximum does not. The sum of squares is exposed
+/// as well so that one badly displaced corner can be told apart from four corners
+/// displaced uniformly.
 ///
-/// @param baseline 基準の四隅。参照するだけで保持しない。
-/// @param target 対象の四隅。参照するだけで保持しない。
-/// @param steps 巡回段数。0 から 3。
-/// @return 4 隅の距離の二乗和。単位は pixel^2。
+/// @param baseline The baseline corners. Only read, never retained.
+/// @param target The target corners. Only read, never retained.
+/// @param steps Number of rotation steps, from 0 to 3.
+/// @return The sum of the squared corner distances, in pixel^2.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the arguments are not retained.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 1 隅だけ 2 pixel ずれた四隅、steps = 0
-/// 出力例: 4.0
+/// Example input: corners with a single corner displaced by 2 pixels, steps = 0
+/// Example output: 4.0
 inline double quad_squared_error(const Quad& baseline, const Quad& target, int steps) {
     double total = 0.0;
     for (std::size_t c = 0; c < kQuadCorners; ++c) {

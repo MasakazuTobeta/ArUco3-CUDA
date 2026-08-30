@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// ground truth との突き合わせの検証。
+// Verification of the comparison against ground truth.
 //
-// 対応付けの規則、ID を誤った場合の計上先、定義できない指標の扱いを固定する。
+// Pins down the pairing rules, where a wrong ID is counted, and how metrics that
+// cannot be defined are handled.
 #include <gtest/gtest.h>
 
 #include <string>
@@ -19,9 +20,9 @@ using aruco3cuda::evaluate::Observation;
 using aruco3cuda::evaluate::TruthMarker;
 using aruco3cuda::report::Quad;
 
-/// 中心 (cx, cy)、1 辺 side の軸並行正方形。
+/// Axis-aligned square centered at (cx, cy) with edge length side.
 ///
-/// 並びはマーカー座標系の (0,0)、(S,0)、(S,S)、(0,S) に対応させる。
+/// The order corresponds to (0,0), (S,0), (S,S), (0,S) in marker coordinates.
 Quad square(double cx, double cy, double side) {
     const double half = side / 2.0;
     return Quad{cx - half, cy - half, cx + half, cy - half,
@@ -63,8 +64,8 @@ TEST(Accuracy, CountsExactMatchAsTruePositive) {
 }
 
 TEST(Accuracy, CountsWrongIdAsBothFalsePositiveAndFalseNegative) {
-    // 同じ位置で ID を誤った場合、precision と recall の両方が下がるべきである。
-    // 片方だけに数えると、一方の指標がこの誤りを見落とす。
+    // When the ID is wrong at the correct position, both precision and recall must
+    // drop. Counting it on only one side would let that metric miss the error.
     const std::vector<TruthMarker> truth = {truth_at(7, 100.0, 100.0, 40.0)};
     const std::vector<Observation> observed = {observed_at(8, 100.0, 100.0, 40.0)};
 
@@ -100,8 +101,8 @@ TEST(Accuracy, CountsUnmatchedObservationAsFalsePositive) {
 }
 
 TEST(Accuracy, RejectsMatchBeyondRadius) {
-    // 半径は真値の 1 辺に対する比で決まる。1 辺 40 に対し既定の 0.5 なので
-    // 重心距離 20 までが対応する。境界の外側を確かめる。
+    // The radius is a ratio of the truth edge length. With edge 40 and the default
+    // 0.5, centroid distances up to 20 pair up. This checks just outside that bound.
     const std::vector<TruthMarker> truth = {truth_at(7, 100.0, 100.0, 40.0)};
     const std::vector<Observation> observed = {observed_at(7, 121.0, 100.0, 40.0)};
 
@@ -125,8 +126,9 @@ TEST(Accuracy, AcceptsMatchAtRadiusBoundary) {
 }
 
 TEST(Accuracy, DetectsRotatedCornerOrder) {
-    // ID は合っているが四隅の並びが 1 段巡回している場合。位置は一致するので
-    // true positive だが、rotation の一致には数えない。
+    // The ID is correct but the corner order is cyclically shifted by one. The
+    // position still matches, so this is a true positive, but it does not count as
+    // a rotation agreement.
     const Quad rotated{120.0, 80.0, 120.0, 120.0, 80.0, 120.0, 80.0, 80.0};
     const std::vector<TruthMarker> truth = {truth_at(7, 100.0, 100.0, 40.0)};
     std::vector<Observation> observed(1);
@@ -141,7 +143,8 @@ TEST(Accuracy, DetectsRotatedCornerOrder) {
 }
 
 TEST(Accuracy, PairsNearestFirstWhenSeveralAreInRange) {
-    // 2 つの検出が同じ真値の半径内にある場合、近い方が対応する。
+    // When two detections fall within the radius of the same truth marker, the
+    // nearer one is the pair.
     const std::vector<TruthMarker> truth = {truth_at(7, 100.0, 100.0, 40.0)};
     const std::vector<Observation> observed = {observed_at(7, 118.0, 100.0, 40.0),
                                                observed_at(7, 102.0, 100.0, 40.0)};
@@ -204,7 +207,8 @@ TEST(Accuracy, RecordsPerTruthOutcomes) {
 }
 
 TEST(Accuracy, AccumulatesOnlySelectedTruth) {
-    // 大きさで区分した recall を出す用途。選ばなかった真値は数に入らない。
+    // Used to report recall broken down by marker size. Truth markers that were not
+    // selected are left out of the counts.
     const std::vector<TruthMarker> truth = {truth_at(7, 100.0, 100.0, 40.0),
                                             truth_at(8, 300.0, 100.0, 40.0)};
     const std::vector<Observation> observed = {observed_at(7, 100.0, 100.0, 40.0)};
@@ -226,8 +230,9 @@ TEST(Accuracy, AccumulatesOnlySelectedTruth) {
 }
 
 TEST(Accuracy, LeavesPrecisionUndefinedAfterSelectedAccumulation) {
-    // 対応の付かない検出はどの真値にも属さないため足し込まない。結果として
-    // この集計から precision は求まらない。読み手が誤らないことを固定する。
+    // An unpaired detection belongs to no truth marker, so it is not accumulated.
+    // As a consequence precision cannot be derived from this summary. This test pins
+    // that down so a reader does not misread the numbers.
     const std::vector<TruthMarker> truth = {truth_at(7, 100.0, 100.0, 40.0)};
     const std::vector<Observation> observed = {observed_at(7, 100.0, 100.0, 40.0),
                                                observed_at(8, 400.0, 400.0, 40.0)};
@@ -283,8 +288,8 @@ TEST(Accuracy, ComputesPrecisionAndRecall) {
 }
 
 TEST(Accuracy, ReportsPrecisionUndefinedWithoutDetections) {
-    // 検出が 1 件も無いとき precision は定義できない。1.0 を返すと
-    // 「検出しないほど precision が高い」ことになる。
+    // With no detections at all, precision is undefined. Returning 1.0 would mean
+    // "the less you detect, the higher your precision".
     const AccuracySummary summary;
     double value = -1.0;
     EXPECT_FALSE(aruco3cuda::evaluate::precision(summary, &value));
@@ -292,7 +297,7 @@ TEST(Accuracy, ReportsPrecisionUndefinedWithoutDetections) {
 }
 
 TEST(Accuracy, ReportsRecallUndefinedWithoutTruth) {
-    // corpus にはマーカー 0 個の場面が含まれる。
+    // The corpus includes scenes that contain zero markers.
     AccuracySummary summary;
     summary.false_positive_ = 1U;
     double value = -1.0;

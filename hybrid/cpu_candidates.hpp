@@ -8,161 +8,185 @@
 
 #include "aruco3cuda/config.hpp"
 
-/// CPU 経路の四角形候補抽出。
+/// Quad candidate extraction for the CPU route.
 ///
-/// 目的:
-///     OpenCV の ArUco 検出器と同じ手順で二値化画像から候補を求める。
-///     ハイブリッド経路が使うほか、GPU 経路との差異を測る比較の基準にも
-///     使う。同じ code を両方から呼ぶことで、比較の対象が実装の違いだけ
-///     になるようにする。
+/// Purpose:
+///     Finds candidates in a binarized image with the same procedure as
+///     OpenCV's ArUco detector. It is used by the hybrid route and also as the
+///     reference for measuring how the GPU route differs. Calling the same code
+///     from both sides keeps the comparison focused on the implementation
+///     difference alone.
 namespace aruco3cuda::hybrid {
 
-/// 候補 1 つ分の四隅・輪郭・周長。
+/// The corners, contour and perimeter of a single candidate.
 ///
-/// 周長は輪郭長ではなく四隅を結んだ四角形の辺長和とする。OpenCV の
-/// MarkerCandidate と同じ定義であり、グループ内で採用する候補の選択に使う。
+/// The perimeter is not the contour length but the sum of the edge lengths of
+/// the quad through the four corners. This matches OpenCV's MarkerCandidate and
+/// is used to pick which candidate of a group is kept.
 ///
-/// 所有権: 値型。内部の vector を自身で所有する。
-/// 同期動作: 無し。単なる集約である。
+/// Ownership: value type. Owns the vectors it holds.
+/// Synchronization: none. It is a plain aggregate.
 ///
-/// 入力例: 辺 60 の正方形の輪郭
-/// 出力例: perimeter_ = 240
+/// Example input: the contour of a square with side 60
+/// Example output: perimeter_ = 240
 struct MarkerCandidate {
     std::vector<cv::Point2f> corners_;
     std::vector<cv::Point> contour_;
     float perimeter_ = 0.0F;
 };
 
-/// 候補を包含関係の木として保持する。OpenCV の MarkerCandidateTree と同じ。
+/// Holds the candidates as a containment tree, like OpenCV's
+/// MarkerCandidateTree.
 ///
-/// parent_ は自分を内側に含む候補の index、depth_ は自分より内側にある
-/// 候補の最大段数である。識別は depth_ の小さい順に行い、マーカーが確定
-/// したらその親を識別対象から外す。
+/// parent_ is the index of the candidate that encloses this one, and depth_ is
+/// the largest number of levels nested inside this one. Identification runs in
+/// increasing order of depth_, and once a marker is confirmed its parent is
+/// dropped from the identification set.
 ///
-/// 所有権: 値型。内部の vector を自身で所有する。
-/// 同期動作: 無し。単なる集約である。
+/// Ownership: value type. Owns the vectors it holds.
+/// Synchronization: none. It is a plain aggregate.
 ///
-/// 入力例: 黒枠の外周と内周が候補になった場合
-/// 出力例: 内周の parent_ が外周の index、外周の depth_ が 1
+/// Example input: both the outer and the inner edge of a black border became
+/// candidates
+/// Example output: the inner one's parent_ is the outer one's index, and the
+/// outer one's depth_ is 1
 struct CandidateNode : MarkerCandidate {
     int parent_ = -1;
     int depth_ = 0;
     std::vector<MarkerCandidate> close_contours_;
 };
 
-/// 四隅を結んだ四角形の辺長和。
+/// Sum of the edge lengths of the quad through the four corners.
 ///
-/// @param corners 四隅。要素数は 4。
-/// @return 辺長の和。
+/// @param corners The four corners. Exactly 4 elements.
+/// @return The sum of the edge lengths.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: does not retain the argument.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 辺 10 の正方形
-/// 出力例: 40
+/// Example input: a square with side 10
+/// Example output: 40
 float quad_perimeter(const std::vector<cv::Point2f>& corners);
 
-/// 2 つの候補の四隅間平均距離。開始頂点の 4 通りの対応のうち最小を採る。
+/// Mean corner-to-corner distance between two candidates, taking the smallest
+/// of the four possible starting-vertex correspondences.
 ///
-/// OpenCV の getAverageDistance と同じ。頂点の並びが 1 つずれていても
-/// 同じマーカーだと判定できるようにするため、対応を総当たりする。
+/// Same as OpenCV's getAverageDistance. All correspondences are tried so that
+/// two candidates whose vertex order is rotated by one still register as the
+/// same marker.
 ///
-/// @param first 一方の四隅。要素数は 4。
-/// @param second もう一方の四隅。要素数は 4。
-/// @return 平均距離。
+/// @param first One set of four corners. Exactly 4 elements.
+/// @param second The other set of four corners. Exactly 4 elements.
+/// @return The mean distance.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: does not retain the arguments.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 同じ位置の 2 つの正方形
-/// 出力例: 0
+/// Example input: two squares at the same position
+/// Example output: 0
 float average_quad_distance(const std::vector<cv::Point2f>& first,
                             const std::vector<cv::Point2f>& second);
 
-/// 四隅から求めたセル 1 辺の平均画素数。OpenCV の getAverageModuleSize と同じ。
+/// Mean number of pixels along one cell edge, derived from the four corners.
+/// Same as OpenCV's getAverageModuleSize.
 ///
-/// @param corners 四隅。要素数は 4。
-/// @param marker_size Dictionary のセル数。
-/// @param border_bits 外枠のセル数。
-/// @return セル 1 辺の平均画素数。
+/// @param corners The four corners. Exactly 4 elements.
+/// @param marker_size Number of cells in the dictionary.
+/// @param border_bits Number of cells in the outer border.
+/// @return The mean number of pixels along one cell edge.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: does not retain the argument.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 辺 80 の正方形、marker_size 6、border_bits 1
-/// 出力例: 10
+/// Example input: a square with side 80, marker_size 6, border_bits 1
+/// Example output: 10
 float average_module_size(const std::vector<cv::Point2f>& corners, int marker_size,
                           int border_bits);
 
-/// first の四隅が全て second の内側にあるか。OpenCV の checkMarker1InMarker2 と同じ。
+/// Whether all four corners of first lie inside second. Same as OpenCV's
+/// checkMarker1InMarker2.
 ///
-/// @param first 内側にあるかを調べる四隅。要素数は 4。
-/// @param second 外側の四隅。要素数は 4。
-/// @return 全ての点が内側または境界上なら true。
+/// @param first The corners tested for being inside. Exactly 4 elements.
+/// @param second The enclosing corners. Exactly 4 elements.
+/// @return true if every point is inside or on the boundary.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: does not retain the arguments.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 小さい正方形と、それを囲む大きい正方形
-/// 出力例: true
+/// Example input: a small square and a larger square surrounding it
+/// Example output: true
 bool quad_inside_quad(const std::vector<cv::Point2f>& first,
                       const std::vector<cv::Point2f>& second);
 
-/// 二値化画像から四角形候補を抽出する。
+/// Extracts quad candidates from a binarized image.
 ///
-/// OpenCV の _findMarkerContours と同じ判定を行う。ArUco3 有効時は
-/// 周長の下限を minSideLengthCanonicalImg * 4 へ置き換える。
+/// Applies the same tests as OpenCV's _findMarkerContours. When ArUco3 is
+/// enabled, the lower perimeter bound is replaced by
+/// minSideLengthCanonicalImg * 4.
 ///
-/// @param binary 入力二値化画像。0 を背景、それ以外を前景とみなす。
-/// @param config 検出設定。
-/// @param candidates 見つけた四隅を追加する。既存の要素は保持する。
-/// @param contours_out 対応する輪郭を追加する。candidates と同じ数だけ増える。
-/// @return 無し。引数の vector へ追加する。
+/// @param binary Input binarized image. 0 is background, anything else is
+///               foreground.
+/// @param config Detector configuration.
+/// @param candidates Receives the corners that were found, appended. Existing
+///                   elements are kept.
+/// @param contours_out Receives the matching contours, appended. It grows by
+///                     the same count as candidates.
+/// @return Nothing. Results are appended to the vectors passed in.
 ///
-/// 所有権: 引数の vector は呼出側が所有する。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the caller owns the vectors passed in.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 正方形が 3 つある二値化画像
-/// 出力例: candidates が 3 要素増える
+/// Example input: a binarized image containing three squares
+/// Example output: candidates grows by three elements
 void find_quad_candidates(const cv::Mat& binary, const DetectorConfig& config,
                           std::vector<std::vector<cv::Point2f>>& candidates,
                           std::vector<std::vector<cv::Point>>& contours_out);
 
-/// 四隅を時計回りへ揃える。OpenCV の _reorderCandidatesCorners と同じ。
+/// Puts the four corners in clockwise order. Same as OpenCV's
+/// _reorderCandidatesCorners.
 ///
-/// @param candidate 並べ替える四隅。要素数は 4。その場で書き換える。
-/// @return 無し。引数を書き換える。
+/// @param candidate The corners to reorder. Exactly 4 elements. Modified in
+///                  place.
+/// @return Nothing. The argument is modified.
 ///
-/// 所有権: 引数は呼出側が所有する。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the caller owns the argument.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 反時計回りの四隅
-/// 出力例: 1 番目と 3 番目が入れ替わる
+/// Example input: four corners in counter-clockwise order
+/// Example output: the second and the fourth corner are swapped
 void reorder_corners(std::vector<cv::Point2f>& candidate);
 
-/// 近接候補をグループ化し、各グループの代表を選んで包含関係の木を作る。
+/// Groups nearby candidates, picks a representative per group and builds the
+/// containment tree.
 ///
-/// 二値化 window を変えると同じマーカーから少しずつ違う候補が得られる。
-/// OpenCV の filterTooCloseCandidates と同じく、周長の降順に並べたうえで
-/// 近接するものを 1 グループとし、グループ内で最大周長の候補を代表に採る。
-/// 代表以外のうち代表から離れているものは close_contours_ として残し、
-/// 代表の識別が失敗した場合の代替に使う。
+/// Changing the binarization window yields slightly different candidates for
+/// the same marker. As in OpenCV's filterTooCloseCandidates, the candidates are
+/// sorted by decreasing perimeter, nearby ones form a group, and the candidate
+/// with the largest perimeter in the group becomes its representative. The
+/// non-representative candidates that are far from the representative are kept
+/// in close_contours_ as fallbacks for when identifying the representative
+/// fails.
 ///
-/// 代表が画像端に近すぎる場合はグループごと捨てる。OpenCV も同じ扱いで、
-/// 端に掛かったマーカーは四隅が信用できないためである。
+/// If the representative is too close to the image border, the whole group is
+/// discarded. OpenCV does the same, because the corners of a marker that runs
+/// off the edge cannot be trusted.
 ///
-/// @param image_size 二値化画像の寸法。端からの距離の判定に使う。
-/// @param candidates 候補の四隅。中身は move で取り出されるため呼出後は空になる。
-/// @param contours 対応する輪郭。同じく move で取り出される。
-/// @param config 検出設定。
-/// @param marker_size Dictionary のセル数。
-/// @return 代表候補の一覧。周長の降順に並ぶ。
+/// @param image_size Size of the binarized image. Used to test the distance to
+///                   the border.
+/// @param candidates The candidate corners. The contents are moved out, so the
+///                   vector is empty on return.
+/// @param contours The matching contours. Also moved out.
+/// @param config Detector configuration.
+/// @param marker_size Number of cells in the dictionary.
+/// @return The representative candidates, ordered by decreasing perimeter.
 ///
-/// 所有権: 引数の vector の要素は戻り値へ move される。
-/// 同期動作: 無し。再入可能。
+/// Ownership: the elements of the vectors passed in are moved into the return
+///            value.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: 同じマーカーから得た周長違いの候補が 3 つ
-/// 出力例: 要素数 1。最大周長の候補が残る
+/// Example input: three candidates of differing perimeter from the same marker
+/// Example output: one element. The candidate with the largest perimeter
+/// remains
 std::vector<CandidateNode> filter_too_close_candidates(
         const cv::Size& image_size, std::vector<std::vector<cv::Point2f>>& candidates,
         std::vector<std::vector<cv::Point>>& contours, const DetectorConfig& config,

@@ -19,17 +19,20 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// 1 候補を担当する block の thread 数。canonical の画素を分担する。
+/// Thread count of the block handling one candidate. The threads split the
+/// canonical pixels between them.
 constexpr int kCanonicalThreads = 256;
-/// LU の特異判定に使う閾値。OpenCV の DBL_EPSILON * 100 と同じ。
+/// Threshold for the LU singularity test. Same as OpenCV's DBL_EPSILON * 100.
 constexpr double kLuEpsilon = 2.2204460492503131e-14;
 
-/// 候補の四隅から、canonical への写像を解くための係数行列を組む。
+/// Builds the coefficient matrix that solves the map from a candidate's four
+/// corners to canonical.
 ///
-/// OpenCV の getPerspectiveTransform と同じ並びにする。src は canonical の
-/// 四隅、dst は候補の四隅である。CPU 経路は逆向きに解いてから逆行列を作るが、
-/// ここでは最初から逆写像を解く。両者は同じ写像を表すが、丸めが異なるため
-/// 後段で逆行列を作る手順まで合わせる。
+/// The layout matches OpenCV's getPerspectiveTransform: src is the canonical
+/// corners and dst is the candidate corners. The CPU path solves the opposite
+/// direction and then inverts, while this solves the inverse map from the
+/// start. The two describe the same map, but the rounding differs, so the later
+/// steps reproduce the inversion procedure as well.
 __device__ void build_system(const float src_x[kQuadCornerCount],
                              const float src_y[kQuadCornerCount],
                              const float dst_x[kQuadCornerCount],
@@ -47,8 +50,9 @@ __device__ void build_system(const float src_x[kQuadCornerCount],
         a[i + 4][3] = static_cast<double>(src_x[i]);
         a[i + 4][4] = static_cast<double>(src_y[i]);
         a[i + 4][5] = 1.0;
-        // 単精度の積を倍精度へ広げる。OpenCV と同じ丸めにするため、
-        // ここを倍精度で掛けてはならない。行列が相対 1.9e-3 までずれる。
+        // Widen a single-precision product to double. To round the way OpenCV
+        // does, these must not be multiplied in double precision: the matrix
+        // shifts by up to 1.9e-3 relative.
         a[i][6] = static_cast<double>(-src_x[i] * dst_x[i]);
         a[i][7] = static_cast<double>(-src_y[i] * dst_x[i]);
         a[i + 4][6] = static_cast<double>(-src_x[i] * dst_y[i]);
@@ -58,13 +62,13 @@ __device__ void build_system(const float src_x[kQuadCornerCount],
     }
 }
 
-/// 部分ピボット付き Gauss 消去で 8 元 1 次方程式を解く。
+/// Solves the 8-unknown linear system by Gaussian elimination with partial pivoting.
 ///
-/// OpenCV の LUImpl と同じ手順にする。同値なら添字の小さい行を残し、
-/// 消去は d = -1/A[i][i] を 1 度だけ作って掛ける。alpha = -A[j][i]/A[i][i]
-/// と書くと丸めが変わる。
+/// Follows the same steps as OpenCV's LUImpl: on a tie keep the row with the
+/// smaller index, and elimination forms d = -1/A[i][i] once and multiplies by
+/// it. Writing alpha = -A[j][i]/A[i][i] instead changes the rounding.
 ///
-/// @return 解けたら true。ピボットが閾値を下回ったら false。
+/// @return true when solved. false when the pivot falls below the threshold.
 __device__ bool solve_lu8(double a[8][8], double b[8]) {
     constexpr int kMatrixSize = 8;
     for (int i = 0; i < kMatrixSize; ++i) {
@@ -106,17 +110,18 @@ __device__ bool solve_lu8(double a[8][8], double b[8]) {
     return true;
 }
 
-/// double を最近接偶数丸めで int へ直す。OpenCV の cvRound と同じ。
+/// Converts a double to an int with round-to-nearest-even. Same as OpenCV's cvRound.
 __device__ int round_to_nearest_even(double value) {
-    // 丸め前に int の範囲へ収める。OpenCV も同じ順序で処理する。
+    // Clamp into int range before rounding. OpenCV does it in the same order.
     const double clamped = fmin(fmax(value, -2147483648.0), 2147483647.0);
     return __double2int_rn(clamped);
 }
 
-/// 候補の周長から、識別に使う pyramid level を選ぶ。
+/// Chooses the pyramid level used for identification, from a candidate's perimeter.
 ///
-/// CPU 経路の _findOptPyrImageForCanonicalImg と同じ規則である。距離が正の
-/// ものだけを対象とし、距離が小さい level を選ぶ。比較は単精度で行う。
+/// Same rule as the CPU path's _findOptPyrImageForCanonicalImg: consider only
+/// positive distances and take the level with the smallest one. The comparison
+/// is done in single precision.
 __device__ int choose_level(const PyramidRef& pyramid, int segmentation_width, int perimeter,
                             int min_perimeter) {
     int optimal = 0;
@@ -134,7 +139,7 @@ __device__ int choose_level(const PyramidRef& pyramid, int segmentation_width, i
     return optimal;
 }
 
-/// 候補ごとに canonical 画像を作る。1 block が 1 候補を担当する。
+/// Builds the canonical image per candidate. One block handles one candidate.
 __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* corner_x,
                                       const std::int32_t* corner_y, const std::int32_t* perimeter,
                                       int candidate_capacity, const std::int32_t* count,
@@ -160,8 +165,9 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
         level_height = pyramid.height_[level];
         level_pitch = pyramid.pitch_[level];
 
-        // 四隅を level の座標へ拡大する。CPU 経路は cv::Point2f と float の積で
-        // 計算するため、ここも単精度で揃える。
+        // Scale the four corners into the level's coordinates. The CPU path
+        // computes this as a cv::Point2f times a float, so single precision is
+        // used here too.
         const float scale =
                 use_aruco3
                         ? (static_cast<float>(level_width) / static_cast<float>(segmentation_width))
@@ -173,13 +179,13 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
             quad_x[c] = static_cast<float>(corner_x[index]) * scale;
             quad_y[c] = static_cast<float>(corner_y[index]) * scale;
         }
-        // canonical の四隅。辺は side - 1 であって side ではない。
+        // Corners of the canonical image. The edge is side - 1, not side.
         const float edge = static_cast<float>(side) - 1.0F;
         const float square_x[kQuadCornerCount] = {0.0F, edge, edge, 0.0F};
         const float square_y[kQuadCornerCount] = {0.0F, 0.0F, edge, edge};
 
-        // CPU 経路は quad から square への写像を解き、warpPerspective が
-        // 逆行列を作る。丸めまで合わせるため同じ順序で行う。
+        // The CPU path solves the map from quad to square and warpPerspective
+        // builds the inverse. The same order is used here to match the rounding.
         double a[8][8];
         double b[8];
         build_system(quad_x, quad_y, square_x, square_y, a, b);
@@ -190,14 +196,16 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
             }
             forward[8] = 1.0;
         } else {
-            // 退化した四隅。OpenCV は SVD へ落ちるが、篩を通った候補では
-            // 起きない。ここでは canonical を 0 で埋める形にする。
+            // Degenerate corners. OpenCV falls back to SVD, but this does not
+            // happen for candidates that passed the filter. Here the canonical
+            // image is left filled with 0 instead.
             for (int i = 0; i < 9; ++i) {
                 forward[i] = 0.0;
             }
         }
 
-        // 3x3 の余因子式で逆行列を作る。OpenCV の invert と同じ順序である。
+        // Build the inverse with the 3x3 cofactor formula, in the same order
+        // as OpenCV's invert.
         const double determinant =
                 forward[0] * (forward[4] * forward[8] - forward[5] * forward[7]) -
                 forward[1] * (forward[3] * forward[8] - forward[5] * forward[6]) +
@@ -214,7 +222,7 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
             matrix[7] = (forward[1] * forward[6] - forward[0] * forward[7]) * r;
             matrix[8] = (forward[0] * forward[4] - forward[1] * forward[3]) * r;
         } else {
-            // OpenCV の invert は det が 0 のとき行列を書き換えずに返る。
+            // OpenCV's invert returns without touching the matrix when det is 0.
             for (int i = 0; i < 9; ++i) {
                 matrix[i] = forward[i];
             }
@@ -230,15 +238,15 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
          index += static_cast<int>(blockDim.x)) {
         const int x = index % side;
         const int y = index / side;
-        // OpenCV は block 原点で部分和を作る。canonical の 1 辺が 32 以下なら
-        // block 幅が 1 辺と一致するため原点は常に 0 であり、部分和は
-        // M[1] * y + M[2] に等しい。
+        // OpenCV forms the partial sums at the block origin. When the
+        // canonical side is 32 or less, the block width equals the side, so the
+        // origin is always 0 and the partial sum equals M[1] * y + M[2].
         const double x0 = matrix[1] * static_cast<double>(y) + matrix[2];
         const double y0 = matrix[4] * static_cast<double>(y) + matrix[5];
         const double w0 = matrix[7] * static_cast<double>(y) + matrix[8];
 
         const double wd = w0 + matrix[6] * static_cast<double>(x);
-        // 逆数を先に取ってから掛ける。除算で書くと 1 ULP 異なる。
+        // Take the reciprocal first and then multiply. Writing it as a division differs by 1 ULP.
         const double w = (wd != 0.0) ? (1.0 / wd) : 0.0;
         const int sx = round_to_nearest_even((x0 + matrix[0] * static_cast<double>(x)) * w);
         const int sy = round_to_nearest_even((y0 + matrix[3] * static_cast<double>(x)) * w);
@@ -265,7 +273,7 @@ int canonical_side_px(const DetectorConfig& config, int marker_size) {
             static_cast<long long>(marker_size) + (2LL * config.marker_border_bits_);
     const long long side = cells * config.perspective_remove_pixel_per_cell_;
     if (side > 32767LL) {
-        // OpenCV の warpPerspective 自体が 32767 未満を要求する。
+        // OpenCV's warpPerspective itself requires less than 32767.
         return 0;
     }
     return static_cast<int>(side);

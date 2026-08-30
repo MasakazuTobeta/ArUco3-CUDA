@@ -4,22 +4,23 @@
 
 namespace aruco3cuda {
 
-/// library の version 番号。
+/// Version numbers of the library.
 inline constexpr int kVersionMajor = 0;
 inline constexpr int kVersionMinor = 1;
 inline constexpr int kVersionPatch = 0;
 
-/// version を "major.minor.patch" 形式で返す。
+/// Returns the version in "major.minor.patch" form.
 ///
-/// @return 静的記憶域を持つ文字列。
+/// @return A string with static storage duration.
 ///
-/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
-/// 同期動作: host 専用であり同期点を持たない。初回呼び出しで書式化した結果を
-///           静的 buffer へ保持するため、複数 thread から同時に初回呼び出しを
-///           行わないこと。
+/// Ownership: the return value points into static storage. The caller neither frees
+///            nor modifies it.
+/// Synchronization: host only, with no synchronization point. The first call formats
+///                  the result into a static buffer, so the first call must not be
+///                  made from several threads at once.
 ///
-/// 入力例: 引数なし
-/// 出力例: "0.1.0"
+/// Example input: no arguments
+/// Example output: "0.1.0"
 const char* version_string();
 
 }  // namespace aruco3cuda

@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   container 環境が実際に使用可能であることを、環境検査より踏み込んで確認する。
-#   nvcc が OpenCV を含む translation unit を compile でき、生成した実行 file が
-#   GPU 上で動作し、OpenCV の ArUco3 検出戦略が期待どおり動くことを検証する。
+# Purpose:
+#   Confirm that the container environment is genuinely usable, going further than
+#   the environment check. It verifies that nvcc can compile a translation unit
+#   that includes OpenCV, that the resulting executable runs on the GPU, and that
+#   the OpenCV ArUco3 detection strategy behaves as expected.
 #
-# 位置付け:
-#   これは container 環境の smoke test であり、project の unit test ではない。
-#   project 側の test は `ctest` で実行する。
+# Role:
+#   This is a smoke test of the container environment, not a unit test of the
+#   project. The project's own tests are run with `ctest`.
 set -euo pipefail
 
-readonly kCudaArch="${ARUCO3_CUDA_ARCH:?ARUCO3_CUDA_ARCH が未設定}"
+readonly kCudaArch="${ARUCO3_CUDA_ARCH:?ARUCO3_CUDA_ARCH is not set}"
 readonly kOpenCvPrefix="${ARUCO3_OPENCV_PREFIX:-/opt/opencv}"
-# image へ install された smoke source を既定とし、
-# repository を直接使う場合は ARUCO3_SMOKE_DIR で上書きする。
+# Default to the smoke source installed into the image; override with
+# ARUCO3_SMOKE_DIR to use the repository directly.
 kSourceDir="${ARUCO3_SMOKE_DIR:-/opt/aruco3cuda/smoke}"
 if [ ! -f "${kSourceDir}/aruco3_smoke.cu" ]; then
-  echo "[smoke-test] ${kSourceDir}/aruco3_smoke.cu が無い。" >&2
-  echo "[smoke-test] ARUCO3_SMOKE_DIR で source directory を指定すること。" >&2
+  echo "[smoke-test] ${kSourceDir}/aruco3_smoke.cu does not exist." >&2
+  echo "[smoke-test] specify the source directory with ARUCO3_SMOKE_DIR." >&2
   exit 1
 fi
 readonly kSourceDir
@@ -35,4 +36,4 @@ nvcc -std=c++17 -arch="sm_${kCudaArch}" \
 echo "[smoke-test] run"
 "${work_dir}/aruco3_smoke"
 
-echo "[smoke-test] 合格"
+echo "[smoke-test] passed"

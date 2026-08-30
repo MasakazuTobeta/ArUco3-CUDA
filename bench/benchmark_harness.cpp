@@ -13,9 +13,9 @@
 #include "device_image.hpp"
 #include "hybrid_detector.hpp"
 
-#include <sched.h>  // sched_setaffinity は POSIX 拡張であり標準 header に無い
-#include <stdio.h>  // popen と pclose は POSIX であり <cstdio> の std 名前空間に無い
-#include <sys/personality.h>  // ASLR の状態確認。標準 header には無い
+#include <sched.h>  // sched_setaffinity is a POSIX extension and is not in a standard header
+#include <stdio.h>  // popen and pclose are POSIX and are not in the std namespace of <cstdio>
+#include <sys/personality.h>  // Checking the ASLR state. Not in a standard header
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -48,10 +48,11 @@ namespace {
 using aruco3cuda::util::JsonWriter;
 using aruco3cuda::util::SampleStatistics;
 
-/// popen が返す pipe を RAII で保持する。
+/// Hold the pipe returned by popen with RAII.
 ///
-/// popen / pclose を手動で対にすると、途中の早期 return や例外で子 process が
-/// 残る。unique_ptr の deleter へ pclose を委ね、経路によらず必ず閉じる。
+/// Pairing popen and pclose by hand leaves the child process behind on an early
+/// return or an exception in between. Delegating pclose to the deleter of a
+/// unique_ptr closes it on every path.
 struct PipeCloser {
     void operator()(std::FILE* pipe) const noexcept {
         if (pipe != nullptr) {
@@ -65,11 +66,13 @@ UniquePipe open_command(const std::string& command) {
     return UniquePipe(popen(command.c_str(), "r"));
 }
 
-/// command を実行し標準出力を 1 行取得する。取得できない場合は空文字列を返す。
+/// Run a command and take one line from its standard output. Returns an empty
+/// string when nothing can be obtained.
 ///
-/// nvpmodel のように library 経由で取得できない環境情報を記録するために使用する。
-/// 失敗しても測定自体は継続する。値が取れないことと空であることを
-/// 呼出側が区別する必要はなく、いずれも「未取得」として扱う。
+/// Used to record environment information that cannot be obtained through a
+/// library, such as nvpmodel. A failure does not stop the measurement. The
+/// caller has no need to distinguish "no value" from "empty"; both are treated
+/// as "not obtained".
 std::string read_command_line(const std::string& command) {
     std::array<char, 512> buffer{};
     const UniquePipe pipe = open_command(command);
@@ -87,10 +90,11 @@ std::string read_command_line(const std::string& command) {
     return result;
 }
 
-/// command の標準出力を全行取得する。
+/// Take every line of a command's standard output.
 ///
-/// 想定するのは query-platform-info.sh の数行の出力である。外部 command の
-/// 出力を無制限に取り込まないよう行数の上限を設ける。
+/// The expected case is the few lines printed by query-platform-info.sh. A line
+/// limit keeps the output of an external command from being taken in without
+/// bound.
 std::vector<std::string> read_command_lines(const std::string& command) {
     constexpr std::size_t kMaxLines = 256U;
     std::vector<std::string> lines;
@@ -112,10 +116,11 @@ std::vector<std::string> read_command_lines(const std::string& command) {
     return lines;
 }
 
-/// query-platform-info.sh の key=value 出力を map へ読み込む。
+/// Read the key=value output of query-platform-info.sh into a map.
 ///
-/// 機種ごとに取得元が異なる項目をここで吸収する。script が無い環境では
-/// 空の map を返し、呼出側は未取得として扱う。推測で埋めない。
+/// Absorbs here the items whose source differs from machine to machine. In an
+/// environment without the script, an empty map is returned and the caller
+/// treats the items as not obtained. Nothing is filled in by guesswork.
 std::map<std::string, std::string> read_platform_info() {
     std::map<std::string, std::string> info;
     for (const std::string& line : read_command_lines("query-platform-info.sh 2>/dev/null")) {
@@ -128,7 +133,7 @@ std::map<std::string, std::string> read_platform_info() {
     return info;
 }
 
-/// 整数として解釈できる場合のみ値を返す。
+/// Return the value only when it can be interpreted as an integer.
 bool parse_int_field(const std::map<std::string, std::string>& info, const std::string& key,
                      int* out) {
     const auto entry = info.find(key);
@@ -153,15 +158,18 @@ std::string field_or_empty(const std::map<std::string, std::string>& info, const
     return entry == info.end() ? std::string() : entry->second;
 }
 
-/// sysfs から CPU ごとの最大周波数を読み、種別の代わりに使う。
+/// Read the maximum frequency of each CPU from sysfs and use it in place of the
+/// core type.
 ///
-/// x86 の hybrid CPU は /proc/cpuinfo に aarch64 の "CPU part" にあたる
-/// 実装 ID を持たず、model name は全 core で同じになる。性能 core と効率
-/// core は最大周波数が異なるため、これを種別の代わりに使う。周波数から
-/// P-core や E-core という名前を推測して付けることはしない。
+/// An x86 hybrid CPU has no implementation ID in /proc/cpuinfo equivalent to the
+/// aarch64 "CPU part", and the model name is the same for every core. The
+/// performance and efficiency cores differ in maximum frequency, so that is used
+/// in place of the type. No name such as P-core or E-core is guessed from the
+/// frequency.
 ///
-/// @param cpu_count 走査する CPU 数。
-/// @return 周波数 (kHz) ごとの CPU 番号。出現順を保つ。読めなければ空。
+/// @param cpu_count Number of CPUs to scan.
+/// @return The CPU numbers grouped by frequency (kHz), keeping the order of
+///         appearance. Empty when nothing can be read.
 std::vector<std::pair<long long, std::vector<int>>> read_frequency_groups(int cpu_count) {
     std::vector<std::pair<long long, std::vector<int>>> groups;
     for (int cpu = 0; cpu < cpu_count; ++cpu) {
@@ -183,10 +191,10 @@ std::vector<std::pair<long long, std::vector<int>>> read_frequency_groups(int cp
     return groups;
 }
 
-/// kHz を GHz の文字列へ直す。小数第 2 位まで。
+/// Convert kHz into a GHz string, to two decimal places.
 std::string format_ghz(long long khz) {
-    // 小数第 2 位まで。四捨五入せず切り捨てる。表示の丸めで種別の区別が
-    // 消えないよう、桁を落としすぎない。
+    // Two decimal places, truncated rather than rounded. Keep enough digits that
+    // rounding for display does not erase the distinction between core types.
     const long long hundredths = khz / 10000;
     const long long integer_part = hundredths / 100;
     const long long fraction = hundredths % 100;
@@ -197,19 +205,22 @@ std::string format_ghz(long long khz) {
     return text + std::to_string(fraction) + "GHz";
 }
 
-/// core 種別ごとの CPU 番号をまとめた文字列を作る。
+/// Build a string that groups the CPU numbers by core type.
 ///
-/// 性能 core と効率 core が混在する機では、どの種別で測ったかが分からないと
-/// 測定値を比較できない。aarch64 は /proc/cpuinfo の "CPU part" で分類し、
-/// marketing 名は既知のものだけ補う。未知の実装 ID はそのまま記録し、推測で
-/// 名前を付けない。
+/// On a machine that mixes performance and efficiency cores, measured values
+/// cannot be compared without knowing which type they were taken on. On aarch64
+/// the classification uses the "CPU part" field of /proc/cpuinfo, and a
+/// marketing name is supplied only for the known values. An unknown
+/// implementation ID is recorded as is; no name is guessed for it.
 ///
-/// x86 には "CPU part" が無く、この経路だけでは空文字列になる。実際に
-/// GeForce RTX 5070 Ti を載せた Intel Core Ultra 7 265 の機で空になり、
-/// 環境情報の test が失敗した。x86 では最大周波数で分類へ切り替える。
-/// 昇順の processor 番号列を "0-4,10-14" の形へ畳む。
+/// x86 has no "CPU part", and this path alone yields an empty string. It did
+/// come out empty on a machine with an Intel Core Ultra 7 265 and a GeForce RTX
+/// 5070 Ti, and the environment information test failed. On x86 the
+/// classification falls back to the maximum frequency.
+/// Collapses an ascending run of processor numbers into the form "0-4,10-14".
 ///
-/// 連続する番号を範囲へまとめる。20 個を並べると環境情報が読みにくくなる。
+/// Consecutive numbers are folded into a range. Listing 20 of them makes the
+/// environment information hard to read.
 std::string format_processor_ranges(const std::vector<int>& processors) {
     std::string result;
     for (std::size_t i = 0; i < processors.size();) {
@@ -238,7 +249,7 @@ std::string read_cpu_topology() {
     if (!info) {
         return std::string();
     }
-    // 出現順を保つため vector で持つ。core 種別は数種類しかない。
+    // Held in a vector to keep the order of appearance. There are only a few core types.
     std::vector<std::pair<std::string, std::vector<int>>> groups;
     std::string model_name;
     std::string line;
@@ -277,10 +288,12 @@ std::string read_cpu_topology() {
         }
     }
     if (!groups.empty()) {
-        // core 種別ごとに processor 番号の範囲も残す。個数だけでは、どの
-        // core で測ったのか (--cpu-list が性能 core か効率 core か) を
-        // 結果から検算できない。性能 core と効率 core では CPU 経路の値が
-        // 約 1.6 倍違うため、この対応が無いと測定条件を確かめられない。
+        // Also keep the range of processor numbers for each core type. With the
+        // count alone, the results cannot be checked against which core the
+        // measurement ran on (whether --cpu-list named performance or efficiency
+        // cores). The CPU route differs by roughly a factor of 1.6 between the
+        // two, so without this correspondence the measurement conditions cannot
+        // be verified.
         std::string result;
         for (const auto& group : groups) {
             if (!result.empty()) {
@@ -292,14 +305,14 @@ std::string read_cpu_topology() {
         return result;
     }
 
-    // "CPU part" が無い環境。最大周波数で分類する。
+    // An environment without "CPU part". Classify by maximum frequency.
     const std::vector<std::pair<long long, std::vector<int>>> by_frequency =
             read_frequency_groups(processor + 1);
     if (by_frequency.empty()) {
-        // 周波数も読めない。せめて model name だけは残す。
+        // The frequency cannot be read either. At least keep the model name.
         return model_name;
     }
-    std::string result = model_name.empty() ? std::string("(不明な CPU)") : model_name;
+    std::string result = model_name.empty() ? std::string("(unknown CPU)") : model_name;
     result += ":";
     for (const auto& group : by_frequency) {
         result += " " + format_ghz(group.first) + " x" + std::to_string(group.second.size()) + ",";
@@ -308,10 +321,11 @@ std::string read_cpu_topology() {
     return result;
 }
 
-/// 測定に使用する CPU を固定する。
+/// Pin the CPUs used for the measurement.
 ///
-/// @return 固定できた場合は使用した CPU 番号の文字列。固定しない場合は "unpinned"。
-///         失敗した場合は理由を含む文字列を返し、測定自体は継続する。
+/// @return The string of CPU numbers used when pinning succeeded, or "unpinned"
+///         when no pinning was requested. On failure a string containing the
+///         reason is returned and the measurement continues.
 std::string apply_cpu_affinity(const std::vector<int>& cpu_list) {
     if (cpu_list.empty()) {
         return "unpinned";
@@ -335,13 +349,14 @@ std::string apply_cpu_affinity(const std::vector<int>& cpu_list) {
     return names;
 }
 
-/// ASLR の状態を調べる。
+/// Determine the state of ASLR.
 ///
-/// process 自身の personality と system 設定の両方を見る。setarch -R などで
-/// process 単位に無効化されている場合、system 設定だけでは判別できない。
+/// Looks both at the personality of the process itself and at the system
+/// setting. When it has been disabled per process, for instance with setarch -R,
+/// the system setting alone cannot tell.
 ///
-/// @return "disabled(process)"、"disabled(system)"、"enabled"、
-///         または判別できない場合は空文字列。
+/// @return "disabled(process)", "disabled(system)", "enabled", or an empty
+///         string when it cannot be determined.
 std::string read_address_randomization() {
     const int persona = personality(0xffffffffU);
     if (persona >= 0 && (static_cast<unsigned int>(persona) & ADDR_NO_RANDOMIZE) != 0U) {
@@ -377,12 +392,13 @@ std::string read_os_pretty_name() {
     return std::string();
 }
 
-/// 結果 JSONL の schema 版。key を追加または改名したら上げる。
+/// Schema version of the result JSONL. Raise it whenever a key is added or renamed.
 ///
-/// 3 での変更: measurement 行へ stages を追加した。あわせて CPU 経路の
-/// 測定区間から画像の読み込みと checksum を外した。version 2 以前の
-/// 結果と混ぜると、同じ key が違う区間を指すことになる。
-/// 4 での変更: measurement 行へ startup を追加した。
+/// Change in 3: stages was added to the measurement line, and image loading and
+/// the checksum were taken out of the measured interval of the CPU route. Mixing
+/// these with results from version 2 or earlier would make the same key refer to
+/// a different interval.
+/// Change in 4: startup was added to the measurement line.
 constexpr int kSchemaVersion = 4;
 
 void write_statistics(JsonWriter& writer, const std::string& name, const SampleStatistics& stats) {
@@ -445,11 +461,12 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     }
     environment.os_ = read_os_pretty_name();
     environment.cpu_topology_ = read_cpu_topology();
-    // 測定前に CPU を固定する。以降の測定はこの core 集合で行われる。
+    // Pin the CPUs before measuring. Every measurement below runs on this core set.
     environment.cpu_affinity_ = apply_cpu_affinity(config.cpu_affinity_);
     environment.address_randomization_ = read_address_randomization();
-    // sysconf は失敗時に -1 を返す。core 数として -1 を記録すると
-    // 測定条件の解釈を誤るため、取得できない場合は 0 のままとする。
+    // sysconf returns -1 on failure. Recording -1 as a core count would lead to
+    // a wrong reading of the measurement conditions, so it is left at 0 when it
+    // cannot be obtained.
     const long online_cores = sysconf(_SC_NPROCESSORS_ONLN);
     if (online_cores > 0) {
         environment.cpu_online_cores_ = static_cast<int>(online_cores);
@@ -460,12 +477,14 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     environment.opencv_version_ = detector_environment.opencv_version_;
     environment.opencv_threads_ = detector_environment.opencv_threads_;
 
-    // GPU 情報。device が無い環境でも測定自体は成立するため、失敗を致命的に扱わない。
-    // ただし無言では継続しない。CUDA 側の失敗は記録し、環境情報から
-    // GPU の項目が欠けている理由を後から追えるようにする。
-    // 最初の CUDA 呼び出しで文脈が暗黙に生成される。process ごとに 1 度だけ
-    // 発生し、経路ごとの測定には現れない。単発の検出では検出そのものの
-    // 数百倍になるため、環境情報として記録する。
+    // GPU information. The measurement itself still holds in an environment with
+    // no device, so a failure is not treated as fatal. It is not passed over
+    // silently either: a CUDA-side failure is recorded so that the reason a GPU
+    // item is missing can be traced afterwards from the environment information.
+    // The first CUDA call implicitly creates the context. It happens once per
+    // process and does not show up in the per-route measurements. For a one-shot
+    // detection it is hundreds of times the detection itself, so it is recorded
+    // as environment information.
     int device_count = 0;
     const auto context_start = std::chrono::steady_clock::now();
     const aruco3cuda::Status count_status = aruco3cuda::device_count(&device_count);
@@ -475,22 +494,23 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
                 std::chrono::duration<double, std::milli>(context_finish - context_start).count();
     }
     if (count_status != aruco3cuda::Status::kOk) {
-        environment.gpu_probe_error_ = std::string("device_count が失敗した: ") +
+        environment.gpu_probe_error_ = std::string("device_count failed: ") +
                                        aruco3cuda::to_string(count_status) + " " +
                                        aruco3cuda::last_cuda_error_message();
     } else if (device_count == 0) {
-        environment.gpu_probe_error_ = "CUDA device が 1 つも見つからない";
+        environment.gpu_probe_error_ = "no CUDA device was found";
     }
     if (count_status == aruco3cuda::Status::kOk && device_count > 0) {
         aruco3cuda::DeviceProbeResult probe;
         const aruco3cuda::Status probe_status = aruco3cuda::probe_device(0, &probe);
         if (probe_status != aruco3cuda::Status::kOk) {
-            environment.gpu_probe_error_ = std::string("probe_device が失敗した: ") +
+            environment.gpu_probe_error_ = std::string("probe_device failed: ") +
                                            aruco3cuda::to_string(probe_status) + " " +
                                            aruco3cuda::last_cuda_error_message();
         }
         if (probe_status == aruco3cuda::Status::kOk) {
-            // device 名と性質は CUDA から取得する。nvidia-smi が無い環境でも記録できる。
+            // The device name and properties come from CUDA, so they can be
+            // recorded even in an environment without nvidia-smi.
             environment.gpu_name_ = probe.name_;
             environment.gpu_integrated_ = probe.integrated_;
             environment.gpu_compute_capability_ = std::to_string(probe.compute_capability_major_) +
@@ -501,8 +521,9 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     environment.cuda_toolkit_version_ = read_command_line(
             "nvcc --version 2>/dev/null | sed -n 's/.*release \\([0-9.]*\\).*/\\1/p'");
 
-    // driver version、power mode、clock、L4T release は library から取得できない。
-    // 取得元が機種ごとに異なるため query-platform-info.sh が差を吸収する。
+    // The driver version, the power mode, the clocks and the L4T release cannot
+    // be obtained from a library. Their source differs from machine to machine,
+    // so query-platform-info.sh absorbs the difference.
     const std::map<std::string, std::string> platform_info = read_platform_info();
     environment.driver_version_ = field_or_empty(platform_info, "driver_version");
     environment.platform_release_ = field_or_empty(platform_info, "platform_release");
@@ -517,35 +538,39 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
 
 namespace {
 
-/// 測定の段階。step へ渡し、どの段階の反復かを伝える。
+/// Phase of the measurement. Passed to step to say which phase an iteration
+/// belongs to.
 ///
-/// 経路側が段階ごとの内訳を記録する場合、どの反復を数えるかで分布が変わる。
-/// warm-up と throughput を混ぜると、遅延の分位点と直接比べられなくなる。
+/// When a route records a per-stage breakdown, the distribution depends on which
+/// iterations are counted. Mixing warm-up and throughput in makes it impossible
+/// to compare directly against the latency percentiles.
 enum class Phase : int {
     kWarmup,
     kLatency,
     kThroughput,
 };
 
-/// 1 frame 分の処理を反復し、遅延と throughput を測る。
+/// Repeat the processing of one frame and measure latency and throughput.
 ///
-/// 経路ごとに違うのは 1 frame の中身だけである。warm-up の分離、分位点の
-/// 求め方、throughput の測り方は評価計画が定めた共通の手順であり、経路を
-/// 増やすたびに書き写すと手順がずれる。
+/// Only the contents of a single frame differ from route to route. Separating
+/// warm-up, computing the percentiles and measuring throughput are the common
+/// procedure laid down by the evaluation plan; copying it out again for every
+/// new route would let the procedure drift.
 ///
-/// step は Phase を受け取り 1 frame を処理し、失敗時に out_error を埋めて
-/// false を返すこと。
+/// step takes a Phase, processes one frame, and on failure must fill in
+/// out_error and return false.
 template <typename Step>
 bool measure_iterations(const BenchmarkConfig& config, Step step, MeasurementRecord* record,
                         std::string* out_error) {
-    // warm-up。cache と分岐予測を定常状態へ寄せるため、測定区間から分離する。
+    // Warm-up. Separated from the measured interval so that the caches and the
+    // branch predictors settle into their steady state.
     for (int i = 0; i < config.warmup_iterations_; ++i) {
         if (!step(Phase::kWarmup)) {
             return false;
         }
     }
 
-    // 単一フレーム遅延。1 回ずつ独立に測る。
+    // Single-frame latency. Measured one iteration at a time, independently.
     std::vector<double> samples;
     samples.reserve(static_cast<std::size_t>(config.latency_iterations_));
     for (int i = 0; i < config.latency_iterations_; ++i) {
@@ -557,14 +582,15 @@ bool measure_iterations(const BenchmarkConfig& config, Step step, MeasurementRec
         samples.push_back(std::chrono::duration<double, std::milli>(finish - start).count());
     }
     if (!aruco3cuda::util::compute_statistics(samples, &record->end_to_end_ms_)) {
-        *out_error = "統計を計算できない";
+        *out_error = "cannot compute the statistics";
         return false;
     }
     if (config.save_all_samples_) {
         record->end_to_end_samples_ms_ = samples;
     }
 
-    // throughput。連続処理の総時間から frame/s を求める。遅延とは別に測る。
+    // Throughput. Frames per second derived from the total time of continuous
+    // processing. Measured separately from latency.
     if (config.throughput_frames_ > 0) {
         const auto start = std::chrono::steady_clock::now();
         for (int i = 0; i < config.throughput_frames_; ++i) {
@@ -582,43 +608,47 @@ bool measure_iterations(const BenchmarkConfig& config, Step step, MeasurementRec
     return true;
 }
 
-/// 測定条件の境界を検証する。
+/// Validate the bounds of the measurement conditions.
 ///
-/// 負値は反復 loop を素通りし、標本 0 件のまま「測定した」ことになってしまう。
+/// A negative value slips straight through the iteration loop and would count as
+/// "measured" with zero samples.
 bool validate_iteration_counts(const BenchmarkConfig& config, std::string* out_error) {
     if (config.latency_iterations_ <= 0) {
-        *out_error = "latency_iterations は 1 以上である必要がある: " +
+        *out_error = "latency_iterations must be 1 or more: " +
                      std::to_string(config.latency_iterations_);
         return false;
     }
     if (config.warmup_iterations_ < 0) {
-        *out_error = "warmup_iterations は 0 以上である必要がある: " +
+        *out_error = "warmup_iterations must be 0 or more: " +
                      std::to_string(config.warmup_iterations_);
         return false;
     }
     if (config.throughput_frames_ < 0) {
-        *out_error = "throughput_frames は 0 以上である必要がある: " +
+        *out_error = "throughput_frames must be 0 or more: " +
                      std::to_string(config.throughput_frames_);
         return false;
     }
     return true;
 }
 
-/// CPU 基準経路を測定する。
+/// Measure the CPU baseline route.
 ///
-/// 画像の読み込みと checksum は初期化側へ寄せ、測定区間は検出だけにする。
-/// 読み込みを含めると、合成 corpus の 1280x720 PNG では測定区間の 6 割から
-/// 8 割が PNG の復号になり、検出時間の比較にならない。
+/// Image loading and the checksum are moved into initialization so that the
+/// measured interval covers detection alone. Including the loading would make
+/// PNG decoding 60 to 80 percent of the measured interval for the 1280x720 PNGs
+/// of the synthetic corpus, which is no longer a comparison of detection time.
 bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
                  MeasurementRecord* record, std::string* out_error) {
-    // CPU 経路に memory 種別は無い。受理すると、種別と何の関係も無い測定が
-    // その種別の結果として集計へ並ぶ。
+    // The CPU route has no memory kind. Accepting one would line up, in the
+    // aggregation, a measurement unrelated to that kind as its result.
     if (config.memory_mode_ != MemoryMode::kNotApplicable) {
-        *out_error = std::string("CPU 経路が対応する memory 種別は N/A のみ。指定された種別: ") +
-                     to_string(config.memory_mode_);
+        *out_error =
+                std::string("the CPU route supports only the N/A memory kind; requested: ") +
+                to_string(config.memory_mode_);
         return false;
     }
-    // 起動の費用は 1 度しか現れない。instance を作り直して 1 枚目を測る。
+    // The startup cost appears only once. Rebuild the instance and measure the
+    // first image.
     const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::reference::ReferenceDetector detector;
     if (!detector.initialize(image_path, config.detector_, out_error)) {
@@ -647,24 +677,24 @@ bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
             config, [&](Phase) { return detector.detect(&result, out_error); }, record, out_error);
 }
 
-/// hybrid 経路を測定する。
+/// Measure the hybrid route.
 ///
-/// memory 種別で測定区間が変わる。kDevice は画像が既に device にある想定で
-/// 転送を測定区間の外へ置き、kHostPageable は host 入力を毎 frame 転送する。
-/// 前者は camera から GPU へ直接入る構成の上限、後者は CPU 経路と同じく
-/// host の画像から始める場合の値である。
+/// The measured interval depends on the memory kind. kDevice assumes the image
+/// is already on the device and places the transfer outside the interval, while
+/// kHostPageable transfers the host input every frame. The former is the upper
+/// bound for a configuration where the camera feeds the GPU directly; the latter
+/// is the value for starting from a host image, as the CPU route does.
 bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config,
                     MeasurementRecord* record, std::string* out_error) {
     if (config.memory_mode_ != MemoryMode::kDevice &&
         config.memory_mode_ != MemoryMode::kHostPageable) {
-        *out_error = std::string(
-                             "hybrid 経路が対応する memory 種別は M-Device と M-Pageable。"
-                             "指定された種別: ") +
+        *out_error = std::string("the hybrid route supports only the M-Device and M-Pageable "
+                                 "memory kinds; requested: ") +
                      to_string(config.memory_mode_);
         return false;
     }
 
-    // 画像の読み込みと checksum は測定区間の外で 1 度だけ行う。
+    // Image loading and the checksum happen once, outside the measured interval.
     aruco3cuda::reference::ReferenceDetector loader;
     if (!loader.initialize(image_path, config.detector_, out_error)) {
         return false;
@@ -672,7 +702,7 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     const aruco3cuda::reference::ReferenceResult& metadata = loader.metadata();
     const cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
     if (image.empty()) {
-        *out_error = "画像を読み込めない: " + image_path;
+        *out_error = "cannot load image: " + image_path;
         return false;
     }
 
@@ -682,8 +712,8 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     record->height_px_ = image.rows;
     record->fxfy_effective_ = metadata.fxfy_effective_;
 
-    // 起動の費用を測る。CUDA の文脈生成は最初の CUDA 呼び出しで起きるため、
-    // device buffer の確保からを準備とみなす。
+    // Measure the startup cost. CUDA context creation happens on the first CUDA
+    // call, so preparation is counted from the device buffer allocation onward.
     const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::hybrid::DeviceImage device;
     std::string message;
@@ -704,7 +734,7 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     aruco3cuda::hybrid::HybridDetector detector;
     if (detector.initialize(config.cuda_detector_, config.detector_.dictionary_name_, image.cols,
                             image.rows, &message) != aruco3cuda::Status::kOk) {
-        *out_error = "hybrid 検出器を初期化できない: " + message;
+        *out_error = "cannot initialize the hybrid detector: " + message;
         return false;
     }
 
@@ -722,11 +752,12 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
         }
         const aruco3cuda::Status status = detector.detect(device.view(), &result, &message);
         if (status != aruco3cuda::Status::kOk) {
-            *out_error = "hybrid 検出に失敗した: " + message;
+            *out_error = "hybrid detection failed: " + message;
             return false;
         }
-        // 段階の内訳は遅延測定の反復だけから求める。warm-up と throughput を
-        // 混ぜると、end_to_end の分位点と直接比べられる保証が無くなる。
+        // The per-stage breakdown comes only from the latency iterations. Mixing
+        // warm-up and throughput in would remove the guarantee that it can be
+        // compared directly against the end_to_end percentiles.
         if (phase == Phase::kLatency) {
             gpu_samples.push_back(result.gpu_ms_);
             cpu_samples.push_back(result.cpu_ms_);
@@ -754,7 +785,7 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
     return true;
 }
 
-/// page-locked な入力 buffer を必ず解放する。
+/// Always release the page-locked input buffer.
 struct PinnedSource {
     void* data_ = nullptr;
     PinnedSource() = default;
@@ -767,7 +798,7 @@ struct PinnedSource {
     }
 };
 
-/// stream を必ず破棄する。早期 return が多いため RAII にする。
+/// Always destroy the stream. There are many early returns, so RAII is used.
 struct StreamGuard {
     cudaStream_t stream_;
     StreamGuard(const StreamGuard&) = delete;
@@ -779,38 +810,38 @@ struct StreamGuard {
     }
 };
 
-/// 完全 GPU 経路を測る。
+/// Measure the full GPU routes.
 ///
-/// 測定区間は経路で変える。
+/// The measured interval depends on the route.
 ///
-/// | 経路 | 測定区間 |
+/// | Route | Measured interval |
 /// | --- | --- |
-/// | kCudaResident | detect_async の発行と stream の同期 |
-/// | kCudaEndToEnd | host からの転送、発行、同期、結果の取り出し |
+/// | kCudaResident | Issuing detect_async and synchronizing the stream |
+/// | kCudaEndToEnd | Transfer from the host, issuing, synchronizing, retrieving the results |
 ///
-/// **どちらの区間にも stream の同期を含める。** detect_async は kernel を
-/// 発行するだけで戻るため、同期を含めないと発行の費用しか測らない。
+/// **Both intervals include the stream synchronization.** detect_async only
+/// issues kernels and returns, so without the synchronization only the cost of
+/// issuing would be measured.
 bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
                   MeasurementRecord* record, std::string* out_error) {
     const bool resident = config.route_ == Route::kCudaResident;
     if (resident && config.memory_mode_ != MemoryMode::kDevice) {
-        *out_error = std::string(
-                             "CUDA-Resident 経路が対応する memory 種別は M-Device。"
-                             "指定された種別: ") +
-                     to_string(config.memory_mode_);
+        *out_error =
+                std::string("the CUDA-Resident route supports only the M-Device memory kind; "
+                            "requested: ") +
+                to_string(config.memory_mode_);
         return false;
     }
     if (!resident && config.memory_mode_ != MemoryMode::kHostPageable &&
         config.memory_mode_ != MemoryMode::kHostPinned &&
         config.memory_mode_ != MemoryMode::kManaged) {
-        *out_error = std::string(
-                             "CUDA-EndToEnd 経路が対応する memory 種別は M-Pageable、"
-                             "M-Pinned、M-Managed。指定された種別: ") +
+        *out_error = std::string("the CUDA-EndToEnd route supports only the M-Pageable, "
+                                 "M-Pinned, and M-Managed memory kinds; requested: ") +
                      to_string(config.memory_mode_);
         return false;
     }
 
-    // 画像の読み込みと checksum は測定区間の外で 1 度だけ行う。
+    // Image loading and the checksum happen once, outside the measured interval.
     aruco3cuda::reference::ReferenceDetector loader;
     if (!loader.initialize(image_path, config.detector_, out_error)) {
         return false;
@@ -818,7 +849,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     const aruco3cuda::reference::ReferenceResult& metadata = loader.metadata();
     const cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
     if (image.empty()) {
-        *out_error = "画像を読み込めない: " + image_path;
+        *out_error = "cannot load image: " + image_path;
         return false;
     }
 
@@ -831,23 +862,23 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     const aruco3cuda::DictionaryTable* table =
             aruco3cuda::find_builtin_dictionary(config.detector_.dictionary_name_.c_str());
     if (table == nullptr) {
-        *out_error = "未対応の Dictionary: " + config.detector_.dictionary_name_;
+        *out_error = "unsupported Dictionary: " + config.detector_.dictionary_name_;
         return false;
     }
 
-    // 確保量は画像に合わせる。既定の 3840x2160 のままだと、小さい画像でも
-    // 4K 相当の workspace を抱えたまま測ることになる。
+    // Size the allocation to the image. Leaving the default 3840x2160 in place
+    // would measure even a small image while holding a 4K-sized workspace.
     aruco3cuda::DetectorConfig detector_config = config.cuda_detector_;
     detector_config.max_width_px_ = image.cols;
     detector_config.max_height_px_ = image.rows;
 
-    // 起動の費用を測る。CUDA の文脈生成は最初の CUDA 呼び出しで起きるため、
-    // device buffer の確保からを準備とみなす。
+    // Measure the startup cost. CUDA context creation happens on the first CUDA
+    // call, so preparation is counted from the device buffer allocation onward.
     const auto setup_start = std::chrono::steady_clock::now();
     aruco3cuda::hybrid::DeviceImage device;
     std::string message;
-    // 入力 buffer の memory 種別が測定の軸である。種別ごとに確保のしかたと
-    // 転送の意味が変わる。
+    // The memory kind of the input buffer is a measurement axis. Both how it is
+    // allocated and what a transfer means change with the kind.
     const aruco3cuda::MemorySpace space = (config.memory_mode_ == MemoryMode::kManaged)
                                                   ? aruco3cuda::MemorySpace::kManaged
                                                   : aruco3cuda::MemorySpace::kDevice;
@@ -856,10 +887,10 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
         return false;
     }
 
-    // M-Pinned は「入力 buffer が page-locked である」場合を測る。cv::Mat の
-    // buffer は pageable なので、page-locked な領域へ**測定区間の外で 1 度
-    // だけ**写す。毎 frame 写すと、種別の差ではなく写しの費用を測ることに
-    // なる。
+    // M-Pinned measures the case where the input buffer is page-locked. The
+    // buffer of a cv::Mat is pageable, so it is copied into a page-locked region
+    // **once, outside the measured interval**. Copying it every frame would
+    // measure the cost of the copy rather than the difference between kinds.
     PinnedSource pinned;
     const std::uint8_t* source = image.data;
     auto source_pitch = static_cast<std::size_t>(image.step);
@@ -867,7 +898,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
         const auto bytes =
                 static_cast<std::size_t>(image.cols) * static_cast<std::size_t>(image.rows);
         if (cudaMallocHost(&pinned.data_, bytes) != cudaSuccess) {
-            *out_error = "page-locked な入力 buffer を確保できない";
+            *out_error = "cannot allocate a page-locked input buffer";
             return false;
         }
         for (int row = 0; row < image.rows; ++row) {
@@ -893,19 +924,20 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
 
     aruco3cuda::Detector detector;
     if (detector.initialize(*table, detector_config, &message) != aruco3cuda::Status::kOk) {
-        *out_error = "CUDA 検出器を初期化できない: " + message;
+        *out_error = "cannot initialize the CUDA detector: " + message;
         return false;
     }
 
-    // 明示的な stream を渡す。既定 stream は CUDA が捕獲を許さないため、
-    // 発行列を CUDA Graph へ畳む経路に入らない。実運用では専用の stream を
-    // 使うのが自然であり、測定もその形に合わせる。
+    // Pass an explicit stream. CUDA does not allow the default stream to be
+    // captured, so it cannot take the path that folds the issue sequence into a
+    // CUDA Graph. A dedicated stream is the natural choice in production, and the
+    // measurement follows that shape.
     cudaStream_t stream = nullptr;
     if (cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) != cudaSuccess) {
-        *out_error = "stream を作れない";
+        *out_error = "cannot create the stream";
         return false;
     }
-    // 早期 return でも必ず破棄する。
+    // Destroyed on every path, including an early return.
     const StreamGuard guard{stream};
 
     aruco3cuda::HostDetections detections;
@@ -917,25 +949,27 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
         }
         const aruco3cuda::Status status = detector.detect_async(device.view(), stream, &message);
         if (status != aruco3cuda::Status::kOk) {
-            *out_error = "CUDA 検出に失敗した: " + message;
+            *out_error = "CUDA detection failed: " + message;
             return false;
         }
         if (resident) {
-            // device 常駐なので結果を host へ戻さない。ただし stream の同期は
-            // 区間に含める。含めないと発行の費用しか測らない。
+            // Device resident, so the results are not brought back to the host.
+            // The stream synchronization is still part of the interval; without
+            // it only the cost of issuing would be measured.
             const cudaError_t synchronized = cudaStreamSynchronize(stream);
             if (synchronized != cudaSuccess) {
                 *out_error =
-                        std::string("stream を同期できない: ") + cudaGetErrorString(synchronized);
+                        std::string("cannot synchronize the stream: ") +
+                        cudaGetErrorString(synchronized);
                 return false;
             }
             return true;
         }
-        // download が stream を同期する。
+        // download synchronizes the stream.
         const aruco3cuda::Status downloaded = detector.download(&detections, stream, &message);
         if (downloaded != aruco3cuda::Status::kOk &&
             downloaded != aruco3cuda::Status::kMarkerOverflow) {
-            *out_error = "結果を取り出せない: " + message;
+            *out_error = "cannot retrieve the results: " + message;
             return false;
         }
         return true;
@@ -951,10 +985,11 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     record->time_to_first_result_ms_ =
             std::chrono::duration<double, std::milli>(first_finish - setup_start).count();
 
-    // 検出数は測定区間の外で 1 度だけ読む。device 常駐の経路でも記録は要る。
+    // The detection count is read once, outside the measured interval. It is
+    // needed even on the device-resident route.
     const aruco3cuda::Status counted = detector.download(&detections, stream, &message);
     if (counted != aruco3cuda::Status::kOk && counted != aruco3cuda::Status::kMarkerOverflow) {
-        *out_error = "検出数を読めない: " + message;
+        *out_error = "cannot read the detection count: " + message;
         return false;
     }
     record->detection_count_ = detections.ids_.size();
@@ -987,11 +1022,12 @@ aruco3cuda::DetectorConfig cuda_config_from_reference(
     result.use_aruco3_detection_ = config.use_aruco3_detection_;
     result.min_side_length_canonical_img_px_ = config.min_side_length_canonical_img_px_;
     result.min_marker_length_ratio_original_img_ = config.min_marker_length_ratio_original_img_;
-    // OpenCV は ArUco3 が有効なとき cornerRefinementMethod を SUBPIX へ
-    // 無条件に上書きする (aruco_detector.cpp の detectMarkers 冒頭)。縮小した
-    // 画像で検出した四隅を段を登って原寸へ戻す必要があるためである。
-    // したがって ArUco3 有効時は use_corner_subpix_refinement_ の指定に
-    // 関わらず CPU 基準も補正しており、写す側もそれに合わせる。
+    // When ArUco3 is enabled, OpenCV unconditionally overwrites
+    // cornerRefinementMethod with SUBPIX (at the top of detectMarkers in
+    // aruco_detector.cpp), because the corners detected on the downscaled image
+    // have to be walked back up the pyramid to full resolution. The CPU baseline
+    // therefore refines regardless of use_corner_subpix_refinement_ when ArUco3
+    // is enabled, and the copy follows suit.
     result.corner_refine_method_ =
             (config.use_aruco3_detection_ || config.use_corner_subpix_refinement_)
                     ? aruco3cuda::CornerRefineMethod::kSubpix
@@ -1000,8 +1036,9 @@ aruco3cuda::DetectorConfig cuda_config_from_reference(
     result.relative_corner_refinement_win_size_ = config.relative_corner_refinement_win_size_;
     result.corner_refinement_max_iterations_ = config.corner_refinement_max_iterations_;
     result.corner_refinement_min_accuracy_px_ = config.corner_refinement_min_accuracy_px_;
-    // 確保量に関わる項目は写さない。画像の寸法に合わせるのは呼出側の責務で
-    // あり、ここで既定 (3840x2160) を残すと測定条件が実際と食い違う。
+    // The items that govern the allocation size are not copied. Sizing them to
+    // the image is the caller's responsibility; leaving the default (3840x2160)
+    // here would make the recorded measurement conditions disagree with reality.
     return result;
 }
 
@@ -1028,8 +1065,9 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
             ok = measure_cuda(image_path, config, &record, out_error);
             break;
         default:
-            // 未知の経路を CPU で代替すると、測定結果が経路名と食い違う。
-            *out_error = std::string("経路 ") + to_string(config.route_) + " は未実装";
+            // Substituting CPU for an unknown route would make the measurement
+            // disagree with the route name.
+            *out_error = std::string("route ") + to_string(config.route_) + " is unimplemented";
             return false;
     }
     if (!ok) {
@@ -1043,8 +1081,9 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     JsonWriter writer(out, 0);
     writer.begin_object();
     writer.member_string("type", "environment");
-    // version 2: cpu_topology、cpu_affinity、address_randomization、
-    // gpu clock、platform 情報を追加した。測定条件の再現に必要なため。
+    // version 2: added cpu_topology, cpu_affinity, address_randomization, the
+    // GPU clocks and the platform information, all needed to reproduce the
+    // measurement conditions.
     writer.member_int("schema_version", kSchemaVersion);
     writer.member_string("hostname", environment.hostname_);
     writer.member_string("os", environment.os_);
@@ -1065,10 +1104,10 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     writer.member_string("platform_release", environment.platform_release_);
     writer.member_string("platform_model", environment.platform_model_);
     writer.member_string("power_mode", environment.power_mode_);
-    // GPU 情報が欠けている場合の理由。空なら取得に成功している。
+    // Reason a GPU item is missing. Empty when it was obtained successfully.
     writer.member_string("gpu_probe_error", environment.gpu_probe_error_);
-    // clock は測定条件に直結する。取得できない場合に 0 を書くと
-    // 「clock が 0」と誤読されるため null とする。
+    // The clocks bear directly on the measurement conditions. Writing 0 when they
+    // cannot be obtained would be misread as "the clock is 0", so null is used.
     writer.key("gpu_max_clock_mhz");
     if (environment.gpu_clock_available_) {
         writer.value_int(environment.gpu_max_clock_mhz_);
@@ -1124,18 +1163,20 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
         writer.member_double("p99_ms", record.kernel_ms_.p99_, 4);
         writer.end_object();
     } else {
-        // CPU 経路には kernel 時間が存在しない。0 で埋めず未測定を明示する。
+        // The CPU route has no kernel time. It is not filled with 0; "unmeasured"
+        // is stated explicitly.
         writer.value_null();
     }
 
-    // 起動の費用。warm-up 後の分位点には現れないため、別に記録する。
+    // Startup cost. It does not appear in the percentiles after warm-up, so it is
+    // recorded separately.
     writer.key("startup");
     writer.begin_object();
     writer.member_double("time_to_first_result_ms", record.time_to_first_result_ms_, 4);
     writer.member_double("first_frame_ms", record.first_frame_ms_, 4);
     writer.end_object();
 
-    // 段階時間。CPU 経路には存在しないため未測定を明示する。
+    // Stage times. The CPU route has none, so "unmeasured" is stated explicitly.
     writer.key("stages");
     if (record.stage_times_available_) {
         writer.begin_object();

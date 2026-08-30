@@ -14,43 +14,45 @@
 
 namespace aruco3cuda::detail {
 
-/// pyramid の段数の上限。
+/// Upper bound on the number of pyramid levels.
 ///
-/// 段数は log2 で決まるため、65536x65536 の入力でも 16 段に収まる。
-/// 固定長にすることで、段ごとの動的確保を避ける。
+/// The level count is determined by log2, so even a 65536x65536 input fits
+/// within 16 levels. A fixed-length bound avoids a dynamic allocation per level.
 inline constexpr int kMaxPyramidLevels = 24;
 
-/// ArUco3 の縮小に関する計画。
+/// Plan for the ArUco3 downscaling.
 ///
-/// [検出パイプライン設計](../../docs/design/detector-pipeline.md) に記録した
-/// OpenCV 4.x の観測仕様をそのまま実装する。
+/// Implements the observed OpenCV 4.x behavior exactly as recorded in
+/// [the detection pipeline design](../../docs/design/detector-pipeline.md).
 ///
-/// 所有権: 値のみを持ち、外部の資源を参照しない。複製して保持してよい。
-/// 同期動作: 単なる値の集合であり同期点を持たない。
+/// Ownership: holds values only and references no external resource. It may be
+///            copied and retained freely.
+/// Synchronization: a plain set of values, so it carries no synchronization point.
 ///
-/// 入力例: 既定設定で 1280x720 を plan_scales() へ渡す
-/// 出力例: fxfy_ = 0.3333、segmentation 427x240、level_count_ = 5
+/// Example input: pass 1280x720 to plan_scales() with the default configuration
+/// Example output: fxfy_ = 0.3333, segmentation 427x240, level_count_ = 5
 struct ScalePlan {
-    /// 縮小率。ArUco3 が無効なら 1。
+    /// Downscaling ratio. 1 when ArUco3 is disabled.
     double fxfy_ = 1.0;
     int segmentation_width_px_ = 0;
     int segmentation_height_px_ = 0;
-    /// level 0 を含む pyramid の総段数。
+    /// Total number of pyramid levels, including level 0.
     int level_count_ = 1;
-    /// 四隅の upsampling を開始する level。
+    /// Level at which corner upsampling starts.
     int closest_level_index_ = 0;
 };
 
-/// workspace 上の 8-bit 画像面。
+/// An 8-bit image plane held in the workspace.
 ///
-/// 所有権: data_ が指す領域の所有権は workspace にある。この構造体は
-///         参照のみを持ち、複製も解放も行わない。workspace が reset() または
-///         破棄されると data_ は無効になる。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。data_ が指す内容は
-///           発行済みの kernel が完了するまで確定しない。
+/// Ownership: the region data_ points at is owned by the workspace. This struct
+///            holds a reference only; it neither copies nor frees. data_ becomes
+///            invalid once the workspace is reset() or destroyed.
+/// Synchronization: a plain set of references, so it carries no synchronization
+///                  point. The contents data_ points at are not settled until the
+///                  already-issued kernels complete.
 ///
-/// 入力例: reserve_preprocess() が切り出した level 1 の面
-/// 出力例: width_px_ = 640、height_px_ = 360、pitch_bytes_ = 640
+/// Example input: the level 1 plane carved out by reserve_preprocess()
+/// Example output: width_px_ = 640, height_px_ = 360, pitch_bytes_ = 640
 struct ImagePlaneU8 {
     std::uint8_t* data_ = nullptr;
     int width_px_ = 0;
@@ -58,19 +60,21 @@ struct ImagePlaneU8 {
     std::size_t pitch_bytes_ = 0;
 };
 
-/// pyramid の各 level を kernel へ渡すための参照。
+/// Reference used to hand each pyramid level to a kernel.
 ///
-/// level ごとに pitch が異なるため、一律に扱ってはならない。level 0 は
-/// 呼出側の入力画像を指し、pitch も呼出側のものである。
+/// The pitch differs per level, so the levels must not be treated uniformly.
+/// Level 0 points at the caller's input image, and its pitch is the caller's too.
 ///
-/// 値渡しできる POD にしてある。kernel の引数へそのまま置ける。
+/// Kept a POD that can be passed by value, so it can sit directly in a kernel
+/// argument list.
 ///
-/// 所有権: data_ が指す領域の所有権は呼出側と workspace にある。この構造体は
-///         参照のみを持ち、複製も解放も行わない。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: the regions data_ points at are owned by the caller and by the
+///            workspace. This struct holds references only; it neither copies nor
+///            frees.
+/// Synchronization: a plain set of references, so it carries no synchronization point.
 ///
-/// 入力例: 1280x720 に対する PreprocessBuffers
-/// 出力例: level_count_ = 5、width_[0] = 1280、width_[1] = 640
+/// Example input: the PreprocessBuffers for a 1280x720 image
+/// Example output: level_count_ = 5, width_[0] = 1280, width_[1] = 640
 struct PyramidRef {
     const std::uint8_t* data_[kMaxPyramidLevels] = {};
     int width_[kMaxPyramidLevels] = {};
@@ -79,139 +83,154 @@ struct PyramidRef {
     int level_count_ = 0;
 };
 
-/// 前処理が使用する buffer 一式。
+/// The full set of buffers used by preprocessing.
 ///
-/// level 0 は入力そのものを指し、複製しない。複製は 1 フレームあたり
-/// W*H byte の転送になり、統合 GPU でも無視できない。
+/// Level 0 points at the input itself and is not copied. A copy would cost a
+/// W*H byte transfer per frame, which is not negligible even on an integrated GPU.
 ///
-/// 所有権: level0_ が指す領域の所有権は呼出側にあり、levels_ と
-///         segmentation_ が指す領域の所有権は workspace にある。この構造体は
-///         いずれについても参照のみを持ち、解放しない。workspace を reset()
-///         または破棄すると levels_ と segmentation_ は無効になる。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: the region level0_ points at is owned by the caller, and the regions
+///            levels_ and segmentation_ point at are owned by the workspace. This
+///            struct holds references only to both and frees neither. levels_ and
+///            segmentation_ become invalid once the workspace is reset() or destroyed.
+/// Synchronization: a plain set of references, so it carries no synchronization point.
 ///
-/// 入力例: 1280x720 の入力に対する reserve_preprocess() の出力
-/// 出力例: level_count_ = 5、segmentation_ が 427x240
+/// Example input: the output of reserve_preprocess() for a 1280x720 input
+/// Example output: level_count_ = 5, segmentation_ at 427x240
 struct PreprocessBuffers {
     ImageViewU8 level0_;
-    /// level 1 以降。index 0 が level 1 に対応する。
+    /// Level 1 and above. Index 0 corresponds to level 1.
     ImagePlaneU8 levels_[kMaxPyramidLevels];
     int level_count_ = 1;
     ImagePlaneU8 segmentation_;
 };
 
-/// 縮小率と pyramid 段数を求める。
+/// Computes the downscaling ratio and the pyramid level count.
 ///
-/// @param config 検出設定。use_aruco3_detection_ が false なら fxfy は 1 になる。
-/// @param width_px 入力の幅。1 以上。
-/// @param height_px 入力の高さ。1 以上。
-/// @param out 成功時に計画を格納する。失敗時は変更しない。nullptr は不可。
-/// @return kOk、または kInvalidArgument。
+/// @param config Detection configuration. fxfy becomes 1 when
+///               use_aruco3_detection_ is false.
+/// @param width_px Input width. At least 1.
+/// @param height_px Input height. At least 1.
+/// @param out Receives the plan on success; left unchanged on failure. Must not
+///            be nullptr.
+/// @return kOk, or kInvalidArgument.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: retains none of the regions passed as arguments.
+/// Synchronization: host only, so it carries no synchronization point. It calls
+///                  no CUDA API.
 ///
-/// 入力例: 既定設定、1280x720
-/// 出力例: fxfy_ = 0.3333、segmentation 427x240
+/// Example input: default configuration, 1280x720
+/// Example output: fxfy_ = 0.3333, segmentation 427x240
 Status plan_scales(const DetectorConfig& config, int width_px, int height_px, ScalePlan* out);
 
-/// 計画に必要な workspace の容量を返す。
+/// Returns the workspace capacity the plan requires.
 ///
-/// @param plan 縮小計画。
-/// @param width_px 入力の幅。
-/// @param height_px 入力の高さ。
-/// @return 必要な byte 数。桁溢れする場合は 0 を返す。
+/// @param plan Downscaling plan.
+/// @param width_px Input width.
+/// @param height_px Input height.
+/// @return Required byte count. Returns 0 on overflow.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 1280x720 の既定計画
-/// 出力例: pyramid と segmentation を収める byte 数
+/// Example input: the default plan for 1280x720
+/// Example output: the byte count that holds the pyramid and the segmentation image
 std::size_t preprocess_workspace_bytes(const ScalePlan& plan, int width_px, int height_px);
 
-/// workspace から前処理用の領域を切り出す。
+/// Carves the preprocessing regions out of the workspace.
 ///
-/// @param plan 縮小計画。
-/// @param input 入力画像。level 0 として参照する。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer 一式を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param plan Downscaling plan.
+/// @param input Input image. Referenced as level 0.
+/// @param workspace Source of the carve-out. Owned by the caller.
+/// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument when an argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。out は参照のみを持つ。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: the carved-out regions stay owned by the workspace. out holds
+///            references only.
+/// Synchronization: host only, so it carries no synchronization point. It calls
+///                  no CUDA API.
 ///
-/// 入力例: 1280x720 の入力と十分な容量の workspace
-/// 出力例: levels_ と segmentation_ に workspace 内の pointer が入る
+/// Example input: a 1280x720 input and a workspace with sufficient capacity
+/// Example output: levels_ and segmentation_ receive pointers into the workspace
 Status reserve_preprocess(const ScalePlan& plan, const ImageViewU8& input, Workspace& workspace,
                           PreprocessBuffers* out);
 
-/// 画像 pyramid を構築する。
+/// Builds the image pyramid.
 ///
-/// level 0 は入力を参照するため書き込まない。level 1 以降を順に生成する。
-/// OpenCV の `pyrDown` と同じ [1,4,6,4,1] の分離型 kernel、境界は
-/// BORDER_REFLECT_101、丸めは (sum + 128) >> 8 とする。
+/// Level 0 references the input, so it is never written. Levels 1 and above are
+/// generated in order. Uses the same separable [1,4,6,4,1] kernel as OpenCV
+/// `pyrDown`, with BORDER_REFLECT_101 at the borders and (sum + 128) >> 8 rounding.
 ///
-/// @param buffers reserve_preprocess が返した buffer 一式。nullptr は不可。
-/// @param config 検出設定。block 寸法に使用する。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param buffers The set of buffers returned by reserve_preprocess. Must not be
+///                nullptr.
+/// @param config Detection configuration. Used for the block dimensions.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: buffers が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
-///           結果が必要な時点で呼出側が同期する。
+/// Ownership: the regions buffers points at stay owned by the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization. The caller synchronizes at the point where
+///                  it needs the results.
 ///
-/// 入力例: level_count_ = 4 の buffers
-/// 出力例: levels_[0] から levels_[2] が生成される
+/// Example input: buffers with level_count_ = 4
+/// Example output: levels_[0] through levels_[2] are generated
 Status build_pyramid_async(PreprocessBuffers* buffers, const DetectorConfig& config,
                            cudaStream_t stream);
 
-/// segmentation 画像を生成する。
+/// Builds the segmentation image.
 ///
-/// 候補抽出はこの画像だけで行う。縮小率が 1 の場合も、以降の段階が
-/// 同じ buffer を参照できるよう複製する。
+/// Candidate extraction runs on this image alone. Even when the downscaling ratio
+/// is 1 the image is copied, so that the later stages can reference the same buffer.
 ///
-/// @param plan 縮小計画。
-/// @param buffers reserve_preprocess が返した buffer 一式。nullptr は不可。
-/// @param config 検出設定。block 寸法に使用する。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param plan Downscaling plan.
+/// @param buffers The set of buffers returned by reserve_preprocess. Must not be
+///                nullptr.
+/// @param config Detection configuration. Used for the block dimensions.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: buffers が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
+/// Ownership: the regions buffers points at stay owned by the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization.
 ///
-/// 入力例: fxfy_ = 0.3333 の計画と 1280x720 の入力
-/// 出力例: segmentation_ が 427x240 で埋まる
+/// Example input: a plan with fxfy_ = 0.3333 and a 1280x720 input
+/// Example output: segmentation_ is filled at 427x240
 Status build_segmentation_async(const ScalePlan& plan, PreprocessBuffers* buffers,
                                 const DetectorConfig& config, cudaStream_t stream);
 
-/// 指定 level を読み取り用の view として返す。
+/// Returns the requested level as a read-only view.
 ///
-/// @param buffers buffer 一式。
-/// @param level 0 以上 level_count_ 未満。範囲外では data_ が nullptr の view を返す。
-/// @return level に対応する view。所有権は移らない。
+/// @param buffers The set of buffers.
+/// @param level At least 0 and below level_count_. Out of range, a view whose
+///              data_ is nullptr is returned.
+/// @return The view for that level. Ownership does not transfer.
 ///
-/// 所有権: 参照のみを返す。呼出側は解放しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: returns a reference only. The caller does not free it.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: level = 0
-/// 出力例: 入力そのものを指す view
+/// Example input: level = 0
+/// Example output: a view pointing at the input itself
 ImageViewU8 level_view(const PreprocessBuffers& buffers, int level);
 
-/// PreprocessBuffers から kernel へ渡す参照を組み立てる。
+/// Assembles the reference handed to kernels from a PreprocessBuffers.
 ///
-/// 段ごとに level_view() を呼んで詰め直すだけである。同じ組み立てを段を
-/// 使う kernel ごとに書くと、level 0 が入力そのものを指すという約束が
-/// 散らばるため、1 箇所にまとめる。
+/// It merely calls level_view() per level and repacks the results. Writing the
+/// same assembly in every kernel that uses the levels would scatter the contract
+/// that level 0 points at the input itself, so it is collected in one place.
 ///
-/// @param buffers 前処理の buffer 一式。
-/// @param out 成功時に参照を格納する。領域の所有権は呼出側にある。
-/// @return kOk。out が nullptr、または段数が範囲外なら kInvalidArgument。
+/// @param buffers The preprocessing set of buffers.
+/// @param out Receives the reference on success. The region stays owned by the
+///            caller.
+/// @return kOk. kInvalidArgument when out is nullptr or the level count is out of
+///         range.
 ///
-/// 所有権: buffers が指す領域を保持しない。out は参照だけを持つ。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: retains none of the regions buffers points at. out holds references
+///            only.
+/// Synchronization: host only, so it carries no synchronization point. It calls
+///                  no CUDA API.
 ///
-/// 入力例: level_count_ = 5 の PreprocessBuffers
-/// 出力例: kOk。out->level_count_ = 5
+/// Example input: a PreprocessBuffers with level_count_ = 5
+/// Example output: kOk. out->level_count_ = 5
 Status make_pyramid_ref(const PreprocessBuffers& buffers, PyramidRef* out);
 
 }  // namespace aruco3cuda::detail

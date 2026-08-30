@@ -1,72 +1,72 @@
-# 正確性評価 (accuracy)
+# Accuracy evaluation (accuracy)
 
-## 目的
+## Purpose
 
-合成 corpus の ground truth に対して検出結果を突き合わせ、precision、recall、
-ID と rotation の一致率、四隅の RMSE を求めます。
+Matches detection results against the ground truth of the synthetic corpus and computes precision, recall,
+the agreement rate of ID and rotation, and the RMSE of the corners.
 
-[差分レポート](../report/report_diff.hpp) は CPU 基準実装を基準に据えます。
-基準実装は互換性の oracle であって ground truth ではありません。基準自身が
-取りこぼしたマーカーは差異として現れないため、差分が 0 でも「検出できていない」
-ことがあります。真値と突き合わせる経路を別に持ちます。
+The [diff report](../report/report_diff.hpp) takes the CPU baseline implementation as its reference.
+The baseline implementation is an oracle for compatibility, not ground truth. A marker that the baseline
+itself misses does not show up as a difference, so even with zero differences there can still be markers
+that are not being detected. A separate path that matches against ground truth is kept.
 
-## 対象範囲
+## Scope
 
-`compare_to_truth` による 1 枚分の突き合わせと、`accumulate` による集計、
-`precision` / `recall` / `corner_rmse_px` による指標の算出を対象とします。
-corpus の生成、経路の実行、条件別の分類は CLI (`main.cpp`) の責務です。
+Covers matching one image with `compare_to_truth`, aggregation with `accumulate`,
+and computation of the metrics by `precision` / `recall` / `corner_rmse_px`.
+Generating the corpus, running the routes, and classifying by condition are the responsibility of the CLI (`main.cpp`).
 
-## 現状
+## Current state
 
-次を実装しています。
+The following are implemented.
 
-- 重心の近さによる真値と検出の対応付け
-- true positive、false positive、false negative の計数
-- 四隅の並びの一致 (rotation) の計数
-- 四隅の RMSE と最大値
+- Matching ground truth to detections by proximity of the centroid
+- Counting of true positives, false positives, and false negatives
+- Counting of agreement in the corner ordering (rotation)
+- RMSE and maximum of the corners
 
-## 実装上の判断
+## Design decisions
 
-### 対応付けは ID ではなく位置で行う
+### Matching is done by position, not by ID
 
-ID で対応を取ると、ID を読み違えた場合に「未検出」と「過検出」が 1 件ずつ
-立ちます。同じマーカーの ID を誤ったのか、別の場所で誤検出したのかが
-区別できません。重心の近さで対応を取り、対応が付いたうえで ID が違う場合を
-「ID を誤った」として扱います。
+Matching by ID produces one missed detection and one extra detection
+when an ID is misread. Whether the ID of the same marker was misread, or something was falsely detected
+at a different location, cannot be distinguished. Matching is done by proximity of the centroid, and a case where a match is
+established but the ID differs is treated as "the ID was misread".
 
-ID を誤った 1 件は false positive と false negative の両方へ数えます。片方
-だけに数えると、precision と recall の一方がその誤りを見落とします。
+A single misread ID is counted toward both the false positives and the false negatives. Counting it on only
+one side would make either precision or recall overlook that error.
 
-### 対応付けの半径は辺長比で決める
+### The matching radius is determined by side ratio
 
-絶対値で決めると、640x480 の 16 pixel マーカーと 3840x2160 の 256 pixel
-マーカーで妥当な距離が変わります。真値の 1 辺に対する比で指定します。
+An absolute value would make the appropriate distance differ between a 16 pixel marker at 640x480 and a 256 pixel
+marker at 3840x2160. It is specified as a ratio relative to one side of the ground truth.
 
-### precision と recall は定義できない場合を区別する
+### Precision and recall distinguish the case where they cannot be defined
 
-検出が 1 件も無いとき precision は定義できません。0 除算を 1.0 とみなすと
-「検出しないほど precision が高い」ことになり、判断を誤らせます。真値が
-1 件も無い場合の recall も同様です。corpus にはマーカー 0 個の場面が
-含まれるため、これは実際に起こります。戻り値の `bool` で区別します。
+When there is not a single detection, precision cannot be defined. Treating division by zero as 1.0 would mean
+"the less you detect, the higher the precision", which misleads judgment. The same applies to recall when there is not
+a single ground truth item. The corpus contains scenes with 0 markers,
+so this actually occurs. The returned `bool` distinguishes it.
 
-### RMSE と最大値の両方を持つ
+### Both RMSE and the maximum are kept
 
-1 隅だけ大きく外れた場合と、4 隅が一様にずれた場合を区別するためです。
-最大値だけでは前者と後者が同じに見えます。
+This is to distinguish the case where only one corner is far off from the case where all four corners are uniformly displaced.
+With the maximum alone, the former and the latter look the same.
 
-### rotation の一致は四隅の並びで判定する
+### Rotation agreement is judged by the corner ordering
 
-真値の四隅はマーカー座標系の (0,0)、(S,0)、(S,S)、(0,S) の順で並びます。
-ID を正しく読めていれば検出も同じ順になるため、巡回段数が 0 以外なら
-rotation の判定を誤ったことを意味します。
+The ground truth corners are ordered as (0,0), (S,0), (S,S), (0,S) in the marker coordinate system.
+If the ID has been read correctly, the detection is in the same order, so any nonzero number of cyclic steps
+means the rotation was judged incorrectly.
 
-## 目標
+## Goals
 
-- 実画像データセットの注釈結果を真値として同じ指標を出せるようにする
-- 差異のあった画像を可視化して保存する
+- Allow the same metrics to be produced with annotations of a real-image dataset as ground truth
+- Visualize and save the images where differences occurred
 
-## 関連
+## See also
 
-- [差分レポート](../report/report_diff.hpp)
-- [合成 corpus 生成器](../corpusgen/corpus_generator.md)
-- [評価計画](../../docs/evaluation-plan.md)
+- [Diff report](../report/report_diff.hpp)
+- [Synthetic corpus generator](../corpusgen/corpus_generator.md)
+- [Evaluation plan](../../docs/evaluation-plan.md)

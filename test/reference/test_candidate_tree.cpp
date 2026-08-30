@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 包含木と識別の打ち切りを CPU 基準と突き合わせる。
+// Cross-checks the containment tree and the identification cutoff against the CPU
+// reference.
 //
-// 包含判定は OpenCV の cv::pointPolygonTest そのものと比べる。打ち切りは
-// OpenCV の identifyCandidates の while ループを host で書き直したものと比べる。
-// 上流の段を通さず値を直接注入するため、ここでは完全一致を要求できる。
+// The containment decision is compared against cv::pointPolygonTest itself. The cutoff
+// is compared against a host rewrite of the while loop in the identifyCandidates of
+// OpenCV. Values are injected directly instead of coming through the upstream stages,
+// so exact agreement can be required here.
 //
-// detectInvertedMarker は本 project に無いため対象外である。DetectorConfig に
-// 項目が無く、CPU 基準の経路にも分岐が無い。
+// detectInvertedMarker is out of scope because this project does not have it: there is
+// no such field in DetectorConfig, and the CPU reference path has no branch for it.
 #include "candidate_tree.hpp"
 
 #include <gtest/gtest.h>
@@ -43,7 +45,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 1 候補分の四隅。並びは corner 0 から 3。
+/// The four corners of one candidate, ordered from corner 0 to corner 3.
 struct Quad {
     std::int32_t x_[4] = {0, 0, 0, 0};
     std::int32_t y_[4] = {0, 0, 0, 0};
@@ -69,7 +71,7 @@ std::vector<cv::Point2f> to_contour(const Quad& quad) {
     return points;
 }
 
-/// OpenCV の checkMarker1InMarker2 と同じ判定。
+/// The same decision as checkMarker1InMarker2 in OpenCV.
 bool inside_reference(const Quad& inner, const Quad& outer) {
     const std::vector<cv::Point2f> polygon = to_contour(outer);
     for (int i = 0; i < 4; ++i) {
@@ -81,7 +83,7 @@ bool inside_reference(const Quad& inner, const Quad& outer) {
     return true;
 }
 
-/// OpenCV の包含木の構築と同じ手順。
+/// The same procedure as the containment tree construction in OpenCV.
 void build_tree_reference(const std::vector<Quad>& quads, std::vector<int>* parent,
                           std::vector<int>* depth) {
     const auto count = static_cast<int>(quads.size());
@@ -101,10 +103,11 @@ void build_tree_reference(const std::vector<Quad>& quads, std::vector<int>* pare
     }
 }
 
-/// OpenCV の identifyCandidates の while ループと同じ走査。
+/// The same traversal as the while loop in the identifyCandidates of OpenCV.
 ///
-/// 到達数の数え方まで同じにする。祖先として数えた候補を自分の段でもう一度
-/// 数える二重計上を含む。
+/// It matches even in how the reached count is computed, including the double count
+/// where a candidate already counted as an ancestor is counted again at its own
+/// depth.
 void resolve_reference(const std::vector<int>& parent, const std::vector<int>& depth,
                        const std::vector<int>& ids, int* out_stop_depth, int* out_counter) {
     const auto total = static_cast<int>(parent.size());
@@ -143,7 +146,7 @@ void resolve_reference(const std::vector<int>& parent, const std::vector<int>& d
     *out_counter = counter;
 }
 
-/// 四隅と ID を直接注入して木と打ち切りを求める。
+/// Injects corners and IDs directly, then computes the tree and the cutoff.
 class TreeRun {
 public:
     TreeRun() = default;
@@ -249,12 +252,13 @@ private:
     std::int32_t counter_ = 0;
 };
 
-// 正常系: 3 段の入れ子で親と段数が CPU 基準と一致する。
+// Happy path: with three levels of nesting, the parents and depths match the CPU
+// reference.
 TEST(CandidateTreeTest, builds_tree_for_nested_quads) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // index は周長の降順。0 が最も外側。
+    // Indices are in descending perimeter order, so 0 is the outermost quad.
     const std::vector<Quad> quads = {axis_aligned(0, 0, 300, 300), axis_aligned(50, 50, 250, 250),
                                      axis_aligned(100, 100, 200, 200)};
     const std::vector<int> ids = {-1, -1, 7};
@@ -273,26 +277,27 @@ TEST(CandidateTreeTest, builds_tree_for_nested_quads) {
     }
 }
 
-// 境界値: 囲むものが複数あるとき、最も内側 (index が最大) を親にする。
+// Boundary case: when several quads enclose a candidate, the innermost one (the
+// largest index) becomes the parent.
 TEST(CandidateTreeTest, parent_is_the_innermost_container) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 0 と 1 の両方が 2 を囲む。1 の方が内側なので 1 が親になる。
+    // Both 0 and 1 enclose 2. Since 1 is the inner one, 1 becomes the parent.
     const std::vector<Quad> quads = {axis_aligned(0, 0, 400, 400), axis_aligned(10, 10, 390, 390),
                                      axis_aligned(100, 100, 200, 200)};
     TreeRun run;
     ASSERT_TRUE(run.run(quads, {-1, -1, 3}, DetectorConfig()));
-    // 最小の index を選んでいたらここで 0 になり落ちる。
+    // Had the smallest index been selected, this would be 0 and the test would fail.
     EXPECT_EQ(run.parent()[2], 1);
     EXPECT_EQ(run.parent()[1], 0);
     EXPECT_EQ(run.depth()[0], 2);
 }
 
-// 境界値: 境界に接する四角形は内側として扱う。
+// Boundary case: a quad that touches the boundary counts as inside.
 TEST(CandidateTreeTest, boundary_touching_quad_counts_as_inside) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     struct Case {
         const char* name_;
@@ -300,15 +305,19 @@ TEST(CandidateTreeTest, boundary_touching_quad_counts_as_inside) {
         Quad outer_;
     };
     const std::vector<Case> cases = {
-            {"完全に一致", axis_aligned(0, 0, 100, 100), axis_aligned(0, 0, 100, 100)},
-            {"辺を共有", axis_aligned(0, 10, 50, 90), axis_aligned(0, 0, 100, 100)},
-            {"頂点のみ一致", axis_aligned(100, 100, 200, 200), axis_aligned(0, 0, 100, 100)},
-            // 下辺の途中に乗る隅。頂点でも斜辺上でもないため、水平な辺の上を
-            // 拾う節でしか内側と判定できない。この節を落とすと外側になる。
-            {"下辺の途中に乗る", axis_aligned(25, 50, 75, 100), axis_aligned(0, 0, 100, 100)},
-            {"上辺の途中に乗る", axis_aligned(25, 0, 75, 50), axis_aligned(0, 0, 100, 100)},
-            {"完全に外側", axis_aligned(200, 200, 300, 300), axis_aligned(0, 0, 100, 100)},
-            {"一部がはみ出す", axis_aligned(50, 50, 150, 150), axis_aligned(0, 0, 100, 100)},
+            {"identical", axis_aligned(0, 0, 100, 100), axis_aligned(0, 0, 100, 100)},
+            {"shares an edge", axis_aligned(0, 10, 50, 90), axis_aligned(0, 0, 100, 100)},
+            {"touches at a vertex only", axis_aligned(100, 100, 200, 200),
+             axis_aligned(0, 0, 100, 100)},
+            // A corner that lands partway along the bottom edge. It is neither a vertex
+            // nor on a slanted edge, so only the clause that handles horizontal edges
+            // can classify it as inside. Drop that clause and it becomes outside.
+            {"partway along the bottom edge", axis_aligned(25, 50, 75, 100),
+             axis_aligned(0, 0, 100, 100)},
+            {"partway along the top edge", axis_aligned(25, 0, 75, 50),
+             axis_aligned(0, 0, 100, 100)},
+            {"fully outside", axis_aligned(200, 200, 300, 300), axis_aligned(0, 0, 100, 100)},
+            {"partly sticking out", axis_aligned(50, 50, 150, 150), axis_aligned(0, 0, 100, 100)},
     };
     for (const Case& item : cases) {
         const std::vector<Quad> quads = {item.outer_, item.inner_};
@@ -319,10 +328,11 @@ TEST(CandidateTreeTest, boundary_touching_quad_counts_as_inside) {
     }
 }
 
-// 正常系: 乱数の四角形で包含判定が cv::pointPolygonTest と一致する。
+// Happy path: on random quads, the containment decision agrees with
+// cv::pointPolygonTest.
 TEST(CandidateTreeTest, matches_point_polygon_test_for_random_quads) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     std::mt19937_64 rng(20260828U);
     std::uniform_int_distribution<int> coordinate(0, 400);
@@ -330,7 +340,8 @@ TEST(CandidateTreeTest, matches_point_polygon_test_for_random_quads) {
     std::size_t inside_cases = 0;
     std::size_t concave_cases = 0;
 
-    // 凹四角形を含める。凸性を仮定した判定に置き換えたらここで落ちる。
+    // Concave quads are included. Replacing the decision with one that assumes
+    // convexity would fail here.
     const auto is_convex = [](const Quad& quad) {
         int sign = 0;
         for (int i = 0; i < 4; ++i) {
@@ -360,7 +371,8 @@ TEST(CandidateTreeTest, matches_point_polygon_test_for_random_quads) {
             outer.x_[i] = coordinate(rng);
             outer.y_[i] = coordinate(rng);
         }
-        // 半分は外側の内部に寄せて生成し、内側になる場合を実際に通す。
+        // Half of the cases are generated near the interior of the outer quad, so that
+        // the inside case is actually exercised.
         for (int i = 0; i < 4; ++i) {
             if (trial % 2 == 0) {
                 inner.x_[i] = (outer.x_[0] + outer.x_[1] + outer.x_[2] + outer.x_[3]) / 4 +
@@ -386,17 +398,17 @@ TEST(CandidateTreeTest, matches_point_polygon_test_for_random_quads) {
             ++mismatch;
         }
     }
-    std::printf("[tree] 400 組: 不一致 %zu、内側 %zu、凹な外側 %zu\n", mismatch, inside_cases,
-                concave_cases);
+    std::printf("[tree] 400 pairs: mismatches %zu, inside %zu, concave outer %zu\n", mismatch,
+                inside_cases, concave_cases);
     EXPECT_EQ(mismatch, 0U);
     EXPECT_GT(inside_cases, 0U);
     EXPECT_GT(concave_cases, 0U);
 }
 
-// 正常系: 打ち切りの段数が CPU 基準と一致する。
+// Happy path: the cutoff depth matches the CPU reference.
 TEST(CandidateTreeTest, stop_depth_matches_reference) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<Quad> quads = {axis_aligned(0, 0, 300, 300), axis_aligned(50, 50, 250, 250),
                                      axis_aligned(100, 100, 200, 200)};
@@ -409,9 +421,11 @@ TEST(CandidateTreeTest, stop_depth_matches_reference) {
         std::vector<int> ids_;
     };
     const std::vector<Case> cases = {
-            {"最内だけ識別", {-1, -1, 7}}, {"どれも識別できない", {-1, -1, -1}},
-            {"全て識別", {1, 2, 3}},       {"中間だけ識別", {-1, 5, -1}},
-            {"最外だけ識別", {9, -1, -1}},
+            {"innermost identified only", {-1, -1, 7}},
+            {"none identified", {-1, -1, -1}},
+            {"all identified", {1, 2, 3}},
+            {"middle identified only", {-1, 5, -1}},
+            {"outermost identified only", {9, -1, -1}},
     };
     for (const Case& item : cases) {
         int expected_stop = 0;
@@ -424,10 +438,10 @@ TEST(CandidateTreeTest, stop_depth_matches_reference) {
     }
 }
 
-// 正常系: 乱数の木でも打ち切りが CPU 基準と一致する。
+// Happy path: on random trees too, the cutoff matches the CPU reference.
 TEST(CandidateTreeTest, stop_depth_matches_reference_for_random_nesting) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     std::mt19937_64 rng(777U);
     std::uniform_int_distribution<int> identified(0, 2);
@@ -435,7 +449,7 @@ TEST(CandidateTreeTest, stop_depth_matches_reference_for_random_nesting) {
     std::size_t suppressed_cases = 0;
 
     for (int trial = 0; trial < 60; ++trial) {
-        // 入れ子の鎖を作る。段数は 1 から 6。
+        // Build a nesting chain, 1 to 6 levels deep.
         const int levels = 1 + (trial % 6);
         std::vector<Quad> quads;
         quads.reserve(static_cast<std::size_t>(levels));
@@ -470,22 +484,25 @@ TEST(CandidateTreeTest, stop_depth_matches_reference_for_random_nesting) {
             }
         }
     }
-    std::printf("[tree] 60 通り: 不一致 %zu、打ち切りが起きた %zu\n", mismatch, suppressed_cases);
+    std::printf("[tree] 60 cases: mismatches %zu, cutoff triggered %zu\n", mismatch,
+                suppressed_cases);
     EXPECT_EQ(mismatch, 0U);
     EXPECT_GT(suppressed_cases, 0U);
 }
 
-// 正常系: 枝分かれのある木でも打ち切りが CPU 基準と一致する。
+// Happy path: on branching trees too, the cutoff matches the CPU reference.
 //
-// 一本鎖では「祖先として印を付けた候補が自分の段に回ってくる」状況も、
-// 兄弟が同じ親へ同時に登る状況も起きない。祖先の重複排除と counter の
-// 二重計上はどちらも枝分かれで初めて効くため、鎖だけでは固定できない。
+// A single chain never produces the situation where a candidate already marked as an
+// ancestor comes up again at its own depth, nor the one where siblings walk up to the
+// same parent at the same time. Both the deduplication of ancestors and the double
+// count in the counter only take effect once the tree branches, so a chain alone
+// cannot pin them down.
 TEST(CandidateTreeTest, stop_depth_matches_reference_for_branching_trees) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 外側 1 枚の中に互いに素な中間 2 枚、その各々に最内 1 枚。
-    // parent = {-1, 0, 0, 1, 2}、depth = {2, 1, 1, 0, 0} になる。
+    // One outer quad holding two disjoint middle quads, each of which holds one
+    // innermost quad. This gives parent = {-1, 0, 0, 1, 2} and depth = {2, 1, 1, 0, 0}.
     const std::vector<Quad> quads = {axis_aligned(0, 0, 1000, 1000), axis_aligned(10, 10, 480, 980),
                                      axis_aligned(520, 10, 990, 980),
                                      axis_aligned(60, 60, 430, 930),
@@ -502,11 +519,11 @@ TEST(CandidateTreeTest, stop_depth_matches_reference_for_branching_trees) {
         std::vector<int> ids_;
     };
     const std::vector<Case> cases = {
-            {"最内の片方だけ識別", {-1, -1, -1, 4, -1}},
-            {"最内の両方を識別", {-1, -1, -1, 4, 5}},
-            {"どれも識別できない", {-1, -1, -1, -1, -1}},
-            {"中間の片方だけ識別", {-1, 6, -1, -1, -1}},
-            {"最外だけ識別", {9, -1, -1, -1, -1}},
+            {"one innermost identified", {-1, -1, -1, 4, -1}},
+            {"both innermost identified", {-1, -1, -1, 4, 5}},
+            {"none identified", {-1, -1, -1, -1, -1}},
+            {"one middle identified", {-1, 6, -1, -1, -1}},
+            {"outermost identified only", {9, -1, -1, -1, -1}},
     };
     for (const Case& item : cases) {
         int expected_stop = 0;
@@ -522,18 +539,19 @@ TEST(CandidateTreeTest, stop_depth_matches_reference_for_branching_trees) {
         }
     }
 
-    // 「最内の片方だけ識別」では祖先を 2 段登って counter が総数を超える。
-    // 二重計上を取り除くとここが減り、打ち切りが 1 段遅れる。
+    // In "one innermost identified" the walk goes up two ancestor levels and the
+    // counter exceeds the total. Removing the double count would lower it here and
+    // delay the cutoff by one level.
     int branch_stop = 0;
     int branch_counter = 0;
     resolve_reference(parent, depth, {-1, -1, -1, 4, -1}, &branch_stop, &branch_counter);
     EXPECT_GT(branch_counter, static_cast<int>(quads.size()));
 }
 
-/// 入れ子の森を組み立てる。子は互いに素な区画へ入れるため兄弟になる。
+/// Builds a nested forest. Children go into disjoint regions, so they become siblings.
 ///
-/// 再帰は使わない。本 project の規約は MISRA C++ を基にしており、再帰を
-/// 避ける。処理待ちの区画を明示的な stack で持つ。
+/// No recursion is used: this project's conventions are based on MISRA C++, which
+/// avoids recursion. The regions still to be processed are held in an explicit stack.
 void grow_forest(int extent, int budget, std::mt19937_64& rng, std::vector<Quad>* out) {
     struct Region {
         int left_ = 0;
@@ -573,10 +591,11 @@ void grow_forest(int extent, int budget, std::mt19937_64& rng, std::vector<Quad>
     }
 }
 
-// 正常系: 乱数で作った入れ子の森でも木と打ち切りが CPU 基準と一致する。
+// Happy path: on randomly generated nested forests too, the tree and the cutoff match
+// the CPU reference.
 TEST(CandidateTreeTest, matches_reference_for_random_forests) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     std::mt19937_64 rng(31415U);
     std::uniform_int_distribution<int> identified(0, 2);
@@ -588,7 +607,8 @@ TEST(CandidateTreeTest, matches_reference_for_random_forests) {
     for (int trial = 0; trial < 80; ++trial) {
         std::vector<Quad> quads;
         grow_forest(1200, 1 + (trial % 4), rng, &quads);
-        // 統合後の候補は周長の降順に並ぶ。同じ並びにしてから渡す。
+        // After merging, candidates are ordered by descending perimeter. Sort them the
+        // same way before passing them in.
         std::stable_sort(quads.begin(), quads.end(), [](const Quad& a, const Quad& b) {
             const int a_perimeter = (a.x_[1] - a.x_[0]) + (a.y_[2] - a.y_[1]);
             const int b_perimeter = (b.x_[1] - b.x_[0]) + (b.y_[2] - b.y_[1]);
@@ -606,7 +626,8 @@ TEST(CandidateTreeTest, matches_reference_for_random_forests) {
         int expected_counter = 0;
         resolve_reference(parent, depth, ids, &expected_stop, &expected_counter);
 
-        // 同じ段に 2 件以上あるか。祖先の重複排除はここで初めて効く。
+        // Are there two or more quads at the same depth? Only then does the
+        // deduplication of ancestors take effect.
         std::vector<int> per_depth(quads.size() + 1U, 0);
         int max_depth = 0;
         for (const int value : depth) {
@@ -619,8 +640,9 @@ TEST(CandidateTreeTest, matches_reference_for_random_forests) {
                 break;
             }
         }
-        // 到達数が総数を超えるのは、祖先として数えた候補を自分の段で
-        // もう一度数えたときだけである。二重計上が効いた印になる。
+        // The reached count can only exceed the total when a candidate counted as an
+        // ancestor is counted again at its own depth. That is the sign that the double
+        // count took effect.
         if (expected_counter > static_cast<int>(quads.size())) {
             ++double_counted_cases;
         }
@@ -641,18 +663,20 @@ TEST(CandidateTreeTest, matches_reference_for_random_forests) {
             }
         }
     }
-    std::printf("[tree] 森 80 通り: 不一致 %zu、枝分かれ %zu、二重計上 %zu、打ち切り %zu\n",
-                mismatch, branching_cases, double_counted_cases, suppressed_cases);
+    std::printf(
+            "[tree] 80 forests: mismatches %zu, branching %zu, double counted %zu, "
+            "cutoff %zu\n",
+            mismatch, branching_cases, double_counted_cases, suppressed_cases);
     EXPECT_EQ(mismatch, 0U);
     EXPECT_GT(branching_cases, 0U);
     EXPECT_GT(double_counted_cases, 0U);
     EXPECT_GT(suppressed_cases, 0U);
 }
 
-// 境界値: 候補が 0 件や 1 件でも走査が止まる。
+// Boundary case: the traversal terminates with zero or one candidate as well.
 TEST(CandidateTreeTest, handles_empty_and_single_candidate) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     TreeRun empty_run;
     ASSERT_TRUE(empty_run.run({}, {}, DetectorConfig()));
@@ -667,10 +691,10 @@ TEST(CandidateTreeTest, handles_empty_and_single_candidate) {
     EXPECT_EQ(single_run.counter(), 1);
 }
 
-// 正常系: 同じ入力を 2 度流すと同じ結果になる。
+// Happy path: running the same input twice yields the same result.
 TEST(CandidateTreeTest, results_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<Quad> quads = {axis_aligned(0, 0, 300, 300), axis_aligned(20, 20, 280, 280),
                                      axis_aligned(60, 60, 240, 240),
@@ -686,7 +710,7 @@ TEST(CandidateTreeTest, results_are_deterministic) {
     EXPECT_EQ(first.counter(), second.counter());
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: nothing runs when the arguments are invalid.
 TEST(CandidateTreeTest, rejects_invalid_arguments) {
     Workspace workspace;
     DetectorConfig config;
@@ -707,7 +731,8 @@ TEST(CandidateTreeTest, rejects_invalid_arguments) {
     config.max_candidates_ = 0;
     EXPECT_EQ(aruco3cuda::detail::candidate_tree_workspace_bytes(config), 0U);
     config.max_candidates_ = 4096;
-    // doc の出力例と同じ値を固定する。ずれると workspace が足りなくなる。
+    // Pins the same value as the example output in the docs. If it drifts, the
+    // workspace is no longer large enough.
     EXPECT_EQ(aruco3cuda::detail::candidate_tree_workspace_bytes(config), 49664U);
 }
 

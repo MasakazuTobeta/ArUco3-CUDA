@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// workspace の確保方針を検証する。
+// Verifies the allocation policy of the workspace.
 //
-// 最も重要なのは「フレームごとの確保が発生しない」ことである。規約は
-// フレームごとの cudaMalloc と cudaFree を避けることを求めるが、守れているかは
-// 統計を見なければ分からない。定常状態で allocation_count_ が増えないことを
-// 明示的に確認する。
+// The most important property is that no allocation happens per frame. The
+// conventions require avoiding a cudaMalloc and cudaFree on every frame, but
+// whether that is actually being honored can only be seen from the statistics.
+// This test explicitly confirms that allocation_count_ does not grow in the
+// steady state.
 #include "aruco3cuda/workspace.hpp"
 
 #include <gtest/gtest.h>
@@ -32,7 +33,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 1 フレーム分の切り出しを模した処理。段階ごとの buffer を順に取る。
+/// Mimics the sub-allocations of a single frame, taking the buffer for each stage in turn.
 Status simulate_frame(Workspace& workspace) {
     workspace.reset();
     const std::size_t sizes[] = {4096U, 8192U, 1024U, 65536U};
@@ -49,24 +50,25 @@ Status simulate_frame(Workspace& workspace) {
     return Status::kOk;
 }
 
-// 正常系: align_up が境界へ切り上げる。
+// Nominal: align_up rounds up to the alignment boundary.
 TEST(AlignUpTest, rounds_up_to_alignment) {
     EXPECT_EQ(aruco3cuda::align_up(0U, 256U), 0U);
     EXPECT_EQ(aruco3cuda::align_up(1U, 256U), 256U);
     EXPECT_EQ(aruco3cuda::align_up(256U, 256U), 256U);
     EXPECT_EQ(aruco3cuda::align_up(257U, 256U), 512U);
-    // alignment が 0 なら値をそのまま返す。
+    // An alignment of 0 returns the value unchanged.
     EXPECT_EQ(aruco3cuda::align_up(100U, 0U), 100U);
 }
 
-// 境界値: 切り上げで桁溢れする場合は 0 を返す。
-// 呼出側は容量不足として扱う。wrap した値で範囲計算を続けると危険である。
+// Boundary: rounding up returns 0 when it would overflow.
+// Callers treat that as insufficient capacity. Continuing range arithmetic with a
+// wrapped value would be dangerous.
 TEST(AlignUpTest, returns_zero_on_overflow) {
     const std::size_t near_max = std::numeric_limits<std::size_t>::max() - 10U;
     EXPECT_EQ(aruco3cuda::align_up(near_max, 256U), 0U);
 }
 
-// 異常系: 未確保の workspace からは切り出せない。
+// Error case: nothing can be carved out of a workspace with no reserved capacity.
 TEST(WorkspaceTest, allocate_fails_before_capacity_is_reserved) {
     Workspace workspace;
     void* buffer = nullptr;
@@ -75,22 +77,22 @@ TEST(WorkspaceTest, allocate_fails_before_capacity_is_reserved) {
     EXPECT_EQ(workspace.statistics().allocation_count_, 0U);
 }
 
-// 異常系: 不正な引数を拒否する。
+// Error case: invalid arguments are rejected.
 TEST(WorkspaceTest, rejects_invalid_arguments) {
     Workspace workspace;
     void* buffer = nullptr;
     EXPECT_EQ(workspace.allocate(16U, 256U, nullptr), Status::kInvalidArgument);
-    // alignment は 2 の冪である必要がある。
+    // The alignment must be a power of two.
     EXPECT_EQ(workspace.allocate(16U, 3U, &buffer), Status::kInvalidArgument);
     EXPECT_EQ(workspace.allocate(16U, 0U, &buffer), Status::kInvalidArgument);
-    // pageable host memory は arena として扱わない。
+    // Pageable host memory is not accepted as an arena.
     std::string message;
     EXPECT_EQ(workspace.ensure_capacity(1024U, MemorySpace::kHostPageable, &message),
               Status::kInvalidArgument);
     EXPECT_FALSE(message.empty());
 }
 
-// 境界値: 0 byte の要求は nullptr を返して成功する。
+// Boundary: a zero-byte request succeeds and yields nullptr.
 TEST(WorkspaceTest, zero_sized_requests_are_no_ops) {
     Workspace workspace;
     EXPECT_EQ(workspace.ensure_capacity(0U, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -101,10 +103,10 @@ TEST(WorkspaceTest, zero_sized_requests_are_no_ops) {
     EXPECT_EQ(buffer, nullptr);
 }
 
-// 正常系: 容量を確保し、境界の揃った領域を切り出せる。
+// Nominal: capacity can be reserved and aligned regions carved out of it.
 TEST(WorkspaceTest, allocates_aligned_buffers) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     std::string message;
@@ -119,16 +121,16 @@ TEST(WorkspaceTest, allocates_aligned_buffers) {
     ASSERT_EQ(workspace.allocate(100U, 256U, &second), Status::kOk);
     EXPECT_EQ(reinterpret_cast<std::uintptr_t>(first) % 256U, 0U);
     EXPECT_EQ(reinterpret_cast<std::uintptr_t>(second) % 256U, 0U);
-    // 2 つ目は 1 つ目と重ならない。
+    // The second region does not overlap the first.
     EXPECT_GE(reinterpret_cast<std::uintptr_t>(second) - reinterpret_cast<std::uintptr_t>(first),
               100U);
 }
 
-// 正常系: 定常状態でフレームごとの確保が発生しない。
-// workspace が満たすべき最も重要な性質である。
+// Nominal: no per-frame allocation happens in the steady state.
+// This is the single most important property the workspace has to satisfy.
 TEST(WorkspaceTest, steady_state_does_not_allocate_per_frame) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(1U << 20, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -137,20 +139,21 @@ TEST(WorkspaceTest, steady_state_does_not_allocate_per_frame) {
 
     for (int frame = 0; frame < 100; ++frame) {
         ASSERT_EQ(simulate_frame(workspace), Status::kOk) << "frame=" << frame;
-        // 確保も再確保も増えない。
+        // Neither allocations nor reallocations increase.
         ASSERT_EQ(workspace.statistics().allocation_count_, after_reserve) << "frame=" << frame;
         ASSERT_EQ(workspace.statistics().reallocation_count_, 0U) << "frame=" << frame;
         ASSERT_EQ(workspace.statistics().exhausted_count_, 0U) << "frame=" << frame;
     }
-    // 使用量の最大値は 1 フレーム分に収まる。reset() が効いている証拠になる。
+    // Peak usage stays within a single frame's worth, which is the evidence that
+    // reset() is taking effect.
     EXPECT_LT(workspace.statistics().peak_used_bytes_, 1U << 20);
     EXPECT_EQ(workspace.statistics().used_bytes_, workspace.statistics().peak_used_bytes_);
 }
 
-// 正常系: reset() で切り出し位置が戻る。
+// Nominal: reset() rewinds the sub-allocation offset.
 TEST(WorkspaceTest, reset_rewinds_offset) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(1U << 16, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -164,33 +167,33 @@ TEST(WorkspaceTest, reset_rewinds_offset) {
 
     void* again = nullptr;
     ASSERT_EQ(workspace.allocate(1024U, 256U, &again), Status::kOk);
-    // reset() 後は同じ位置から切り出される。
+    // After reset() the next region starts at the same address as before.
     EXPECT_EQ(first, again);
 }
 
-// 境界値: 容量を超える切り出しは失敗し、自動で拡張しない。
-// 自動拡張はフレームごとの確保を静かに招く。
+// Boundary: a request beyond the capacity fails and does not grow the arena.
+// Growing automatically would quietly reintroduce per-frame allocation.
 TEST(WorkspaceTest, allocate_does_not_grow_capacity) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(4096U, MemorySpace::kDevice, nullptr), Status::kOk);
     const std::size_t before = workspace.statistics().allocation_count_;
 
     void* buffer = nullptr;
-    // 容量ちょうどは通る。
+    // A request for exactly the capacity succeeds.
     ASSERT_EQ(workspace.allocate(4096U, 256U, &buffer), Status::kOk);
-    // 1 byte でも超えると失敗する。
+    // Exceeding it by even one byte fails.
     EXPECT_EQ(workspace.allocate(1U, 256U, &buffer), Status::kInvalidConfig);
     EXPECT_EQ(workspace.statistics().allocation_count_, before);
     EXPECT_EQ(workspace.statistics().exhausted_count_, 1U);
 }
 
-// 正常系: 容量が足りていれば確保し直さない。
+// Nominal: no reallocation happens while the existing capacity suffices.
 TEST(WorkspaceTest, ensure_capacity_is_idempotent_when_sufficient) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(1U << 16, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -200,10 +203,10 @@ TEST(WorkspaceTest, ensure_capacity_is_idempotent_when_sufficient) {
     EXPECT_EQ(workspace.statistics().reallocation_count_, 0U);
 }
 
-// 正常系: 容量が足りなければ確保し直し、再確保として数える。
+// Nominal: insufficient capacity triggers a reallocation, counted as such.
 TEST(WorkspaceTest, ensure_capacity_reallocates_when_insufficient) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(4096U, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -211,14 +214,14 @@ TEST(WorkspaceTest, ensure_capacity_reallocates_when_insufficient) {
     EXPECT_EQ(workspace.statistics().allocation_count_, 2U);
     EXPECT_EQ(workspace.statistics().reallocation_count_, 1U);
     EXPECT_GE(workspace.statistics().capacity_bytes_, 1U << 20);
-    // 再確保で切り出し位置は先頭へ戻る。
+    // A reallocation rewinds the sub-allocation offset to the start.
     EXPECT_EQ(workspace.statistics().used_bytes_, 0U);
 }
 
-// 正常系: memory 空間を変えると確保し直す。
+// Nominal: changing the memory space forces a reallocation.
 TEST(WorkspaceTest, changing_memory_space_reallocates) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(4096U, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -228,11 +231,11 @@ TEST(WorkspaceTest, changing_memory_space_reallocates) {
     EXPECT_EQ(workspace.statistics().reallocation_count_, 1U);
 }
 
-// 正常系: pinned と managed の空間でも確保できる。
-// 評価計画は memory 種別を独立した測定軸として扱う。
+// Nominal: capacity can also be reserved in the pinned and managed spaces.
+// The evaluation plan treats the memory kind as an independent measurement axis.
 TEST(WorkspaceTest, supports_pinned_and_managed_spaces) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     for (const MemorySpace space : {MemorySpace::kHostPinned, MemorySpace::kManaged}) {
         Workspace workspace;
@@ -242,7 +245,7 @@ TEST(WorkspaceTest, supports_pinned_and_managed_spaces) {
         void* buffer = nullptr;
         ASSERT_EQ(workspace.allocate(1024U, 256U, &buffer), Status::kOk);
         ASSERT_NE(buffer, nullptr);
-        // host から見える空間では書き込めることまで確認する。
+        // In spaces visible from the host, confirm that the memory is writable too.
         if (space != MemorySpace::kDevice) {
             auto* bytes = static_cast<std::uint8_t*>(buffer);
             bytes[0] = 42U;
@@ -251,10 +254,10 @@ TEST(WorkspaceTest, supports_pinned_and_managed_spaces) {
     }
 }
 
-// 正常系: 移動しても資源が二重に解放されない。
+// Nominal: moving a workspace does not free its resources twice.
 TEST(WorkspaceTest, move_transfers_ownership) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace source;
     ASSERT_EQ(source.ensure_capacity(4096U, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -264,9 +267,9 @@ TEST(WorkspaceTest, move_transfers_ownership) {
     Workspace moved(std::move(source));
     EXPECT_EQ(moved.statistics().allocation_count_, 1U);
     EXPECT_GE(moved.statistics().capacity_bytes_, 4096U);
-    // 移動元は資源を手放しており、切り出せない。
-    // move 後の状態を意図的に確認する。move constructor が移動元を
-    // 明示的に空へ戻していることが、二重解放を防ぐ根拠になる。
+    // The moved-from workspace has given up its resources and can allocate nothing.
+    // Inspecting the moved-from state is deliberate: the move constructor explicitly
+    // leaving the source empty is what rules out a double free.
     void* from_source = nullptr;
     // NOLINTNEXTLINE(bugprone-use-after-move)
     EXPECT_EQ(source.allocate(16U, 256U, &from_source), Status::kInvalidConfig);
@@ -278,10 +281,10 @@ TEST(WorkspaceTest, move_transfers_ownership) {
     EXPECT_EQ(assigned.allocate(256U, 256U, &from_assigned), Status::kOk);
 }
 
-// 正常系: release() で容量が解放され、統計へ反映される。
+// Nominal: release() frees the capacity and the statistics reflect it.
 TEST(WorkspaceTest, release_frees_capacity) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(4096U, MemorySpace::kDevice, nullptr), Status::kOk);
@@ -289,7 +292,7 @@ TEST(WorkspaceTest, release_frees_capacity) {
     EXPECT_EQ(workspace.statistics().capacity_bytes_, 0U);
     void* buffer = nullptr;
     EXPECT_EQ(workspace.allocate(16U, 256U, &buffer), Status::kInvalidConfig);
-    // 二重の release でも問題ない。
+    // Releasing twice is harmless.
     workspace.release();
 }
 

@@ -1,252 +1,252 @@
-# Docker 環境設計
+# Docker Environment Design
 
-## 目的
+## Purpose
 
-DGX Spark、Jetson Orin、RTX Blackwell で同じ手順の build、test、評価を行える container 環境を定義し、測定結果の再現に必要な環境情報を機械可読形式で残せるようにします。
+Define a container environment that runs the same build, test, and evaluation procedures on DGX Spark, Jetson Orin, and RTX Blackwell, and make it possible to record the environment information needed to reproduce measurements in a machine-readable form.
 
-## 対象範囲
+## Scope
 
-開発 image の構成、CUDA Toolkit の供給方法、profile ごとの base image、環境検査、環境情報の記録を対象とします。CI service の選定と registry への配布は対象外です。
+The scope covers the composition of the development image, how the CUDA Toolkit is supplied, the base image for each profile, environment verification, and the recording of environment information. Choosing a CI service and distributing through a registry are out of scope.
 
-## 現状
+## Current state
 
-開発機 DGX Spark で次を確認しています。
+The following has been confirmed on the DGX Spark development machine.
 
-| 項目 | 値 |
+| Item | Value |
 | --- | --- |
 | Docker | 28.3.3 |
 | Docker Compose | v2.39.1 |
 | NVIDIA Container Toolkit | 1.18.0 |
-| 登録済み runtime | `runc`、`nvidia` |
-| host CUDA Toolkit | 13.0、`/usr/local/cuda-13.0`、4.7 GB |
-| `/usr/local/cuda` | `/etc/alternatives/cuda` を経由する多段 symlink |
-| `lib64` | `targets/sbsa-linux/lib` への symlink |
-| host glibc | 2.39 (Ubuntu 24.04) |
+| Registered runtimes | `runc`, `nvidia` |
+| Host CUDA Toolkit | 13.0, `/usr/local/cuda-13.0`, 4.7 GB |
+| `/usr/local/cuda` | A multi-level symlink that goes through `/etc/alternatives/cuda` |
+| `lib64` | A symlink to `targets/sbsa-linux/lib` |
+| Host glibc | 2.39 (Ubuntu 24.04) |
 
-`dgx-spark` profile は構築と検証を完了しています。
+The `dgx-spark` profile has been built and verified.
 
-| 項目 | 結果 |
+| Item | Result |
 | --- | --- |
-| image size | 1.64 GB (`pinned`) / 1.27 GB (`mounted`) |
-| `verify-environment.sh` | 全 5 項目合格 |
-| `smoke-test.sh` | 合格。`sm_121` で compile した実行 file が GPU 上で動作し、OpenCV の ArUco3 検出戦略が期待どおり動く |
-| OpenCV | 4.14.0 (`0654a42e1921`)、`WITH_CUDA=OFF` |
+| Image size | 1.64 GB (`pinned`) / 1.27 GB (`mounted`) |
+| `verify-environment.sh` | All 5 checks pass |
+| `smoke-test.sh` | Pass. An executable compiled for `sm_121` runs on the GPU, and the OpenCV ArUco3 detection strategy behaves as expected |
+| OpenCV | 4.14.0 (`0654a42e1921`), `WITH_CUDA=OFF` |
 
-`pinned` と `mounted` の両方で環境検査と smoke test が合格することを確認しています。CUDA Toolkit 全体を含む `nvidia/cuda` の devel image を base にした場合、base だけで 5 GB を超えます。
+Environment verification and the smoke test have been confirmed to pass in both `pinned` and `mounted`. When an `nvidia/cuda` devel image containing the full CUDA Toolkit is used as the base, the base alone exceeds 5 GB.
 
-`rtx-blackwell` profile の実機側の準備は完了しています。
+Preparation of the machine for the `rtx-blackwell` profile is complete.
 
-| 項目 | 値 |
+| Item | Value |
 | --- | --- |
-| GPU | NVIDIA GeForce RTX 5070 Ti、Compute Capability 12.0、16303 MiB |
+| GPU | NVIDIA GeForce RTX 5070 Ti, Compute Capability 12.0, 16303 MiB |
 | NVIDIA driver | 610.43.02 (`nvidia-driver-610-open`) |
-| kernel | 6.8.0-138-generic |
-| Docker | 29.7.2 (公式 repository) |
+| Kernel | 6.8.0-138-generic |
+| Docker | 29.7.2 (official repository) |
 | NVIDIA Container Toolkit | 1.20.0 |
 
-Secure Boot が有効なため、kernel module は Canonical 署名済みの prebuilt package (`linux-modules-nvidia-610-open-generic-hwe-22.04`) を使います。DKMS で build すると署名が無く再起動後に読み込まれません。この package は HWE の最新 kernel 向けに module を入れるため、導入後の再起動で kernel が切り替わります。
+Because Secure Boot is enabled, the kernel module comes from the Canonical-signed prebuilt package (`linux-modules-nvidia-610-open-generic-hwe-22.04`). A module built with DKMS is unsigned and is not loaded after a reboot. This package installs the module for the latest HWE kernel, so the kernel switches on the reboot that follows the installation.
 
-この profile の base image と CUDA package は `dgx-spark` と同一にします。container 側を揃えておけば、両者の測定差は hardware の差だけになります。`ARUCO3_CUDA_REPO_ARCH` のみ `x86_64` へ変えます。既存 2 機は `sbsa` (aarch64) です。
+The base image and CUDA packages for this profile are identical to `dgx-spark`. With the container side aligned, the only difference between the measurements is the hardware. Only `ARUCO3_CUDA_REPO_ARCH` changes, to `x86_64`. The two existing machines use `sbsa` (aarch64).
 
-`jetson-orin` profile も実機で構築と検証を完了しています。
+The `jetson-orin` profile has also been built and verified on the machine itself.
 
-| 項目 | 結果 |
+| Item | Result |
 | --- | --- |
-| 実機 | Jetson AGX Orin Developer Kit、L4T R35.4.1 (JetPack 5.1.2)、CUDA 11.4 |
-| image size | 5.0 GB |
-| `verify-environment.sh` | 全 5 項目合格 |
-| `smoke-test.sh` | 合格 |
-| `ctest` | 75 件合格。Compute Sanitizer を含めて 79 件 |
+| Machine | Jetson AGX Orin Developer Kit, L4T R35.4.1 (JetPack 5.1.2), CUDA 11.4 |
+| Image size | 5.0 GB |
+| `verify-environment.sh` | All 5 checks pass |
+| `smoke-test.sh` | Pass |
+| `ctest` | 75 tests pass. 79 including Compute Sanitizer |
 
-image が DGX Spark の 1.64 GB より大きいのは、base image が `l4t-cuda:11.4.19-devel` であり CUDA 一式を含むためです。Jetson では NVIDIA の apt repository から必要な package だけを選ぶ構成が使えないため、この差は許容します。
+The image is larger than DGX Spark's 1.64 GB because the base image is `l4t-cuda:11.4.19-devel`, which contains the full CUDA installation. On Jetson there is no way to select only the required packages from NVIDIA's apt repository, so this difference is accepted.
 
-## 目標
+## Goals
 
-### 責務分担
+### Division of responsibilities
 
-CUDA に関わる要素を、image、host mount、container runtime の 3 つへ分けます。
+The CUDA-related elements are split three ways: into the image, a host mount, and the container runtime.
 
 ```mermaid
 flowchart TD
-    subgraph IMG["image に含める"]
-        T["build toolchain<br/>cmake・ninja・gcc"]
-        O["OpenCV 4.14.0<br/>CPU 基準実装"]
-        S["環境検査・記録 script"]
+    subgraph IMG["Included in the image"]
+        T["Build toolchain<br/>cmake, ninja, gcc"]
+        O["OpenCV 4.14.0<br/>CPU reference implementation"]
+        S["Environment verification and recording scripts"]
     end
-    subgraph HOST["host から bind mount する"]
-        C["CUDA Toolkit<br/>nvcc・header・cudart・compute-sanitizer"]
+    subgraph HOST["Bind-mounted from the host"]
+        C["CUDA Toolkit<br/>nvcc, headers, cudart, compute-sanitizer"]
     end
-    subgraph RT["container runtime が注入する"]
-        D["NVIDIA driver library<br/>libcuda.so.1・libnvidia-ml"]
+    subgraph RT["Injected by the container runtime"]
+        D["NVIDIA driver libraries<br/>libcuda.so.1, libnvidia-ml"]
     end
     IMG --> X["container"]
     HOST --> X
     RT --> X
 ```
 
-| 要素 | 供給元 | 理由 |
+| Element | Source | Reason |
 | --- | --- | --- |
-| build toolchain | image | version を固定したいが size が小さい |
-| OpenCV | image | CPU 基準結果の正本であり、version 固定が最優先 |
-| CUDA Toolkit | image (既定) または host の bind mount | 下記の 2 mode を選択する |
-| NVIDIA driver | NVIDIA Container Toolkit の注入 | driver は host kernel と一致する必要がある |
+| Build toolchain | Image | The version must be fixed, and the size is small |
+| OpenCV | Image | It is the authoritative source of the CPU reference results, so fixing the version takes priority |
+| CUDA Toolkit | Image (default) or a bind mount from the host | Choose between the two modes below |
+| NVIDIA driver | Injection by the NVIDIA Container Toolkit | The driver must match the host kernel |
 
-### CUDA Toolkit の供給方式
+### How the CUDA Toolkit is supplied
 
-| mode | 供給元 | image size | 位置付け |
+| Mode | Source | Image size | Role |
 | --- | --- | --- | --- |
-| `pinned` (既定) | image へ必要な package のみ install | 1.64 GB | 測定を伴う実行はこちらを使う |
-| `mounted` | host から read-only で bind mount | 1.27 GB | 手元での素早い試行 |
+| `pinned` (default) | Install only the required packages into the image | 1.64 GB | Use this for any run that involves measurement |
+| `mounted` | Bind-mounted read-only from the host | 1.27 GB | Quick local experiments |
 
-既定を `pinned` としたのは、測定に使用した compiler が image と一体になり、host の CUDA 更新によって benchmark 結果の比較可能性が失われないためです。[プロジェクト概要](../project-overview.md) の成功判定 3 は再現可能な build と測定手順を求めており、image が host 環境に依存する構成はこれを弱めます。
+`pinned` is the default because the compiler used for a measurement then travels with the image, so a CUDA update on the host cannot destroy the comparability of benchmark results. Success criterion 3 in the [Project overview](../project-overview.md) calls for a reproducible build and measurement procedure, and a configuration where the image depends on the host environment weakens it.
 
-CUDA Toolkit 全体は 4.7 GB ありますが、内訳を実測すると 3.2 GB は cuBLAS、cuFFT、cuSOLVER、cuSPARSE、cuRAND であり、本 project では使用しません。必要なのは次の package のみで、`pinned` と `mounted` の差は 360 MB 程度に収まります。
+The full CUDA Toolkit is 4.7 GB, but measuring the breakdown shows that 3.2 GB of it is cuBLAS, cuFFT, cuSOLVER, cuSPARSE, and cuRAND, none of which this project uses. Only the following packages are needed, which keeps the difference between `pinned` and `mounted` to roughly 360 MB.
 
-| package | 用途 |
+| Package | Use |
 | --- | --- |
-| `cuda-nvcc-13-0` | nvcc、cudart、CRT、NVVM、PTX compiler |
-| `cuda-cccl-13-0` | CUB と Thrust。compaction と prefix sum で使用する |
+| `cuda-nvcc-13-0` | nvcc, cudart, CRT, NVVM, PTX compiler |
+| `cuda-cccl-13-0` | CUB and Thrust. Used for compaction and prefix sum |
 | `cuda-sanitizer-13-0` | Compute Sanitizer |
-| `cuda-nvtx-13-0` | 区間計測の注釈 |
-| `cuda-cuobjdump-13-0`、`cuda-nvdisasm-13-0` | 生成 binary の architecture 確認 |
-| `cuda-profiler-api-13-0` | profiler 連携の header |
+| `cuda-nvtx-13-0` | Annotations for interval measurement |
+| `cuda-cuobjdump-13-0`, `cuda-nvdisasm-13-0` | Checking the architecture of the generated binary |
+| `cuda-profiler-api-13-0` | Headers for profiler integration |
 
-install された package の正確な version は image 内の `/opt/aruco3cuda/cuda-provenance.json` へ記録し、`record-environment.sh` が出力する環境情報 JSON へ埋め込みます。
+The exact versions of the installed packages are recorded in `/opt/aruco3cuda/cuda-provenance.json` inside the image and embedded into the environment information JSON that `record-environment.sh` emits.
 
-`mounted` mode は image が host 環境から独立しません。この依存を暗黙にしないため、`verify-environment.sh` は mode を表示し、`mounted` の場合は測定へ使用しないよう警告します。
+In `mounted` mode the image is not independent of the host environment. So that this dependency does not stay implicit, `verify-environment.sh` displays the mode and, in `mounted`, warns against using it for measurement.
 
-### 実機への同期
+### Syncing to the machines
 
-3 機で同じ commit を build して測定するため、`tools/sync-to-host.sh` で同期します。
+To build and measure the same commit on all three machines, sync with `tools/sync-to-host.sh`.
 
 ```
 tools/sync-to-host.sh tobeta@<host>
 ```
 
-除外 pattern は転送元 root からの相対で固定しています。`build*` のように書くと `docker/scripts/build-opencv.sh` まで一致して転送されず、image の build が「file が無い」で失敗します。rsync は除外した file を受信側で削除しないため、一度届いた古い file が残り続けて気付きにくくなります。実際にこの取り違えで 1 機の image build が失敗し、別の 1 機には古い file が残っていました。
+The exclude patterns are fixed relative to the root of the sending side. Writing something like `build*` also matches `docker/scripts/build-opencv.sh`, which is then not transferred, and the image build fails with a missing file. Because rsync does not delete excluded files on the receiving side, an old file that arrived once stays there and is easy to overlook. This mix-up actually caused the image build to fail on one machine, while another machine was left holding an old file.
 
-script は転送後に、git が追跡する全 file の checksum が同期先と一致することを確認します。除外 pattern の書き間違いは転送されない file を静かに生むため、件数と checksum の両方で確かめます。
+After the transfer, the script confirms that the checksums of every git-tracked file match on the destination. A mistake in an exclude pattern silently produces files that are never transferred, so both the file count and the checksums are checked.
 
-### profile
+### Profiles
 
-| profile | base image | 対象 | `ARUCO3_CUDA_ARCH` | 開発 tool |
+| Profile | Base image | Target | `ARUCO3_CUDA_ARCH` | Development tools |
 | --- | --- | --- | --- | --- |
-| `dgx-spark` | `ubuntu:24.04` | DGX Spark GB10 | 121 | 含む |
-| `jetson-orin` | `nvcr.io/nvidia/l4t-cuda:11.4.19-devel`（既定、上書き可） | Jetson AGX Orin | 87 | 含まない |
-| `rtx-blackwell` | `ubuntu:24.04` | GeForce RTX 5070 Ti (GB203) | 120 | 含む |
+| `dgx-spark` | `ubuntu:24.04` | DGX Spark GB10 | 121 | Included |
+| `jetson-orin` | `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` (default, overridable) | Jetson AGX Orin | 87 | Not included |
+| `rtx-blackwell` | `ubuntu:24.04` | GeForce RTX 5070 Ti (GB203) | 120 | Included |
 
-Jetson は `pinned` mode でも NVIDIA の CUDA apt repository を使わず、CUDA を含む `l4t-cuda` を base image とします。`install-cuda-toolkit.sh` は base image に CUDA が存在する場合 install を省略します。base image の tag は実機の JetPack へ合わせて `docker/.env` で指定します。
+Even in `pinned` mode, Jetson does not use NVIDIA's CUDA apt repository; it uses `l4t-cuda`, which contains CUDA, as the base image. `install-cuda-toolkit.sh` skips the installation when CUDA is already present in the base image. The tag of the base image is set in `docker/.env` to match the JetPack version on the machine.
 
-### Jetson 固有の設定
+### Jetson-specific settings
 
-実機検証で必要になった設定です。いずれも Jetson でのみ必要で、DGX Spark には影響しません。
+These settings turned out to be necessary during verification on the machine. All of them are needed only on Jetson and have no effect on DGX Spark.
 
-| 設定 | 理由 |
+| Setting | Reason |
 | --- | --- |
-| `group_add` に video と debug の GID | Tegra の device node は `root:video` が 36 個、`root:debug` が 10 個で権限 0660。非 root 実行では補助グループが無いと開けない |
-| `/var/lib/nvpmodel` と `/etc/nvpmodel.conf` の mount | `nvpmodel` の binary は container に無い。power mode は状態 file と定義 file から読む |
-| `/etc/nv_tegra_release` の mount | L4T version の記録に使う |
-| device tree の model file の mount | Docker は既定で `/sys/firmware` を mask するため、基板名を直接読めない |
+| The video and debug GIDs in `group_add` | Tegra has 36 device nodes owned by `root:video` and 10 by `root:debug`, all with permissions 0660. A non-root process cannot open them without the supplementary groups |
+| Mounting `/var/lib/nvpmodel` and `/etc/nvpmodel.conf` | The `nvpmodel` binary is not in the container. The power mode is read from the state file and the definition file |
+| Mounting `/etc/nv_tegra_release` | Used to record the L4T version |
+| Mounting the device tree model file | Docker masks `/sys/firmware` by default, so the board name cannot be read directly |
 
-補助グループを付与しないと、`cudaGetDeviceCount` が `NvRmMemInitNvmap failed with Permission denied` を経て `operation not supported` で失敗します。`libcuda.so.1` は注入されているため、driver の問題と紛らわしい失敗になります。
+Without the supplementary groups, `cudaGetDeviceCount` fails with `operation not supported` after `NvRmMemInitNvmap failed with Permission denied`. Since `libcuda.so.1` is injected, the failure looks confusingly like a driver problem.
 
-`mounted` mode では、host の CUDA Toolkit binary を container 内で実行するため、container の glibc が host CUDA Toolkit の要求 version 以上である必要があります。この場合の base image は JetPack 5.x なら `ubuntu:20.04`、JetPack 6.x なら `ubuntu:22.04` を指定します。
+In `mounted` mode the host's CUDA Toolkit binaries run inside the container, so the container's glibc must be at least the version the host CUDA Toolkit requires. The base image in this case is `ubuntu:20.04` for JetPack 5.x and `ubuntu:22.04` for JetPack 6.x.
 
-### image の構成
+### Image structure
 
 ```mermaid
 flowchart LR
-    B["BASE_IMAGE"] --> S1["stage: toolchain<br/>cmake・ninja・gcc・gtest"]
-    S1 --> S2["stage: cuda<br/>pinned なら CUDA package を install<br/>mounted なら何もしない"]
-    S2 --> S3["stage: opencv<br/>OpenCV 4.14.0 を commit 固定で build"]
-    S3 --> S4["stage: dev<br/>script 配置と環境変数"]
+    B["BASE_IMAGE"] --> S1["stage: toolchain<br/>cmake, ninja, gcc, gtest"]
+    S1 --> S2["stage: cuda<br/>install the CUDA packages if pinned<br/>do nothing if mounted"]
+    S2 --> S3["stage: opencv<br/>build OpenCV 4.14.0 at a fixed commit"]
+    S3 --> S4["stage: dev<br/>script placement and environment variables"]
 ```
 
-`toolchain` stage は、base image の CMake が 3.24 未満の場合にのみ Kitware の apt repository を追加します。Ubuntu 20.04 の CMake は 3.16 であり、[ADR-0002](../adr/0002-toolchain-and-target-baseline.md) の要求を満たさないためです。
+The `toolchain` stage adds Kitware's apt repository only when the CMake in the base image is older than 3.24. CMake on Ubuntu 20.04 is 3.16, which does not meet the requirement in [ADR-0002](../adr/0002-toolchain-and-target-baseline.md).
 
-`clang-format` と `clang-tidy` は `dgx-spark` profile にのみ含めます。base image ごとに LLVM の version が異なると同じ source に対する format 結果が変わり、差分確認が成立しなくなるためです。format と静的解析は開発 profile を正本とします。
+`clang-format` and `clang-tidy` are included only in the `dgx-spark` profile. If the LLVM version differed between base images, the formatting result for the same source would change and diff review would break down. The development profile is the authority for formatting and static analysis.
 
-### OpenCV の build 方針
+### OpenCV build policy
 
-- ArUco 検出は OpenCV 4.x では `objdetect` module に含まれるため、`opencv_contrib` は不要です。
-- `BUILD_LIST` を `core,imgproc,imgcodecs,calib3d,objdetect` に限定し、GUI backend、動画入出力、python binding を無効にします。
-- image build 時点では CUDA Toolkit が mount されていないため、`WITH_CUDA=OFF` で build します。CPU 基準実装にはこれで十分です。
-- `cv::cuda::GpuMat` との相互変換が必要になる段階では、起動中の container 内で `build-opencv.sh --with-cuda --cuda-arch <arch> --prefix /opt/opencv-cuda` を実行し、named volume へ install します。
-- 取得元 commit と build option は `/opt/opencv/share/aruco3cuda/opencv-provenance.json` へ記録し、環境情報 JSON へ埋め込みます。
+- ArUco detection is part of the `objdetect` module in OpenCV 4.x, so `opencv_contrib` is not needed.
+- `BUILD_LIST` is limited to `core,imgproc,imgcodecs,calib3d,objdetect`, and GUI backends, video I/O, and the Python bindings are disabled.
+- The CUDA Toolkit is not mounted at image build time, so the build uses `WITH_CUDA=OFF`. That is sufficient for the CPU reference implementation.
+- When conversion to and from `cv::cuda::GpuMat` becomes necessary, run `build-opencv.sh --with-cuda --cuda-arch <arch> --prefix /opt/opencv-cuda` inside the running container and install into a named volume.
+- The source commit and build options are recorded in `/opt/opencv/share/aruco3cuda/opencv-provenance.json` and embedded into the environment information JSON.
 
-### 使用方法
+### Usage
 
 ```bash
-cp docker/.env.example docker/.env      # 実機に合わせて編集する
+cp docker/.env.example docker/.env      # edit to match the machine
 
-# pinned mode (既定)
+# pinned mode (default)
 docker compose -f docker/compose.yaml build dgx-spark
 docker compose -f docker/compose.yaml run --rm dgx-spark verify-environment.sh
 docker compose -f docker/compose.yaml run --rm dgx-spark smoke-test.sh
 docker compose -f docker/compose.yaml run --rm dgx-spark record-environment.sh /workspace/env.json
-docker compose -f docker/compose.yaml run --rm dgx-spark        # 対話 shell
+docker compose -f docker/compose.yaml run --rm dgx-spark        # interactive shell
 
-# project の build と test
+# Build and test the project
 docker compose -f docker/compose.yaml run --rm dgx-spark bash -c '
   cmake --preset portability && cmake --build --preset portability && ctest --preset portability'
 
-# mounted mode。compose.mounted.yaml を重ねる
+# mounted mode: overlay compose.mounted.yaml
 docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml build dgx-spark
 docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml run --rm dgx-spark verify-environment.sh
 ```
 
-repository は `/workspace` へ bind mount します。build 出力は `build/` へ書き出し、`.gitignore` で除外します。named volume にしないのは、`compile_commands.json` を host 側の editor と language server から参照できるようにするためです。
+The repository is bind-mounted at `/workspace`. Build output goes to `build/` and is excluded by `.gitignore`. A named volume is not used, so that `compile_commands.json` can be read by the editor and language server on the host.
 
-container は `docker/.env` の `ARUCO3_UID` と `ARUCO3_GID` で指定した uid と gid で実行します。既定の root 実行では、bind mount した repository へ root 所有の file が作られ、host 側から削除も編集もできなくなるためです。
+The container runs with the uid and gid given by `ARUCO3_UID` and `ARUCO3_GID` in `docker/.env`. Under the default root execution, root-owned files would be created in the bind-mounted repository and the host could neither delete nor edit them.
 
-CUDA 対応 OpenCV を `/opt/opencv-cuda` へ install する場合のみ、その named volume へ書き込む権限が必要になります。この操作は `--user root` を明示して実行します。
+Write permission on the named volume is needed only when installing the CUDA-enabled OpenCV into `/opt/opencv-cuda`. That operation is run with an explicit `--user root`.
 
 ```bash
 docker compose -f docker/compose.yaml run --rm --user root dgx-spark \
   build-opencv.sh --with-cuda --cuda-arch 12.1 --prefix /opt/opencv-cuda
 ```
 
-### 環境検査
+### Environment verification
 
-CUDA Toolkit を mount 方式にすると、mount 漏れや version 不整合が build 時の不可解な失敗として現れます。`verify-environment.sh` は container 内で次を検査し、原因が分かる形で失敗させます。
+With the CUDA Toolkit supplied by mount, a missing mount or a version mismatch shows up as an inscrutable build failure. `verify-environment.sh` checks the following inside the container and fails in a way that makes the cause clear.
 
-1. CUDA Toolkit が使用でき `nvcc` が実行できる。
-2. `nvcc` が `ARUCO3_CUDA_ARCH` の architecture に対応している。
-3. `nvcc` と host compiler の組み合わせで実際に compile できる。
-4. NVIDIA driver library が注入され、CUDA から device を列挙して kernel を実行できる。
-5. OpenCV が install され provenance を読み取れる。
+1. The CUDA Toolkit is available and `nvcc` can run.
+2. `nvcc` supports the architecture given by `ARUCO3_CUDA_ARCH`.
+3. The combination of `nvcc` and the host compiler can actually compile.
+4. The NVIDIA driver libraries are injected, and CUDA can enumerate devices and launch a kernel.
+5. OpenCV is installed and its provenance can be read.
 
-device の確認に `nvidia-smi` を使用しません。Jetson の L4T には `nvidia-smi` が存在しないため、両対象機で成立する CUDA runtime API の呼び出しで確認します。probe を compile して実行し、device 数、名前、Compute Capability、統合 GPU かどうかを取得します。`nvidia-smi` の有無は合否に含めず、補助情報として表示します。
+`nvidia-smi` is not used to check the device. L4T on Jetson has no `nvidia-smi`, so the check uses CUDA runtime API calls, which work on both target machines. A probe is compiled and run to obtain the device count, name, Compute Capability, and whether the GPU is integrated. The presence of `nvidia-smi` is not part of the pass/fail decision; it is displayed as supplementary information.
 
-`ARUCO3_VERIFY_ON_START=1` を設定すると、container 起動時に自動実行し、不合格なら起動を中止します。
+Setting `ARUCO3_VERIFY_ON_START=1` runs the verification automatically at container startup and aborts startup on failure.
 
-`smoke-test.sh` は環境検査より踏み込み、`nvcc` が OpenCV を含む translation unit を compile でき、生成した実行 file が GPU 上で動作し、ArUco3 検出戦略が期待どおり動くところまでを確認します。これは container 環境の smoke test であり、project の unit test ではありません。project 側の test は `ctest` で実行します。
+`smoke-test.sh` goes further than environment verification: it confirms that `nvcc` can compile a translation unit that includes OpenCV, that the resulting executable runs on the GPU, and that the ArUco3 detection strategy behaves as expected. This is a smoke test of the container environment, not the project's unit tests. The project's own tests are run with `ctest`.
 
-### 環境情報の記録
+### Recording environment information
 
-`record-environment.sh` は、[評価計画](../evaluation-plan.md) が要求する環境情報を JSON で出力します。GPU 名、Compute Capability、driver version、最大 SM clock、Jetson の power mode、CUDA Toolkit、gcc、CMake、OpenCV の version と commit を含みます。benchmark 結果はこの JSON と対にして保存します。
+`record-environment.sh` emits the environment information required by the [Evaluation plan](../evaluation-plan.md) as JSON. It includes the GPU name, Compute Capability, driver version, maximum SM clock, the Jetson power mode, and the versions and commits of the CUDA Toolkit, gcc, CMake, and OpenCV. Benchmark results are stored paired with this JSON.
 
-## 実装上の判断
+## Design decisions
 
-- CUDA Toolkit を image へ固定する `pinned` を既定とします。本 project の成果物は比較測定であり、測定に使用した compiler が image と一体でなければ、後から結果を再現できません。必要な package のみに絞れば追加は 360 MB であり、再現性と釣り合いません。
-- `mounted` を選択肢として残すのは、host の Toolkit を差し替えて素早く試す用途があるためです。この mode では image が host 環境から独立しないため、`verify-environment.sh` が mode を表示して測定へ使わないよう警告します。
-- `mounted` mode では `/usr/local/cuda` が多段 symlink であるため、mount 元に実体の directory を指定します。symlink を mount すると container 内で解決できません。
-- base image を profile ごとに分け、`nvidia/cuda` 系 image を base にしません。base を `ubuntu` にすることで、CUDA Toolkit の供給元が mount だけになり、image 内 Toolkit と mount Toolkit が混在する状態を避けられます。
-- OpenCV を image へ含めるのは、これが CPU 基準結果の正本であり、測定間で version が変わってはならないためです。
+- `pinned`, which fixes the CUDA Toolkit into the image, is the default. The deliverable of this project is comparative measurement, and unless the compiler used for a measurement travels with the image, the results cannot be reproduced later. Narrowed down to only the required packages, the addition is 360 MB, which does not outweigh reproducibility.
+- `mounted` is kept as an option because there is a use for swapping the host's Toolkit and trying something quickly. In this mode the image is not independent of the host environment, so `verify-environment.sh` displays the mode and warns against using it for measurement.
+- In `mounted` mode, `/usr/local/cuda` is a multi-level symlink, so the mount source is set to the real directory. A mounted symlink cannot be resolved inside the container.
+- The base image is chosen per profile and is not an `nvidia/cuda` image. With `ubuntu` as the base, the mount becomes the only source of the CUDA Toolkit, which avoids a state where a Toolkit in the image and a mounted Toolkit coexist.
+- OpenCV is included in the image because it is the authoritative source of the CPU reference results and its version must not change between measurements.
 
-## 未確定事項
+## Open questions
 
-- Jetson を JetPack 6.x へ更新する場合の base image tag と CUDA version。
-- `pinned` mode の package version を patch 単位まで固定するか。現在は package 名で CUDA 13.0 系までを固定し、実際の version を provenance へ記録する方式です。
-- profiler (Nsight Systems、Nsight Compute) を image へ含めるか、host 側で実行するか。[ADR-0002](../adr/0002-toolchain-and-target-baseline.md) の未確定事項と同じです。
-- CI を container 内で実行する際の runner の種類。
-- image を registry へ配布するか、各機で build するか。
-- benchmark 時に clock と power mode を固定する操作を container 内から行うか、host 側の手順とするか。
-- `.devcontainer` を追加して editor 統合を提供するか。
+- The base image tag and CUDA version if Jetson is updated to JetPack 6.x.
+- Whether to pin the package versions in `pinned` mode down to the patch level. Currently the package names fix things to the CUDA 13.0 line, and the actual versions are recorded in the provenance.
+- Whether to include the profilers (Nsight Systems, Nsight Compute) in the image or run them on the host. This is the same open question as in [ADR-0002](../adr/0002-toolchain-and-target-baseline.md).
+- The kind of runner to use when running CI inside a container.
+- Whether to distribute images through a registry or build them on each machine.
+- Whether fixing the clock and power mode for benchmarking is done from inside the container or as a host-side procedure.
+- Whether to add a `.devcontainer` for editor integration.
 
-## 関連
+## See also
 
-- [実装計画](../implementation-plan.md)
-- [評価計画](../evaluation-plan.md)
-- [ADR-0002: build 基盤と対象環境の baseline を固定する](../adr/0002-toolchain-and-target-baseline.md)
-- [Code Provenance 記録](../code-provenance.md)
+- [Implementation plan](../implementation-plan.md)
+- [Evaluation plan](../evaluation-plan.md)
+- [ADR-0002: Fix the build foundation and target environment baseline](../adr/0002-toolchain-and-target-baseline.md)
+- [Code provenance records](../code-provenance.md)

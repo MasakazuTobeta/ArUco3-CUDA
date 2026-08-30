@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 差分レポート tool の CLI。
+// CLI of the difference report tool.
 //
-// 目的:
-//   CPU 基準実装と評価対象の経路を同じ画像へ適用し、差異を種類ごとに
-//   分類して報告する。一致率 1 つでは、四隅がわずかにずれているのか
-//   マーカーを取りこぼしているのかが区別できない。
+// Purpose:
+//   Runs the CPU baseline implementation and the route under evaluation on the same
+//   images and reports the differences classified by kind. A single agreement rate
+//   cannot distinguish a slight corner displacement from a missed marker.
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -32,21 +32,22 @@ namespace {
 using aruco3cuda::report::CompareConfig;
 
 void print_usage(std::ostream& out) {
-    out << "使用方法: aruco3cuda_report [option]... --input <画像>...\n"
+    out << "usage: aruco3cuda_report [option]... --input <image>...\n"
         << "\n"
-        << "  --input <path>                 入力画像。複数回指定できる\n"
-        << "  --output <path>                報告 JSON の出力先。既定は出力しない\n"
-        << "  --dictionary <name>            既定 DICT_ARUCO_MIP_36h12\n"
-        << "  --corner-tolerance-px <f>      四隅の許容差。既定 1.0\n"
-        << "  --match-radius-ratio <f>       対応付けの半径。辺長比。既定 0.5\n"
-        << "  --use-aruco3 <0|1>             ArUco3 検出戦略。既定 1\n"
-        << "  --fail-on-diff                 差異があれば終了コードを 1 にする\n"
-        << "  --help                         この説明を表示して終了\n";
+        << "  --input <path>                 input image; may be given several times\n"
+        << "  --output <path>                destination of the JSON report; none by default\n"
+        << "  --dictionary <name>            default DICT_ARUCO_MIP_36h12\n"
+        << "  --corner-tolerance-px <f>      corner tolerance; default 1.0\n"
+        << "  --match-radius-ratio <f>       matching radius as a side-length ratio; "
+           "default 0.5\n"
+        << "  --use-aruco3 <0|1>             ArUco3 detection strategy; default 1\n"
+        << "  --fail-on-diff                 exit with code 1 if there is any difference\n"
+        << "  --help                         print this help and exit\n";
 }
 
 bool take_value(int argc, char** argv, int* index, const char* option, std::string* out) {
     if (*index + 1 >= argc) {
-        std::cerr << "引数が不足している: " << option << '\n';
+        std::cerr << "missing argument for: " << option << '\n';
         return false;
     }
     ++(*index);
@@ -80,11 +81,11 @@ bool parse_bool_flag(const std::string& text, bool* out) {
     return false;
 }
 
-/// 画像を device へ複製し、view を作る。
+/// Copies an image to the device and builds a view over it.
 ///
-/// 評価対象は device memory の view を受け取るため、host 画像をそのまま
-/// 渡すことはできない。転送 pitch は複製元と別に取り、pitch を持つ入力
-/// でも成立することを確かめる。
+/// The route under evaluation takes a view of device memory, so a host image cannot
+/// be passed as is. The transfer pitch is chosen independently of the source pitch,
+/// which also confirms that a pitched input works.
 class DeviceImage {
 public:
     DeviceImage() = default;
@@ -171,7 +172,7 @@ int main(int argc, char** argv) {
             if (!take_value(argc, argv, &i, "--corner-tolerance-px", &value) ||
                 !parse_double(value, &compare_config.corner_tolerance_px_) ||
                 compare_config.corner_tolerance_px_ < 0.0) {
-                std::cerr << "--corner-tolerance-px は 0 以上の実数である必要がある\n";
+                std::cerr << "--corner-tolerance-px must be a real number >= 0\n";
                 return EXIT_FAILURE;
             }
             continue;
@@ -180,7 +181,7 @@ int main(int argc, char** argv) {
             if (!take_value(argc, argv, &i, "--match-radius-ratio", &value) ||
                 !parse_double(value, &compare_config.match_radius_ratio_) ||
                 compare_config.match_radius_ratio_ <= 0.0) {
-                std::cerr << "--match-radius-ratio は正の実数である必要がある\n";
+                std::cerr << "--match-radius-ratio must be a positive real number\n";
                 return EXIT_FAILURE;
             }
             continue;
@@ -188,25 +189,25 @@ int main(int argc, char** argv) {
         if (argument == "--use-aruco3") {
             if (!take_value(argc, argv, &i, "--use-aruco3", &value) ||
                 !parse_bool_flag(value, &use_aruco3)) {
-                std::cerr << "--use-aruco3 は 0 か 1 である必要がある\n";
+                std::cerr << "--use-aruco3 must be 0 or 1\n";
                 return EXIT_FAILURE;
             }
             continue;
         }
-        std::cerr << "不明な option: " << argument << '\n';
+        std::cerr << "unknown option: " << argument << '\n';
         print_usage(std::cerr);
         return EXIT_FAILURE;
     }
 
     if (inputs.empty()) {
-        std::cerr << "--input が 1 つも指定されていない\n";
+        std::cerr << "no --input was given\n";
         print_usage(std::cerr);
         return EXIT_FAILURE;
     }
 
     int device_count = 0;
     if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
-        std::cerr << "CUDA device が見つからない\n";
+        std::cerr << "no CUDA device found\n";
         return EXIT_FAILURE;
     }
 
@@ -230,7 +231,7 @@ int main(int argc, char** argv) {
     for (const std::string& path : inputs) {
         const cv::Mat image = cv::imread(path, cv::IMREAD_GRAYSCALE);
         if (image.empty()) {
-            std::cerr << "画像を読めない: " << path << '\n';
+            std::cerr << "cannot read image: " << path << '\n';
             return EXIT_FAILURE;
         }
 
@@ -238,25 +239,25 @@ int main(int argc, char** argv) {
         std::string error;
         if (!aruco3cuda::reference::detect_image(path, reference_config, &reference_result,
                                                  &error)) {
-            std::cerr << "CPU 基準の検出に失敗した: " << error << '\n';
+            std::cerr << "CPU baseline detection failed: " << error << '\n';
             return EXIT_FAILURE;
         }
 
         DeviceImage device;
         if (!device.upload(image)) {
-            std::cerr << "device への転送に失敗した: " << path << '\n';
+            std::cerr << "transfer to the device failed: " << path << '\n';
             return EXIT_FAILURE;
         }
         aruco3cuda::hybrid::HybridDetector detector;
         std::string message;
         if (detector.initialize(detector_config, dictionary_name, image.cols, image.rows,
                                 &message) != aruco3cuda::Status::kOk) {
-            std::cerr << "評価対象の初期化に失敗した: " << message << '\n';
+            std::cerr << "initialization of the route under evaluation failed: " << message << '\n';
             return EXIT_FAILURE;
         }
         aruco3cuda::hybrid::HybridResult hybrid_result;
         if (detector.detect(device.view(), &hybrid_result, &message) != aruco3cuda::Status::kOk) {
-            std::cerr << "評価対象の検出に失敗した: " << message << '\n';
+            std::cerr << "detection by the route under evaluation failed: " << message << '\n';
             return EXIT_FAILURE;
         }
 
@@ -280,12 +281,12 @@ int main(int argc, char** argv) {
     if (!output_path.empty()) {
         std::ofstream output(output_path);
         if (!output.is_open()) {
-            std::cerr << "出力先を開けない: " << output_path << '\n';
+            std::cerr << "cannot open the output destination: " << output_path << '\n';
             return EXIT_FAILURE;
         }
         aruco3cuda::report::write_json_report(output, comparisons, summary, compare_config);
         if (!output) {
-            std::cerr << "出力の書き込みに失敗した: " << output_path << '\n';
+            std::cerr << "writing the output failed: " << output_path << '\n';
             return EXIT_FAILURE;
         }
     }

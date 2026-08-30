@@ -1,17 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# CLI の自動テスト。
+# Automated CLI tests.
 #
-# 目的:
-#   CLI は利用者が最初に触れる境界であり、引数解析の誤りは実行時まで表面化しない。
-#   正常系、異常系、境界値を ctest から実行し、終了コードと出力で判定する。
+# Purpose:
+#   The CLI is the first boundary a user touches, and mistakes in argument
+#   parsing do not surface until run time. Nominal, error, and boundary cases
+#   are run from ctest and judged by exit code and output.
 #
-# 備考:
-#   実行 file を別 process として起動するが、gcov は process 終了時に計測結果を
-#   書き出すため、この経路もカバレッジへ反映される。
+# Note:
+#   The executables run as separate processes, but gcov writes its counters out
+#   at process exit, so this path is reflected in coverage as well.
 set(kCliCorpusDir "${CMAKE_CURRENT_BINARY_DIR}/cli-corpus")
 
-# 画像を必要とする test のための fixture。corpusgen 自体の正常系も兼ねる。
+# Fixture for tests that need images. It doubles as the nominal case for corpusgen itself.
 add_test(NAME cli.corpusgen.setup
   COMMAND $<TARGET_FILE:aruco3cuda_corpusgen_cli>
           --preset smoke --seed 20260827
@@ -19,8 +20,8 @@ add_test(NAME cli.corpusgen.setup
           --manifest "${kCliCorpusDir}/manifest.json")
 set_tests_properties(cli.corpusgen.setup PROPERTIES FIXTURES_SETUP cli_corpus TIMEOUT 300)
 
-# 引数を取らない、または入力を必要としない検査。
-# 形式: <test 名> <target> <期待する成功可否> <引数...>
+# Checks that take no arguments, or that need no input.
+# Form: <test name> <target> <expected to succeed> <arguments...>
 function(aruco3cuda_add_cli_test test_name target expect_success)
   add_test(NAME "${test_name}" COMMAND $<TARGET_FILE:${target}> ${ARGN})
   set_tests_properties("${test_name}" PROPERTIES TIMEOUT 300)
@@ -41,7 +42,8 @@ aruco3cuda_add_cli_test(cli.reference.invalid_integer aruco3cuda_reference_runne
   --threads abc --input /nonexistent.png)
 aruco3cuda_add_cli_test(cli.reference.invalid_real aruco3cuda_reference_runner FALSE
   --min-marker-length-ratio xyz --input /nonexistent.png)
-# 境界値: ArUco3 有効で縮小の指定が両方 0 の組み合わせは OpenCV 側が拒否する。
+# Boundary: with ArUco3 enabled, OpenCV itself rejects the combination where both
+# downscaling parameters are 0.
 aruco3cuda_add_cli_test(cli.reference.aruco3_zero_parameters aruco3cuda_reference_runner FALSE
   --use-aruco3 1 --min-side-length-canonical 0 --min-marker-length-ratio 0
   --input /nonexistent.png)
@@ -60,7 +62,7 @@ aruco3cuda_add_cli_test(cli.reference.detector_options aruco3cuda_reference_runn
   --adaptive-thresh-win-max 21 --adaptive-thresh-win-step 8
   --input /nonexistent/image.png)
 
-# 出力先を指定しない場合は標準出力へ書く。
+# With no output path given, the result is written to standard output.
 add_test(NAME cli.reference.detect_to_stdout
   COMMAND $<TARGET_FILE:aruco3cuda_reference_runner>
           --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png" --omit-timing)
@@ -98,11 +100,11 @@ aruco3cuda_add_cli_test(cli.dictgen.unknown_dictionary aruco3cuda_dictgen FALSE
   --dictionary DICT_NOPE --output "${CMAKE_CURRENT_BINARY_DIR}/cli-bad.cpp")
 aruco3cuda_add_cli_test(cli.dictgen.check_missing_file aruco3cuda_dictgen FALSE
   --dictionary DICT_ARUCO_MIP_36h12 --check /nonexistent/table.cpp)
-# 生成物が OpenCV と整合していることを継続的に確認する。
+# Continuously confirm that the generated table stays consistent with OpenCV.
 aruco3cuda_add_cli_test(cli.dictgen.check_generated aruco3cuda_dictgen TRUE
   --dictionary DICT_ARUCO_MIP_36h12
   --check "${PROJECT_SOURCE_DIR}/src/dictionary/generated/dict_aruco_mip_36h12.cpp")
-# 生成した内容が commit 済みの内容と一致することも確認する。
+# Also confirm that freshly generated content matches what is committed.
 add_test(NAME cli.dictgen.generate_matches_committed
   COMMAND "${CMAKE_COMMAND}"
           -DDICTGEN=$<TARGET_FILE:aruco3cuda_dictgen>
@@ -118,32 +120,36 @@ aruco3cuda_add_cli_test(cli.bench.unknown_option aruco3cuda_bench_cli FALSE --no
 aruco3cuda_add_cli_test(cli.bench.missing_value aruco3cuda_bench_cli FALSE --warmup)
 aruco3cuda_add_cli_test(cli.bench.invalid_number aruco3cuda_bench_cli FALSE --warmup abc --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.unknown_route aruco3cuda_bench_cli FALSE --route CUDA-Nope --input /x.png)
-# 経路と memory 種別の組合せが不正なら失敗する。CUDA-E2E は host 入力の経路であり
-# device 常駐入力 (M-Device) を受け付けない。この検査を欠くと、指定と異なる条件で
-# 測ったまま気付かない。
+# An invalid combination of route and memory kind must fail. CUDA-E2E is the
+# host-input route and does not accept device-resident input (M-Device). Without
+# this check, a run could measure under conditions other than the ones requested
+# and nobody would notice.
 aruco3cuda_add_cli_test(cli.bench.route_memory_mismatch aruco3cuda_bench_cli FALSE
   --route CUDA-E2E --memory-mode M-Device --warmup 0 --latency-iterations 1
   --throughput-frames 0 --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.missing_image aruco3cuda_bench_cli FALSE
   --warmup 0 --latency-iterations 1 --input /nonexistent/image.png)
-# 境界値: 遅延測定の回数が 0 は不正。
+# Boundary: zero latency iterations is invalid.
 aruco3cuda_add_cli_test(cli.bench.zero_iterations aruco3cuda_bench_cli FALSE
   --warmup 0 --latency-iterations 0 --input /x.png)
 
-# 経路名の解析。実装済みの CPU 以外も名前としては受理される必要がある。
+# Route-name parsing. Routes other than the implemented CPU one must still be
+# accepted as names.
 aruco3cuda_add_cli_test(cli.bench.route_cpu aruco3cuda_bench_cli FALSE
   --route CPU --warmup 0 --latency-iterations 1 --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.route_resident aruco3cuda_bench_cli FALSE
   --route CUDA-Resident --warmup 0 --latency-iterations 1 --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.route_hybrid aruco3cuda_bench_cli FALSE
   --route Hybrid --warmup 0 --latency-iterations 1 --input /x.png)
-# 検出設定を渡す経路。値の解析に誤りがあれば測定条件が記録と食い違う。
+# The path that passes detector settings. If value parsing is wrong, the actual
+# measurement conditions disagree with the recorded ones.
 aruco3cuda_add_cli_test(cli.bench.detector_options aruco3cuda_bench_cli FALSE
   --dictionary DICT_6X6_250 --threads 2 --use-aruco3 0
   --min-marker-length-ratio 0.1 --min-side-length-canonical 48
   --warmup 0 --latency-iterations 1 --input /nonexistent/image.png)
 
-# CPU 親和性。性能 core と効率 core が混在する機では固定しないと値が二極化する。
+# CPU affinity. On machines that mix performance and efficiency cores, the
+# measurements split into two clusters unless affinity is pinned.
 aruco3cuda_add_cli_test(cli.bench.invalid_cpu_list aruco3cuda_bench_cli FALSE
   --cpu-list 0,abc --warmup 0 --latency-iterations 1 --input /x.png)
 aruco3cuda_add_cli_test(cli.bench.empty_cpu_list aruco3cuda_bench_cli FALSE
@@ -158,7 +164,7 @@ add_test(NAME cli.bench.measure
           --output "${CMAKE_CURRENT_BINARY_DIR}/cli-bench.jsonl")
 set_tests_properties(cli.bench.measure PROPERTIES FIXTURES_REQUIRED cli_corpus TIMEOUT 300)
 
-# --- 差分レポート tool ---
+# --- diff report tool ---
 aruco3cuda_add_cli_test(cli.report.help aruco3cuda_report_cli TRUE --help)
 aruco3cuda_add_cli_test(cli.report.no_input aruco3cuda_report_cli FALSE --fail-on-diff)
 aruco3cuda_add_cli_test(cli.report.unknown_option aruco3cuda_report_cli FALSE --nonexistent-option)
@@ -174,8 +180,8 @@ aruco3cuda_add_cli_test(cli.report.invalid_use_aruco3 aruco3cuda_report_cli FALS
 aruco3cuda_add_cli_test(cli.report.missing_image aruco3cuda_report_cli FALSE
   --input /nonexistent/image.png)
 
-# 正常系: 合成 corpus に対して CPU 基準と一致することを ctest から確認する。
-# --fail-on-diff により、差異があれば test が失敗する。
+# Nominal: confirm from ctest that results on the synthetic corpus match the CPU
+# baseline. With --fail-on-diff, any difference fails the test.
 add_test(NAME cli.report.matches_reference
   COMMAND $<TARGET_FILE:aruco3cuda_report_cli>
           --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png"
@@ -185,7 +191,7 @@ add_test(NAME cli.report.matches_reference
           --fail-on-diff)
 set_tests_properties(cli.report.matches_reference PROPERTIES
   FIXTURES_REQUIRED cli_corpus TIMEOUT 300
-  PASS_REGULAR_EXPRESSION "差異は無い")
+  PASS_REGULAR_EXPRESSION "No differences")
 
 aruco3cuda_add_cli_test(cli.report.unwritable_output aruco3cuda_report_cli FALSE
   --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png"
@@ -193,8 +199,8 @@ aruco3cuda_add_cli_test(cli.report.unwritable_output aruco3cuda_report_cli FALSE
 set_tests_properties(cli.report.unwritable_output PROPERTIES FIXTURES_REQUIRED cli_corpus)
 
 
-# 公開 API の Doxygen 要件を継続的に検査する。
-# 宣言を追加したときに記載漏れへ気付けるようにする。
+# Continuously check the Doxygen requirements for the public API, so that a
+# missing entry becomes visible as soon as a declaration is added.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME doc.doxygen_completeness
@@ -203,7 +209,7 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(doc.doxygen_completeness PROPERTIES TIMEOUT 120)
 endif()
 
-# 集計 script も CLI の一部として検査する。
+# The aggregation script is checked as part of the CLI as well.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME cli.aggregate.summarize
@@ -211,7 +217,7 @@ if(Python3_Interpreter_FOUND)
             "${CMAKE_CURRENT_BINARY_DIR}/cli-bench.jsonl")
   set_tests_properties(cli.aggregate.summarize PROPERTIES
     DEPENDS cli.bench.measure TIMEOUT 300
-    PASS_REGULAR_EXPRESSION "測定結果")
+    PASS_REGULAR_EXPRESSION "=== Measurement results ===")
   add_test(NAME cli.aggregate.rejects_broken_input
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/bench/aggregate.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")

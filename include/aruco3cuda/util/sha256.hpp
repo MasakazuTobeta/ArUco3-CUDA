@@ -8,58 +8,62 @@
 
 namespace aruco3cuda::util {
 
-/// SHA-256 を逐次計算する。FIPS 180-4 の仕様に基づく独自実装。
+/// Computes SHA-256 incrementally. An original implementation based on the FIPS 180-4
+/// specification.
 ///
-/// 用途:
-///   評価に使用した入力画像と結果 JSON を対応付けるための checksum。
-///   暗号用途ではなく、同一性の確認に使用する。
+/// Intended use:
+///   A checksum that ties the input images used for an evaluation to the resulting JSON.
+///   It is meant for confirming identity, not for cryptographic purposes.
 ///
-/// 所有権:
-///   内部状態は instance が所有し、destructor で解放される。引数として
-///   受け取る領域は読み取るだけで、複製も保持もしない。
-///   **この所有権は以下の全ての public member 関数に適用される。**
+/// Ownership:
+///   The instance owns its internal state, which is released in the destructor. Memory
+///   taken as an argument is only read, never copied or retained.
+///   **This ownership applies to all public member functions below.**
 ///
-/// 同期動作:
-///   host 専用であり同期点を持たない。内部に計算途中の状態を持つため、
-///   1 つの instance を複数 thread から同時に使用してはならない。
-///   **この同期動作は以下の全ての public member 関数に適用される。**
+/// Synchronization:
+///   Host only, with no synchronization point. It carries in-progress computation state,
+///   so a single instance must not be used from several threads at once.
+///   **This synchronization applies to all public member functions below.**
 ///
-/// 入力例:
+/// Example input:
 ///   Sha256 hasher;
 ///   hasher.update("abc", 3);
 ///   const std::string digest = hasher.finalize();
-/// 出力例:
+/// Example output:
 ///   digest == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 class Sha256 {
 public:
-    /// 初期 hash 値を設定した状態で構築する。
+    /// Constructs the object with the initial hash values set.
     ///
-    /// 同期動作: host 専用であり同期点を持たない。
-    /// 所有権: 内部 buffer は instance が所有し、destructor で解放される。
+    /// Synchronization: host only, with no synchronization point.
+    /// Ownership: the instance owns its internal buffer, which is released in the
+    ///            destructor.
     Sha256();
 
-    /// data の先頭 size byte を取り込む。複数回呼び出せる。
+    /// Consumes the first size bytes of data. May be called repeatedly.
     ///
-    /// 分割して呼んでも 1 度に呼んでも同じ結果になる。
+    /// Feeding the input in pieces gives the same result as feeding it all at once.
     ///
-    /// @param data 取り込む領域の先頭。nullptr を渡してよく、その場合は何もしない。
-    ///             領域の所有権は呼出側にあり、この関数は複製も保持もしない。
-    /// @param size 取り込む byte 数。0 を渡してよく、その場合は何もしない。
-    /// @return 無し。
+    /// @param data The start of the memory to consume. May be nullptr, in which case
+    ///             nothing happens. The caller owns the memory, and this function
+    ///             neither copies nor retains it.
+    /// @param size The number of bytes to consume. May be 0, in which case nothing
+    ///             happens.
+    /// @return Nothing.
     ///
-    /// 入力例: update("ab", 2) の後 update("c", 1)
-    /// 出力例: finalize() が "abc" の hash を返す
+    /// Example input: update("ab", 2) followed by update("c", 1)
+    /// Example output: finalize() returns the hash of "abc"
     void update(const void* data, std::size_t size);
 
-    /// 取り込んだ内容の hash を返す。
+    /// Returns the hash of everything consumed.
     ///
-    /// padding を適用して計算を確定させるため、呼出後に同じ instance を
-    /// 再利用してはならない。再利用すると誤った値を返す。
+    /// Padding is applied and the computation is finalized, so the same instance must
+    /// not be reused after this call. Reusing it returns an incorrect value.
     ///
-    /// @return 64 文字の小文字 16 進文字列。
+    /// @return A 64-character lowercase hexadecimal string.
     ///
-    /// 入力例: update("abc", 3) の後に呼ぶ
-    /// 出力例: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    /// Example input: called after update("abc", 3)
+    /// Example output: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     std::string finalize();
 
 private:
@@ -71,24 +75,26 @@ private:
     std::size_t buffer_size_;
 };
 
-/// file 全体の SHA-256 を計算する。
+/// Computes the SHA-256 of an entire file.
 ///
-/// @param path 対象 file。
-/// @param out_hex 成功時に 64 文字の 16 進文字列を格納する。
-/// @return 読み取れた場合は true。開けない場合は false で out_hex は変更しない。
+/// @param path The file to read.
+/// @param out_hex On success, receives the 64-character hexadecimal string.
+/// @return true if the file could be read. false if it could not be opened, in which
+///         case out_hex is left unchanged.
 bool sha256_file(const std::string& path, std::string* out_hex);
 
-/// memory 上の byte 列の SHA-256 を計算する。
+/// Computes the SHA-256 of a byte sequence in memory.
 ///
-/// @param data 対象領域の先頭。nullptr を渡してよく、その場合は空入力として扱う。
-///             領域の所有権は呼出側にあり、この関数は複製も保持もしない。
-/// @param size 対象の byte 数。
-/// @return 64 文字の小文字 16 進文字列。
+/// @param data The start of the memory. May be nullptr, in which case it is treated as
+///             empty input. The caller owns the memory, and this function neither copies
+///             nor retains it.
+/// @param size The number of bytes.
+/// @return A 64-character lowercase hexadecimal string.
 ///
-/// 同期動作: host 専用であり同期点を持たない。
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: "abc" の 3 byte
-/// 出力例: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+/// Example input: the 3 bytes of "abc"
+/// Example output: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 std::string sha256_bytes(const void* data, std::size_t size);
 
 }  // namespace aruco3cuda::util

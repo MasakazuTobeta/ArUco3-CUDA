@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 合成 corpus 生成器の CLI。
+// CLI of the synthetic corpus generator.
 //
-// 目的:
-//   四隅の ground truth を持つ合成画像を、seed 固定で再生成できる形で作る。
-//   CPU 基準結果は互換性の基準であり ground truth ではないため、正確性評価には
-//   生成時に既知である真値が必要になる。
+// Purpose:
+//   Produces synthetic images carrying four-corner ground truth, in a form that can
+//   be regenerated from a fixed seed. The CPU baseline results are a compatibility
+//   reference, not ground truth, so an accuracy evaluation needs true values that are
+//   known at generation time.
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -22,22 +23,25 @@ namespace {
 using aruco3cuda::corpusgen::CorpusConfig;
 
 void print_usage(std::ostream& out) {
-    out << "使用方法: aruco3cuda_corpusgen [option]...\n"
+    out << "usage: aruco3cuda_corpusgen [option]...\n"
         << "\n"
-        << "  --output-dir <dir>   画像の出力先。既定 data/corpus\n"
-        << "  --manifest <path>    manifest JSON の出力先。既定 <output-dir>/manifest.json\n"
-        << "  --preset <name>      smoke | basic | full。既定 smoke\n"
-        << "  --dictionary <name>  既定 DICT_ARUCO_MIP_36h12\n"
-        << "  --seed <n>           乱数種。既定 20260827\n"
-        << "  --canonical-px <n>   マーカー描画の canonical 解像度。既定 512\n"
-        << "  --list-presets       preset 名を表示して終了\n"
-        << "  --help               この説明を表示して終了\n";
+        << "  --output-dir <dir>   destination of the images; default data/corpus\n"
+        << "  --manifest <path>    destination of the manifest JSON; default "
+           "<output-dir>/manifest.json\n"
+        << "  --preset <name>      smoke | basic | full; default smoke\n"
+        << "  --dictionary <name>  default DICT_ARUCO_MIP_36h12\n"
+        << "  --seed <n>           random seed; default 20260827\n"
+        << "  --canonical-px <n>   canonical resolution for rendering markers; "
+           "default 512\n"
+        << "  --list-presets       print the preset names and exit\n"
+        << "  --help               print this help and exit\n";
 }
 
-/// 文字列全体が整数として解釈できることを確認する。
+/// Confirms that the entire string parses as an integer.
 ///
-/// std::stoi は末尾の余分な文字を無視するため、"512xyz" が 512 として
-/// 無言で受理される。外部入力である argv を信頼せず、全体一致を要求する。
+/// std::stoi ignores trailing characters, so "512xyz" would be silently accepted as
+/// 512. argv is external input and is not trusted, so a full-string match is
+/// required.
 bool parse_int_strict(const std::string& text, int* out) {
     try {
         std::size_t consumed = 0;
@@ -52,7 +56,7 @@ bool parse_int_strict(const std::string& text, int* out) {
     }
 }
 
-/// 文字列全体が符号なし整数として解釈できることを確認する。
+/// Confirms that the entire string parses as an unsigned integer.
 bool parse_uint64_strict(const std::string& text, std::uint64_t* out) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos) {
         return false;
@@ -90,7 +94,7 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
         if (i + 1 >= argc) {
-            std::cerr << "引数が不足している: " << option << '\n';
+            std::cerr << "missing argument for: " << option << '\n';
             return EXIT_FAILURE;
         }
         const std::string value = argv[++i];
@@ -105,37 +109,38 @@ int main(int argc, char** argv) {
                 config.dictionary_name_ = value;
             } else if (option == "--seed") {
                 if (!parse_uint64_strict(value, &config.seed_)) {
-                    std::cerr << "--seed は符号なし整数である必要がある: " << value << '\n';
+                    std::cerr << "--seed must be an unsigned integer: " << value << '\n';
                     return EXIT_FAILURE;
                 }
             } else if (option == "--canonical-px") {
                 int canonical_px = 0;
                 if (!parse_int_strict(value, &canonical_px)) {
-                    std::cerr << "--canonical-px は整数である必要がある: " << value << '\n';
+                    std::cerr << "--canonical-px must be an integer: " << value << '\n';
                     return EXIT_FAILURE;
                 }
-                // 上限は memory 使用量から決める。範囲は corpus_generator の
-                // validate_scene と一致させる。
+                // The upper bound comes from memory use. The range is kept in step
+                // with validate_scene in corpus_generator.
                 if (canonical_px < 8 || canonical_px > 8192) {
-                    std::cerr << "--canonical-px は 8 以上 8192 以下である必要がある: "
+                    std::cerr << "--canonical-px must be between 8 and 8192 inclusive: "
                               << canonical_px << '\n';
                     return EXIT_FAILURE;
                 }
                 config.canonical_marker_px_ = canonical_px;
             } else {
-                std::cerr << "未知の option: " << option << '\n';
+                std::cerr << "unknown option: " << option << '\n';
                 print_usage(std::cerr);
                 return EXIT_FAILURE;
             }
         } catch (const std::exception&) {
-            std::cerr << "値を解釈できない: " << option << ' ' << value << '\n';
+            std::cerr << "cannot parse the value: " << option << ' ' << value << '\n';
             return EXIT_FAILURE;
         }
     }
 
     std::vector<aruco3cuda::corpusgen::SceneSpec> specs;
     if (!aruco3cuda::corpusgen::build_preset(preset, &specs)) {
-        std::cerr << "未知の preset: " << preset << '\n' << "--list-presets で対応名を確認できる\n";
+        std::cerr << "unknown preset: " << preset << '\n'
+                  << "--list-presets prints the supported names\n";
         return EXIT_FAILURE;
     }
     if (manifest_path.empty()) {
@@ -156,16 +161,16 @@ int main(int argc, char** argv) {
 
     std::ofstream manifest(manifest_path);
     if (!manifest) {
-        std::cerr << "manifest を開けない: " << manifest_path << '\n'
-                  << "出力先 directory が存在するか確認すること\n";
+        std::cerr << "cannot open the manifest: " << manifest_path << '\n'
+                  << "check that the destination directory exists\n";
         return EXIT_FAILURE;
     }
     aruco3cuda::corpusgen::write_manifest_json(manifest, config, preset, scenes);
-    // 書き込み失敗を成功として報告しない。manifest が欠けると corpus を
-    // 後から参照できなくなる。
+    // Never report a failed write as a success. Without the manifest the corpus
+    // cannot be referred to later.
     manifest.close();
     if (!manifest) {
-        std::cerr << "manifest への書き込みに失敗した: " << manifest_path << '\n';
+        std::cerr << "writing the manifest failed: " << manifest_path << '\n';
         return EXIT_FAILURE;
     }
 
@@ -173,7 +178,7 @@ int main(int argc, char** argv) {
     for (const auto& scene : scenes) {
         marker_total += scene.markers_.size();
     }
-    std::cout << "生成: " << scenes.size() << " 枚、マーカー " << marker_total << " 個\n"
+    std::cout << "generated: " << scenes.size() << " images, " << marker_total << " markers\n"
               << "manifest: " << manifest_path << '\n';
     return EXIT_SUCCESS;
 }

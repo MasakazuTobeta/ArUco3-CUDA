@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 暫定設定。ADR-0002 の未確定事項「clang-format の style 設定を OpenCV 準拠に
-# するか独自にするか」は未決であり、現時点では OpenCV へのコントリビュートを
-# 想定して OpenCV に近い指定としている。決定後に ADR へ記録する。
+# Provisional settings. The open question in ADR-0002 - whether the clang-format
+# style should follow OpenCV or be our own - is still undecided, and for now the
+# settings stay close to OpenCV in anticipation of contributing back to it. Once
+# decided, the outcome is recorded in the ADR.
 ---
 Language: Cpp
 BasedOnStyle: Google

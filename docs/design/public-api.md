@@ -1,55 +1,54 @@
-# 公開 API 草案
+# Public API draft
 
-## 目的
+## Purpose
 
-CUDA 検出器の公開 API の型、所有権、同期動作、エラー通知方法を定義し、OpenCV 依存を core から分離した構成を示します。
+This document defines the types, ownership, synchronization behavior, and error reporting of the CUDA detector's public API, and presents a structure that keeps the OpenCV dependency out of core.
 
-## 対象範囲
+## Scope
 
-`core` が公開する型と関数、設定値、結果表現、`adapter/opencv` の変換 API を対象とします。姿勢推定 API、Python binding、ROS2 interface は対象外です。
+The scope covers the types and functions exposed by `core`, the configuration values, the result representation, and the conversion API in `adapter/opencv`. Pose estimation APIs, Python bindings, and the ROS2 interface are out of scope.
 
-## 現状
+## Current state
 
-以下は実装済みの内容です。段階ごとの CUDA event 計測 (`set_stage_timing_enabled`)
-は実装していません。
+The following is implemented. Per-stage CUDA event timing (`set_stage_timing_enabled`) is not implemented.
 
-`Status`、`MemorySpace`、`ImageViewU8`、`CornerRefineMethod`、`DetectorConfig` と、それぞれの境界検証は実装済みです。`Dictionary` は `include/aruco3cuda/dictionary.hpp` として実装済みです。`DeviceDetections`、`HostDetections`、`Detector` も実装済みです。
+`Status`, `MemorySpace`, `ImageViewU8`, `CornerRefineMethod`, `DetectorConfig`, and their respective bounds validation are implemented. `Dictionary` is implemented as `include/aruco3cuda/dictionary.hpp`. `DeviceDetections`, `HostDetections`, and `Detector` are also implemented.
 
-既定値は OpenCV 4.x の `DetectorParameters` の観測仕様に合わせています。ArUco3 検出戦略に関わる 2 項目のみ、評価目的に合わせて既定を変えています。OpenCV と同じ既定値が必要な場合は `DetectorConfig::opencv_defaults()` を使います。
+The defaults match the observed specification of `DetectorParameters` in OpenCV 4.x. Only the two items related to the ArUco3 detection strategy have defaults changed to suit the evaluation goals. When defaults identical to OpenCV are required, use `DetectorConfig::opencv_defaults()`.
 
-## 目標
+## Goals
 
-### 設計原則
+### Design principles
 
-- core は OpenCV の型へ依存しません。`cv::Mat` と `cv::cuda::GpuMat` の変換は adapter の責務とします。
-- 全ての非同期 API は caller 所有の `cudaStream_t` を受け取ります。既定 stream への暗黙依存を作りません。
-- 失敗は戻り値の `Status` で通知します。core は例外を送出しません。adapter は OpenCV の慣習に合わせて例外へ変換できます。
-- 作業領域は `Detector` が所有し、フレームごとの確保を行いません。
-- 単位を持つ値は名前に単位を含めます。
+- Core does not depend on OpenCV types. Converting `cv::Mat` and `cv::cuda::GpuMat` is the adapter's responsibility.
+- Every asynchronous API takes a caller-owned `cudaStream_t`. No implicit dependency on the default stream is created.
+- Failures are reported through a returned `Status`. Core throws no exceptions. The adapter may convert them into exceptions to match OpenCV conventions.
+- The workspace is owned by `Detector`; no per-frame allocation occurs.
+- Values that carry units include the unit in their name.
 
-### 名前空間と file 構成
+### Namespace and file layout
 
 ```
 include/aruco3cuda/
-  status.hpp       // Status、last_cuda_error_message      実装済み
-  version.hpp      // version 情報                          実装済み
-  types.hpp        // MemorySpace、ImageViewU8、境界検証     実装済み
-  config.hpp       // CornerRefineMethod、DetectorConfig    実装済み
-  dictionary.hpp   // DictionaryTable、照合                  実装済み
-  device_probe.hpp // device の性質取得                      実装済み
-  detections.hpp   // DeviceDetections、HostDetections       実装済み
-  detector.hpp     // Detector                               実装済み
+  status.hpp       // Status, last_cuda_error_message          implemented
+  version.hpp      // version information                      implemented
+  types.hpp        // MemorySpace, ImageViewU8, bounds checks   implemented
+  config.hpp       // CornerRefineMethod, DetectorConfig        implemented
+  dictionary.hpp   // DictionaryTable, matching                 implemented
+  device_probe.hpp // querying device properties                implemented
+  detections.hpp   // DeviceDetections, HostDetections          implemented
+  detector.hpp     // Detector                                  implemented
 include/aruco3cuda/opencv/
-  adapter.hpp      // cv::Mat / cv::cuda::GpuMat との変換    未実装
+  adapter.hpp      // conversion to/from cv::Mat, cv::cuda::GpuMat   not implemented
 ```
 
-### 基本型
+### Basic types
 
 ```cpp
 // SPDX-License-Identifier: Apache-2.0
 namespace aruco3cuda {
 
-/// 入力 buffer が存在する memory 空間。統合 GPU でも費用が異なるため明示する。
+/// The memory space an input buffer lives in. The cost differs even on an integrated GPU, so it is made explicit.
 enum class MemorySpace : int {
   kHostPageable = 0,
   kHostPinned = 1,
@@ -57,31 +56,31 @@ enum class MemorySpace : int {
   kDevice = 3,
 };
 
-/// 公開 API の結果状態。core は例外を送出しない。
+/// Result state of the public API. The core throws no exceptions.
 enum class Status : int {
   kOk = 0,
-  kInvalidImage,          ///< pointer、寸法、pitch が不正
-  kInvalidConfig,         ///< 設定値が範囲外、または相互に矛盾
+  kInvalidImage,          ///< Pointer, size, or pitch is invalid
+  kInvalidConfig,         ///< A setting is out of range or contradicts another one
   kUnsupportedDictionary,
-  kCandidateOverflow,     ///< 候補数が上限を超えた。結果は打ち切られている
-  kMarkerOverflow,        ///< 検出数が上限を超えた。結果は打ち切られている
-  kCudaError,             ///< CUDA API または kernel 起動の失敗
+  kCandidateOverflow,     ///< The candidate limit was exceeded; results are truncated
+  kMarkerOverflow,        ///< The detection limit was exceeded; results are truncated
+  kCudaError,             ///< A CUDA API call or a kernel launch failed
   kNotInitialized,
 };
 
-/// 8-bit grayscale 画像の非所有 view。所有権は呼出側に残る。
+/// A non-owning view of an 8-bit grayscale image. Ownership stays with the caller.
 struct ImageViewU8 {
   const std::uint8_t* data_ = nullptr;
   int width_px_ = 0;
   int height_px_ = 0;
-  std::size_t pitch_bytes_ = 0;   ///< 行間隔。width_px_ と等しいとは限らない
+  std::size_t pitch_bytes_ = 0;   ///< Row stride. It is not necessarily equal to width_px_
   MemorySpace space_ = MemorySpace::kDevice;
 };
 
 }  // namespace aruco3cuda
 ```
 
-### 設定
+### Configuration
 
 ```cpp
 // SPDX-License-Identifier: Apache-2.0
@@ -92,15 +91,15 @@ enum class CornerRefineMethod : int {
   kSubpix = 1,
 };
 
-/// 検出設定。既定値は OpenCV 4.x の DetectorParameters に合わせる。
+/// Detection settings. The defaults follow the DetectorParameters of OpenCV 4.x.
 struct DetectorConfig {
-  // 適応的二値化
+  // Adaptive thresholding
   int adaptive_thresh_win_size_min_ = 3;
   int adaptive_thresh_win_size_max_ = 23;
   int adaptive_thresh_win_size_step_ = 10;
   double adaptive_thresh_constant_ = 7.0;
 
-  // 候補フィルタ
+  // Candidate filtering
   double min_marker_perimeter_rate_ = 0.03;
   double max_marker_perimeter_rate_ = 4.0;
   double polygonal_approx_accuracy_rate_ = 0.03;
@@ -109,7 +108,7 @@ struct DetectorConfig {
   double min_marker_distance_rate_ = 0.125;
   float min_group_distance_ = 0.21f;
 
-  // ビット読取りと照合
+  // Bit reading and matching
   int marker_border_bits_ = 1;
   int perspective_remove_pixel_per_cell_ = 4;
   double perspective_remove_ignored_margin_per_cell_ = 0.13;
@@ -118,82 +117,84 @@ struct DetectorConfig {
   double error_correction_rate_ = 0.6;
   float valid_bit_id_threshold_ = 0.49f;
 
-  // 四隅補正
+  // Corner refinement
   CornerRefineMethod corner_refine_method_ = CornerRefineMethod::kSubpix;
   int corner_refinement_win_size_px_ = 5;
   int corner_refinement_max_iterations_ = 30;
   double corner_refinement_min_accuracy_ = 0.1;
 
-  // ArUco3 検出戦略
+  // ArUco3 detection strategy
   bool use_aruco3_detection_ = true;
   int min_side_length_canonical_img_px_ = 32;
   float min_marker_length_ratio_original_img_ = 0.05f;
 
-  // CUDA 固有
-  int max_candidates_ = 4096;      ///< 候補 buffer の上限。超過時は kCandidateOverflow
-  int max_markers_ = 1024;         ///< 検出 buffer の上限。超過時は kMarkerOverflow
-  int max_width_px_ = 3840;        ///< workspace 事前確保の基準
+  // CUDA specific
+  int max_candidates_ = 4096;      ///< Capacity of the candidate buffer. On overflow, kCandidateOverflow
+  int max_markers_ = 1024;         ///< Capacity of the detection buffer. On overflow, kMarkerOverflow
+  int max_width_px_ = 3840;        ///< Reference for preallocating the workspace
   int max_height_px_ = 2160;
-  int candidate_block_size_ = 128; ///< 機種別に測定で決める。source の固定値にしない
+  int candidate_block_size_ = 128; ///< Determined per device by measurement. Not a hard-coded value in the source
 
-  /// 相互に矛盾する設定を検出する。Detector 生成前に呼び出せる。
+  /// Detects settings that contradict each other. It can be called before the Detector is created.
   Status validate() const;
 };
 
 }  // namespace aruco3cuda
 ```
 
-`use_aruco3_detection_` の既定値と `min_marker_length_ratio_original_img_` の既定値は、OpenCV の既定と異なります。OpenCV は `useAruco3Detection = false`、`minMarkerLengthRatioOriginalImg = 0.0f` を既定とし、この組み合わせでは縮小が発生しません。本 project は ArUco3 検出戦略の評価が目的であるため既定を変更し、OpenCV 互換の既定値を返す `DetectorConfig::opencv_defaults()` を別に用意します。
+The defaults for `use_aruco3_detection_` and `min_marker_length_ratio_original_img_` differ from the OpenCV defaults. OpenCV defaults to `useAruco3Detection = false` and `minMarkerLengthRatioOriginalImg = 0.0f`, a combination under which no downscaling occurs. Because this project exists to evaluate the ArUco3 detection strategy, the defaults are changed, and `DetectorConfig::opencv_defaults()` is provided separately to return OpenCV-compatible defaults.
 
-### 結果表現
+### Result representation
 
 ```cpp
 // SPDX-License-Identifier: Apache-2.0
 namespace aruco3cuda {
 
-/// device 常駐の検出結果。GPU 常駐 pipeline から同期なしで参照できる。
+/// Detection results that stay resident on the device. A GPU-resident pipeline can read them
+/// without synchronization.
 ///
-/// 四隅は面ごとに分けて持つ (SoA)。添字は (corner * capacity_) + detection。
-/// S5 から S10 までが同じ並びを使っており、S10 はこの添字で in-place に
-/// 書き戻す。float2 の AoS へ変えると、bit 一致まで検証済みの kernel を
-/// 書き直すことになる。公開 header が vector_types.h へ依存しない利点もある。
+/// The corners are held as separate planes (SoA). The index is (corner * capacity_) + detection.
+/// S5 through S10 all use the same layout, and S10 writes back in place at this index.
+/// Switching to an AoS of float2 would mean rewriting kernels that have already been
+/// verified down to bit equality. It also has the advantage that the public header does not
+/// depend on vector_types.h.
 struct DeviceDetections {
   std::int32_t* ids_ = nullptr;
   std::int32_t* rotations_ = nullptr;
   float* corner_x_ = nullptr;
   float* corner_y_ = nullptr;
-  std::int32_t* source_ = nullptr;   ///< 由来した候補の index
-  std::int32_t* count_ = nullptr;    ///< device 上の検出数
-  std::int32_t* accepted_total_ = nullptr;  ///< 打ち切る前の検出数
+  std::int32_t* source_ = nullptr;   ///< Index of the candidate it came from
+  std::int32_t* count_ = nullptr;    ///< Detection count on the device
+  std::int32_t* accepted_total_ = nullptr;  ///< Detection count before truncation
   int capacity_ = 0;
 };
 
-/// host 側へ取り出した検出結果。
+/// Detection results pulled out to the host.
 struct HostDetections {
   std::vector<std::int32_t> ids_;
-  std::vector<float> corners_;       ///< 1 検出あたり x0,y0,...,x3,y3 の 8 要素
+  std::vector<float> corners_;       ///< 8 elements per detection: x0,y0,...,x3,y3
   std::vector<std::int32_t> rotations_;
-  std::int32_t accepted_total_ = 0;  ///< 打ち切る前の検出数
+  std::int32_t accepted_total_ = 0;  ///< Detection count before truncation
   bool marker_overflow_ = false;
 };
 
 }  // namespace aruco3cuda
 ```
 
-### 検出器
+### Detector
 
 ```cpp
 // SPDX-License-Identifier: Apache-2.0
 namespace aruco3cuda {
 
-/// ArUco3 検出戦略の CUDA 実装。
+/// CUDA implementation of the ArUco3 detection strategy.
 ///
-/// 所有権:
-///   workspace と DeviceDetections の backing memory を本 class が所有する。
-///   入力画像の memory は呼出側が所有する。
-/// 同期動作:
-///   detect_async() は stream へ kernel を発行するだけで host 同期を行わない。
-///   download() は stream の完了を待ってから host buffer を埋める。
+/// Ownership:
+///   This class owns the memory backing the workspace and the DeviceDetections.
+///   The caller owns the memory of the input image.
+/// Synchronization:
+///   detect_async() only issues kernels onto the stream and does not synchronize the host.
+///   download() waits for the stream to complete and then fills the host buffer.
 class Detector {
  public:
   Detector() = default;
@@ -203,29 +204,32 @@ class Detector {
   Detector(Detector&&) noexcept;
   Detector& operator=(Detector&&) noexcept;
 
-  /// workspace を確保し Dictionary を device へ転送する。
-  /// 失敗時は内部状態を変更しない。
+  /// Allocates the workspace and transfers the Dictionary to the device.
+  /// On failure, the internal state is left unchanged.
   Status initialize(const DictionaryTable& dictionary, const DetectorConfig& config,
                     std::string* out_message = nullptr);
 
-  /// 検出を stream へ発行する。host 同期を行わない。
-  /// 入力例: 1920x1080、pitch_bytes_ = 1920、space_ = kDevice
-  /// 出力例: detections.count_ に device 上の検出数が書かれる
+  /// Issues a detection onto the stream. It does not synchronize the host.
+  /// Example input: 1920x1080, pitch_bytes_ = 1920, space_ = kDevice
+  /// Example output: the detection count on the device is written into detections.count_
   Status detect_async(const ImageViewU8& image, cudaStream_t stream);
 
-  /// 直近の detect_async() の device 常駐結果を写す。同期は発生しない。
-  /// 参照返しにしない。move 後に kNotInitialized を返せなくなるためである。
+  /// Copies out the device-resident results of the most recent detect_async(). No
+  /// synchronization takes place.
+  /// It does not return a reference, because after a move it would no longer be able to
+  /// return kNotInitialized.
   Status device_detections(DeviceDetections* out) const;
 
-  /// stream の完了を待って host 結果を得る。ここでのみ同期が発生する。
+  /// Waits for the stream to complete and obtains the results on the host. This is the
+  /// only place where synchronization takes place.
   Status download(HostDetections* out, cudaStream_t stream,
                   std::string* out_message = nullptr);
 
-  /// device workspace の使用状況。allocation_count_ が 1 のままであることを
-  /// test が確認する。
+  /// How the device workspace is being used. A test confirms that allocation_count_
+  /// stays at 1.
   const WorkspaceStatistics& workspace_statistics() const;
 
-  /// initialize() が成功しているか。
+  /// Whether initialize() has succeeded.
   bool initialized() const;
 
  private:
@@ -242,18 +246,18 @@ class Detector {
 // SPDX-License-Identifier: Apache-2.0
 namespace aruco3cuda::opencv {
 
-/// cv::aruco::DetectorParameters を DetectorConfig へ写像する。
-/// 対応しない parameter が設定されている場合は kInvalidConfig を返す。
+/// Maps cv::aruco::DetectorParameters onto DetectorConfig.
+/// Returns kInvalidConfig if an unsupported parameter is set.
 Status from_detector_parameters(const cv::aruco::DetectorParameters& params,
                                 DetectorConfig& out);
 
-/// cv::aruco::Dictionary から device 用 Dictionary を構築する。
+/// Builds a device-side Dictionary from a cv::aruco::Dictionary.
 Status from_cv_dictionary(const cv::aruco::Dictionary& dictionary, Dictionary& out);
 
-/// GpuMat から非所有 view を作る。連続性と型を検証する。
+/// Creates a non-owning view from a GpuMat. Validates contiguity and type.
 Status view_from_gpu_mat(const cv::cuda::GpuMat& mat, ImageViewU8& out);
 
-/// 検出結果を OpenCV の detectMarkers と同じ表現へ変換する。
+/// Converts the detection results into the same representation as OpenCV's detectMarkers.
 void to_cv_output(const HostDetections& detections,
                   std::vector<std::vector<cv::Point2f>>& corners,
                   std::vector<int>& ids);
@@ -261,9 +265,9 @@ void to_cv_output(const HostDetections& detections,
 }  // namespace aruco3cuda::opencv
 ```
 
-adapter は別の CMake target とし、OpenCV を link しない構成でも core を build できるようにします。
+The adapter is a separate CMake target, so that core can be built in a configuration that does not link OpenCV.
 
-### 使用例
+### Usage example
 
 ```cpp
 aruco3cuda::Detector detector;
@@ -283,39 +287,39 @@ aruco3cuda::HostDetections result;
 if (detector.download(result, stream) != aruco3cuda::Status::kOk) { /* ... */ }
 ```
 
-## 実装上の判断
+## Design decisions
 
-- `Status` を戻り値とし core から例外を出さないことで、CUDA callback、destructor、device code からの例外送出を構造的に防ぎます。
-- `DeviceDetections` を公開することで、GPU 常駐 pipeline が host 同期なしに結果を利用できます。[評価計画](../evaluation-plan.md) の `CUDA-Resident` 経路はこの API を使用します。
-- `pitch_bytes_` を必須にし、ROI と非連続入力を初期から扱えるようにします。
-- overflow を戻り値と結果 flag の両方で通知し、無言の切り捨てを行いません。
-- `Impl` を pimpl とし、公開 header が CUDA 固有型へ依存する範囲を `cudaStream_t` と `float2` に限定します。
+- Returning `Status` and throwing no exceptions from core structurally prevents exceptions from escaping CUDA callbacks, destructors, and device code.
+- Exposing `DeviceDetections` lets a GPU-resident pipeline consume results without host synchronization. The `CUDA-Resident` route in the [evaluation plan](../evaluation-plan.md) uses this API.
+- Making `pitch_bytes_` mandatory allows ROIs and non-contiguous input to be handled from the start.
+- Overflow is reported both through the return value and a result flag, so nothing is silently truncated.
+- Making `Impl` a pimpl limits the public header's dependency on CUDA-specific types to `cudaStream_t` and `float2`.
 
-## 決定した事項
+## Decisions made
 
-### 公開 aggregate の field にも末尾 `_` を付ける
+### Public aggregate fields also carry a trailing `_`
 
-`CONTRIBUTING.md` の命名規則をそのまま適用します。既に `DeviceProbeResult`、`DictionaryTable`、`ReferenceConfig`、`SceneSpec`、`BenchmarkConfig` が同じ規則で実装されており、公開 aggregate だけ規則を変えると、同じ repository 内で 2 つの規則が混在します。呼出側の記述はやや冗長になりますが、規則が 1 つである利点を優先します。
+The naming convention in `CONTRIBUTING.md` is applied as is. `DeviceProbeResult`, `DictionaryTable`, `ReferenceConfig`, `SceneSpec`, and `BenchmarkConfig` are already implemented under the same convention, and changing the convention only for public aggregates would mix two conventions within the same repository. Call sites become somewhat more verbose, but having a single convention takes priority.
 
-### 検証は Status を返し、理由は任意の out 引数で受け取る
+### Validation returns a Status, with the reason received through an optional out parameter
 
-`validate_image_view()` と `DetectorConfig::validate()` は `Status` を返し、失敗理由は `std::string*` へ格納します。`nullptr` を渡してよく、その場合は文字列を組み立てません。検証は毎フレーム呼ばれ得るため、成功経路で確保を発生させない構造にしています。
+`validate_image_view()` and `DetectorConfig::validate()` return a `Status` and store the reason for failure into a `std::string*`. Passing `nullptr` is allowed, in which case no string is assembled. Validation may be called every frame, so the structure avoids any allocation on the success path.
 
-### 画像の失敗に専用の Status を割り当てる
+### Image failures get a dedicated Status
 
-`kInvalidImage` を `kInvalidArgument` と別に設けます。画像 view の不正は呼出側の入力経路の問題であり、設定や index の誤りとは対処が異なります。
+`kInvalidImage` is provided separately from `kInvalidArgument`. An invalid image view indicates a problem in the caller's input path, and it calls for a different response than a mistake in configuration or an index.
 
-## 未確定事項
+## Open questions
 
-- `float2` を公開 header で使用するか、独自の `Point2f` 相当を定義するか。`DeviceDetections` の実装時に決めます。
-- `download()` 以外に、部分結果だけを取得する API を用意するか。
-- 複数 Dictionary の同時照合を初期 scope に含めるか。
-- OpenCV adapter を同一 library に含めるか別 target にするか。[アーキテクチャ](../architecture.md) の未確定事項と同じ。
-- `cv::aruco::DetectorParameters` の非対応 parameter を無視するか拒否するか。
+- Whether to use `float2` in the public header, or to define an equivalent of our own `Point2f`. This will be decided when `DeviceDetections` is implemented.
+- Whether to provide an API besides `download()` that retrieves only partial results.
+- Whether simultaneous matching against multiple dictionaries belongs in the initial scope.
+- Whether to include the OpenCV adapter in the same library or in a separate target. Same as the open question in the [architecture](../architecture.md).
+- Whether to ignore or reject unsupported parameters of `cv::aruco::DetectorParameters`.
 
-## 関連
+## See also
 
-- [アーキテクチャ](../architecture.md)
-- [検出パイプライン設計](detector-pipeline.md)
-- [実装計画](../implementation-plan.md)
-- [Code Provenance 記録](../code-provenance.md)
+- [Architecture](../architecture.md)
+- [Detection pipeline design](detector-pipeline.md)
+- [Implementation plan](../implementation-plan.md)
+- [Code provenance record](../code-provenance.md)

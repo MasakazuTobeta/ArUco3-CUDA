@@ -7,7 +7,7 @@
 
 namespace aruco3cuda::detail {
 
-// status.cpp が保持する thread_local buffer へ記録する。
+// Records into the thread_local buffer owned by status.cpp.
 void store_cuda_error_message(const char* api_name, const char* stage, int device_index,
                               const void* stream, const char* cuda_error_name,
                               const char* cuda_error_string);
@@ -24,7 +24,7 @@ Status check_cuda(cudaError_t error, const char* api_name, const char* stage, in
 
 Status check_kernel_launch(const char* stage, int device_index, bool synchronize,
                            cudaStream_t stream) {
-    // 起動自体の失敗を先に確認する。ここで sticky でないエラーが解消される。
+    // Check the launch itself first. Doing so clears any non-sticky error.
     const Status launch_status =
             check_cuda(cudaGetLastError(), "cudaGetLastError", stage, device_index, stream);
     if (launch_status != Status::kOk) {
@@ -33,8 +33,8 @@ Status check_kernel_launch(const char* stage, int device_index, bool synchronize
     if (!synchronize) {
         return Status::kOk;
     }
-    // 非同期実行中の失敗は同期しなければ検出できない。
-    // stream が指定されていればその stream のみを、無ければ device 全体を待つ。
+    // A failure during asynchronous execution can only be detected by synchronizing.
+    // Wait on the given stream when there is one, otherwise on the whole device.
     if (stream != nullptr) {
         return check_cuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize", stage,
                           device_index, stream);

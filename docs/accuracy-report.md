@@ -1,25 +1,25 @@
-# 正確性評価の結果
+# Accuracy Evaluation Results
 
-## 目的
+## Purpose
 
-合成 corpus の ground truth に対して CPU 基準・Hybrid・CUDA-Resident の 3 経路を測り、[評価計画](evaluation-plan.md) が定める正確性指標を条件別に示します。end-to-end 時間の比較は [benchmark 結果まとめ](benchmark-report.md) が扱います。
+This document measures the three routes, CPU reference, Hybrid, and CUDA-Resident, against the ground truth of the synthetic corpus, and presents the accuracy metrics defined by the [evaluation plan](evaluation-plan.md) broken down by condition. Comparison of end-to-end times is handled by the [benchmark summary](benchmark-report.md).
 
-## 対象範囲
+## Scope
 
-- corpus preset `full` の 91 場面、真値 480 個のマーカーを対象とします。
-- DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の 3 機で測ります。統合 GPU 2 機と単体 GPU 1 機という構成です。
-- Dictionary は `DICT_ARUCO_MIP_36h12` に固定します。
-- 実画像は対象外です。評価は合成 corpus に限ります。
+- The target is the 91 scenes of corpus preset `full`, with 480 ground truth markers.
+- Measurements are taken on three machines: DGX Spark GB10, Jetson AGX Orin, and GeForce RTX 5070 Ti. The configuration is two integrated-GPU machines and one discrete-GPU machine.
+- The dictionary is fixed to `DICT_ARUCO_MIP_36h12`.
+- Real images are out of scope. The evaluation is limited to the synthetic corpus.
 
-経路の呼称は [benchmark 結果まとめ](benchmark-report.md) に揃えます。`CPU` は OpenCV の CPU 実装、`Hybrid` は輪郭抽出から先を host で行う経路、`CUDA-Resident` は検出の全段を GPU 上で完結させる経路です。評価器の出力は `CUDA-Resident` を `CUDA` と表示します。
+Route names follow the [benchmark summary](benchmark-report.md). `CPU` is OpenCV's CPU implementation, `Hybrid` is the route that performs everything from contour extraction onward on the host, and `CUDA-Resident` is the route that completes all detection stages on the GPU. The evaluator's output displays `CUDA-Resident` as `CUDA`.
 
-## 現状
+## Current state
 
-### 全体
+### Overall
 
-ArUco3 検出戦略を有効にした場合です。3 経路とも同じ 88 個のマーカーを検出します。四隅 RMSE と最大値は、この検出 88 件に対する値です。
+These are the results with the ArUco3 detection strategy enabled. All three routes detect the same 88 markers. The corner RMSE and maximum are values over these 88 detections.
 
-| 機体 | 経路 | precision | recall (全体) | recall (下限以上) | rotation 一致 | 四隅 RMSE | 四隅 最大 |
+| Machine | Route | precision | recall (overall) | recall (at or above bound) | rotation match | Corner RMSE | Corner max |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | CPU | 100.00% | 18.33% | 94.44% | 85/85 | 0.5184 px | 3.6351 px |
 | DGX Spark GB10 | Hybrid | 100.00% | 18.33% | 94.44% | 85/85 | 0.5184 px | 3.6351 px |
@@ -31,194 +31,194 @@ ArUco3 検出戦略を有効にした場合です。3 経路とも同じ 88 個�
 | GeForce RTX 5070 Ti | Hybrid | 100.00% | 18.33% | 94.44% | 85/85 | 0.5042 px | 3.6351 px |
 | GeForce RTX 5070 Ti | CUDA-Resident | 100.00% | 18.33% | 94.44% | 85/85 | 0.4653 px | 1.0936 px |
 
-precision は全 18 組合せで 100.00% です。false positive は 91 場面 x 3 経路 x 3 機のどこにも 1 件もなく、ID を誤った検出も 0 件です。rotation は、検出 88 件のうち ArUco3 の下限以上にある 85 件について真値と一致します。
+Precision is 100.00% across all 18 combinations. There is not a single false positive anywhere in 91 scenes x 3 routes x 3 machines, and there are zero detections with an incorrect ID. Rotation matches the ground truth for the 85 of the 88 detections that are at or above the ArUco3 bound.
 
-RMSE の値が aarch64 の 2 機と x86_64 で異なるのは、**corpus 画像そのものが architecture 間で一致しないため**です。下の「corpus の再現性」を参照してください。同じ機の中で経路を比べる限り、この差は入りません。
+The RMSE values differ between the two aarch64 machines and the x86_64 machine **because the corpus images themselves do not match across architectures**. See "Corpus reproducibility" below. As long as routes are compared within the same machine, this difference does not enter.
 
-### recall を 3 区分で示す理由
+### Why recall is presented in three divisions
 
-ArUco3 検出戦略は、縮小後の 1 辺が `minSideLengthCanonicalImg` を下回るマーカーを原理上検出しません。下限は元画像の長辺を L として `S + L * tau_i` で決まり、既定 (S=32、tau_i=0.05) では次の値になります。
+The ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below `minSideLengthCanonicalImg`. With L as the long side of the original image, the bound is determined by `S + L * tau_i`, which with the defaults (S=32, tau_i=0.05) gives the following values.
 
-| 解像度 | 検出できる 1 辺の下限 |
+| Resolution | Lower bound on the detectable side length |
 | --- | --- |
 | 640x480 | 64 px |
 | 1280x720 | 96 px |
 | 1920x1080 | 128 px |
 | 3840x2160 | 224 px |
 
-corpus はこの下限を下回る大きさを意図的に含みます。したがって真値 480 個をそのまま母数にした recall は、実装の取りこぼしではなく戦略上の下限を測ることになります。母数の分かれ方は次のとおりです。
+The corpus deliberately includes sizes below this bound. Therefore recall computed with all 480 ground truth markers as the denominator measures the strategy's inherent bound rather than misses by the implementation. The denominator splits as follows.
 
 ```mermaid
 flowchart LR
-    A["真値 480 個"] --> B["下限以上 90 個"]
-    A --> C["下限未満 390 個"]
-    B --> B1["検出 85 個<br/>recall 94.44%"]
-    B --> B2["未検出 5 個"]
-    C --> C1["検出 3 個<br/>recall 0.77%"]
-    C --> C2["未検出 387 個<br/>ArUco3 が原理上検出しない範囲"]
+    A["Ground truth 480"] --> B["At or above bound 90"]
+    A --> C["Below bound 390"]
+    B --> B1["Detected 85<br/>recall 94.44%"]
+    B --> B2["Missed 5"]
+    C --> C1["Detected 3<br/>recall 0.77%"]
+    C --> C2["Missed 387<br/>range ArUco3 inherently does not detect"]
 ```
 
-図の右下の 387 個が、全体 recall 18.33% を押し下げている実体です。区分ごとの値は次のとおりです。
+The 387 at the bottom right of the diagram are what pushes the overall recall down to 18.33%. The values per division are as follows.
 
-| 区分 | 真値 | 検出 | recall |
+| Division | Ground truth | Detected | recall |
 | --- | --- | --- | --- |
-| 全て | 480 | 88 | 18.33% |
-| 下限以上 | 90 | 85 | 94.44% |
-| 下限未満 | 390 | 3 | 0.77% |
+| All | 480 | 88 | 18.33% |
+| At or above bound | 90 | 85 | 94.44% |
+| Below bound | 390 | 3 | 0.77% |
 
-実装の取りこぼしを表すのは 94.44% です。18.33% を単独で引用すると、戦略上の下限を実装の欠陥として読み違えることになります。下限未満で 3 件検出できているのは、下限が段差ではなく境界であり、ちょうど下回る大きさでは検出できる場合があるためです。
+The figure that represents misses by the implementation is 94.44%. Quoting 18.33% on its own leads to misreading the strategy's inherent bound as a defect of the implementation. Three markers below the bound are detected because the bound is a boundary rather than a step, and markers that fall just below it can sometimes be detected.
 
-### 条件別 (下限以上のマーカーのみ)
+### By condition (markers at or above the bound only)
 
-DGX Spark GB10 の値です。CPU と CUDA-Resident の recall はすべての条件で一致します。
+These are the values for the DGX Spark GB10. The recall of CPU and CUDA-Resident matches under every condition.
 
-| 条件 | 真値 | recall | CPU 四隅 RMSE | CUDA-Resident 四隅 RMSE |
+| Condition | Ground truth | recall | CPU corner RMSE | CUDA-Resident corner RMSE |
 | --- | --- | --- | --- | --- |
 | clean | 58 | 100.00% | 0.4910 px | 0.4911 px |
-| rotation (37 度) | 4 | 100.00% | 0.3778 px | 0.3778 px |
+| rotation (37 degrees) | 4 | 100.00% | 0.3778 px | 0.3778 px |
 | perspective (0.6) | 4 | 100.00% | 0.4778 px | 0.4775 px |
 | blur (sigma 2.0) | 4 | 100.00% | 0.7052 px | 0.7020 px |
 | noise (sigma 12) | 4 | 100.00% | 0.4257 px | 0.4257 px |
 | illumination (0.8) | 4 | 100.00% | 0.3778 px | 0.3778 px |
 | occlusion (25%) | 4 | 75.00% | 1.1497 px | 0.4722 px |
-| border (はみ出し) | 4 | 75.00% | 0.3064 px | 0.3056 px |
+| border (clipping) | 4 | 75.00% | 0.3064 px | 0.3056 px |
 | combined | 4 | 25.00% | 0.4317 px | 0.4215 px |
 
-取りこぼしは 5 件で、内訳は複合劣化 3 件、遮蔽 1 件、境界はみ出し 1 件です。回転、射影歪み、ぼけ、noise、照度差は、単独では 1 件も落としません。落ちるのは劣化が重なった場合と、マーカーの一部が画像の外または遮蔽物の下にある場合です。
+There are 5 misses, broken down into 3 from combined degradation, 1 from occlusion, and 1 from border clipping. Rotation, perspective distortion, blur, noise, and illumination differences drop not a single marker on their own. What is dropped are cases where degradations overlap and cases where part of the marker is outside the image or under an occluding object.
 
-四隅 RMSE は、遮蔽を除けば両経路がほぼ同じ値になります。clean 条件では CPU 0.4910 px に対し CUDA-Resident 0.4911 px で CPU がわずかに小さく、noise と illumination と rotation では完全に同値です。差が付くのは遮蔽の 1 条件だけであり、これを一般的な優劣として読むべきではありません。
+Apart from occlusion, the corner RMSE is nearly the same value for both routes. Under the clean condition, CPU is slightly smaller at 0.4910 px against CUDA-Resident's 0.4911 px, and for noise, illumination, and rotation the values are exactly equal. A difference appears only in the single occlusion condition, and this should not be read as a general superiority.
 
-### CPU 基準との差異
+### Differences from the CPU reference
 
-同じ機で 91 場面を突き合わせた結果です。
+These are the results of comparing 91 scenes on the same machine.
 
-| 機体 | Hybrid vs CPU | CUDA-Resident vs CPU |
+| Machine | Hybrid vs CPU | CUDA-Resident vs CPU |
 | --- | --- | --- |
-| DGX Spark GB10 | 91/91 枚一致、最大差 0.000 px | 90/91 枚一致、最大差 3.804 px |
-| Jetson AGX Orin | 91/91 枚一致、最大差 0.000 px | 90/91 枚一致、最大差 3.804 px |
-| GeForce RTX 5070 Ti | 91/91 枚一致、最大差 0.000 px | 90/91 枚一致、最大差 3.804 px |
+| DGX Spark GB10 | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
+| Jetson AGX Orin | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
+| GeForce RTX 5070 Ti | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 
-Hybrid 経路は 3 機すべてで CPU 基準結果と完全に一致します。Hybrid は輪郭抽出から先を host で行うため、この結果は経路の構成から予想できるものです。
+The Hybrid route matches the CPU reference results exactly on all three machines. Because Hybrid performs everything from contour extraction onward on the host, this result is predictable from the structure of the route.
 
-CUDA-Resident 経路で CPU 基準結果と食い違うのは 1 場面 1 件だけです。`occlusion_640x480` の ID 140 で、四隅が 3.804 px 違います。真値に対する誤差は CPU 3.6351 px、CUDA-Resident 1.0936 px であり、**この 1 件では CUDA-Resident の方が真値に近くなっています**。遮蔽で輪郭が途切れた候補に対し、2 つの実装が別の局所解へ収束したものです。ただし母数は 1 件であり、精度の優劣を主張できる標本ではありません。
+The CUDA-Resident route disagrees with the CPU reference results in only one detection in one scene. It is ID 140 in `occlusion_640x480`, where the corners differ by 3.804 px. The error against the ground truth is 3.6351 px for CPU and 1.0936 px for CUDA-Resident, so **in this one case CUDA-Resident is closer to the ground truth**. For a candidate whose contour was broken by occlusion, the two implementations converged to different local solutions. However, the denominator is a single case, and this is not a sample from which superiority in accuracy can be claimed.
 
-### ArUco3 戦略と subpixel 補正を切った場合の差異
+### Differences with the ArUco3 strategy and subpixel refinement turned off
 
-`--use-aruco3 0` は ArUco3 検出戦略と subpixel 補正を**同時に**切ります。この 2 つは本実装では独立に切り替えられません。縮小をやめるとマーカーがすべて検出下限を上回るため、**検出数そのものが変わります** (CPU 基準の検出は 88 件から 436 件へ増えます)。以下の件数は ArUco3 有効時と母数が異なることに注意してください。
+`--use-aruco3 0` turns off the ArUco3 detection strategy and subpixel refinement **at the same time**. In this implementation the two cannot be toggled independently. Since dropping the downscaling puts every marker above the detection bound, **the number of detections itself changes** (detections by the CPU reference increase from 88 to 436). Note that the counts below have a different denominator from the ArUco3-enabled case.
 
-| 機体 | CUDA-Resident vs CPU | 内訳 |
+| Machine | CUDA-Resident vs CPU | Breakdown |
 | --- | --- | --- |
-| DGX Spark GB10 | 82/91 枚一致、最大差 1.414 px | 四隅ずれ 18 件、過検出 3 件 |
-| Jetson AGX Orin | 82/91 枚一致、最大差 1.414 px | 四隅ずれ 18 件、過検出 3 件 |
-| GeForce RTX 5070 Ti | 82/91 枚一致、最大差 1.414 px | 四隅ずれ 18 件、過検出 3 件 |
+| DGX Spark GB10 | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
+| Jetson AGX Orin | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
+| GeForce RTX 5070 Ti | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 
-差はすべてちょうど 1.414 px、つまり sqrt(2) です。これは整数座標の四隅が斜めに 1 pixel ずれた場合の距離であり、四隅の推定方法の違いがそのまま現れています。本実装は極点探索、OpenCV は輪郭の多角形近似を使います (詳細は [検出パイプライン設計](design/detector-pipeline.md))。18 件のうち 16 件は blur 場面です。
+Every difference is exactly 1.414 px, that is, sqrt(2). This is the distance of a diagonal one-pixel shift of integer-coordinate corners, and it is the difference in the corner estimation method appearing directly. This implementation uses extreme point search, while OpenCV uses polygon approximation of the contour (see [detection pipeline design](design/detector-pipeline.md) for details). Of the 18 cases, 16 are blur scenes.
 
-**18 件が 1 件へ減るのは、subpixel 補正の効果だけではありません。** 母数が変わるためです。ArUco3 を有効にすると検出が 436 件から 88 件へ減り、18 件の四隅ずれのうち**そもそも検出対象として残るのは 6 件だけ**です (`blur_640x480` の 4 件、`occlusion_640x480` 1 件、`perspective_640x480` 1 件)。blur の残り 12 件は 1280x720 以上の場面にあり、縮小後の 1 辺が検出下限を下回るため検出されません。
+**The reduction from 18 cases to 1 is not due to subpixel refinement alone.** It is also because the denominator changes. Enabling ArUco3 reduces detections from 436 to 88, and of the 18 corner deviations, **only 6 remain as detection targets at all** (4 in `blur_640x480`, 1 in `occlusion_640x480`, 1 in `perspective_640x480`). The remaining 12 blur cases are in scenes of 1280x720 or larger and are not detected, because their side length after downscaling falls below the detection bound.
 
-**共通して残る 6 件で見ると、subpixel 補正は 5 件の 1.414 px を吸収し、遮蔽の 1 件だけが残ります。** これが補正の実際の効果です。
+**Looking at the 6 cases common to both, subpixel refinement absorbs 5 of the 1.414 px deviations, and only the single occlusion case remains.** This is the actual effect of the refinement.
 
-「過検出 3 件」は CPU が取りこぼしたマーカーを CUDA-Resident が検出したものです。3 件とも複合劣化の場面にあり、precision は 100% のままです。真値 480 個を母数とした補正なしの recall は次のとおりです。
+The "3 extra detections" are markers that the CPU missed and CUDA-Resident detected. All 3 are in combined degradation scenes, and precision remains 100%. Recall without refinement, with 480 ground truth markers as the denominator, is as follows.
 
-| 機体 | CPU 検出 / recall | CUDA-Resident 検出 / recall |
+| Machine | CPU detections / recall | CUDA-Resident detections / recall |
 | --- | --- | --- |
 | DGX Spark GB10 | 436 / 90.83% | 439 / 91.46% |
 | Jetson AGX Orin | 436 / 90.83% | 439 / 91.46% |
 | GeForce RTX 5070 Ti | 435 / 90.62% | 438 / 91.25% |
 
-補正なしでは、真値に対する四隅の誤差も CUDA-Resident の方が小さくなります。
+Without refinement, the corner error against the ground truth is also smaller for CUDA-Resident.
 
-| 機体 | CPU 四隅 RMSE | CUDA-Resident 四隅 RMSE |
+| Machine | CPU corner RMSE | CUDA-Resident corner RMSE |
 | --- | --- | --- |
 | DGX Spark GB10 | 0.8779 px | 0.8337 px |
 | Jetson AGX Orin | 0.8779 px | 0.8337 px |
 | GeForce RTX 5070 Ti | 0.8653 px | 0.8204 px |
 
-ぼけ場面に限ると差が大きく、CPU 1.6282 px に対し CUDA-Resident 0.8068 px です。ぼけた辺では、多角形近似より極点探索の方が真値に近い四隅を返しています。ただし**この比較の母数は 16 マーカーしかありません**。傾向として扱い、結論にはしません。
+The difference is large when limited to blur scenes: 1.6282 px for CPU against 0.8068 px for CUDA-Resident. On blurred edges, extreme point search returns corners closer to the ground truth than polygon approximation does. However, **the denominator for this comparison is only 16 markers**. We treat it as a tendency, not a conclusion.
 
-### device memory
+### Device memory
 
-CUDA-Resident 経路の workspace です。3 機とも同じ値になります。
+This is the workspace of the CUDA-Resident route. The values are the same on all three machines.
 
-| 設定 | workspace 最大使用量 | 確保した容量 | 検出 91 回で増えた確保回数 |
+| Configuration | Peak workspace usage | Allocated capacity | Increase in allocation count over 91 detections |
 | --- | --- | --- | --- |
-| ArUco3 有効 | 17.51 MB | 22.69 MB | 0 回 |
-| ArUco3 無効 | 414.51 MB | 414.51 MB | 0 回 |
+| ArUco3 enabled | 17.51 MB | 22.69 MB | 0 |
+| ArUco3 disabled | 414.51 MB | 414.51 MB | 0 |
 
-検出中の `cudaMalloc` は 1 回もありません。確保は初期化時に済み、検出は確保済みの領域だけで動きます。
+There is not a single `cudaMalloc` during detection. Allocation is finished at initialization, and detection operates only within the already allocated region.
 
-ArUco3 検出戦略を無効にすると必要量が 23.7 倍になります。画像を縮小しないため、segmentation と二値化を原寸で行うためです。最大値を決めるのは 3840x2160 の場面です。
+Disabling the ArUco3 detection strategy multiplies the required amount by 23.7. This is because the image is not downscaled, so segmentation and thresholding are performed at full scale. The maximum is determined by the 3840x2160 scenes.
 
-### corpus の再現性
+### Corpus reproducibility
 
-同じ seed から生成した corpus 画像が、**機体をまたぐと一致しません**。aarch64 の DGX Spark GB10 と x86_64 の GeForce RTX 5070 Ti では 91 場面のうち 54 場面が異なります。
+Corpus images generated from the same seed **do not match across machines**. Between the aarch64 DGX Spark GB10 and the x86_64 GeForce RTX 5070 Ti, 54 of the 91 scenes differ.
 
-**architecture の違いだけが原因ではありません。** benchmark の 28 場面で比べると、**同じ aarch64 の DGX Spark GB10 と Jetson AGX Orin の間でも 6 場面 (`combined` の 4 解像度、`blur_3840x2160`、`noise_3840x2160`) の hash が異なります**。この 2 機は OpenCV の version は同じですが、OS (Ubuntu 24.04 と 20.04)、CUDA Toolkit (13.0 と 11.4)、compiler が違います。
+**The architecture difference is not the only cause.** Comparing the 28 benchmark scenes, **the hashes differ for 6 scenes (the 4 resolutions of `combined`, `blur_3840x2160`, and `noise_3840x2160`) even between the DGX Spark GB10 and the Jetson AGX Orin, both aarch64**. These two machines have the same OpenCV version, but differ in OS (Ubuntu 24.04 versus 20.04), CUDA Toolkit (13.0 versus 11.4), and compiler.
 
-| 場面 | 異なる画素 | 最大差 | 平均差 |
+| Scene | Differing pixels | Max difference | Mean difference |
 | --- | --- | --- | --- |
-| clean_1280x720_n4_s128 | 736 / 921600 (0.0799%) | 4 階調 | 0.00194 |
-| blur_1280x720 | 672 / 921600 (0.0729%) | 1 階調 | 0.00073 |
-| rotation_640x480 | 362 / 307200 (0.1178%) | 4 階調 | 0.00265 |
+| clean_1280x720_n4_s128 | 736 / 921600 (0.0799%) | 4 gray levels | 0.00194 |
+| blur_1280x720 | 672 / 921600 (0.0729%) | 1 gray level | 0.00073 |
+| rotation_640x480 | 362 / 307200 (0.1178%) | 4 gray levels | 0.00265 |
 
-異なる画素は場面あたり 0.1% 前後にとどまり、階調差は最大でも 4 です。corpus 生成器は OpenCV の `warpPerspective` と `GaussianBlur` を使います。build 環境ごとに SIMD 経路と丸めが一致しないためと見ていますが、切り分けは済んでいません。**architecture ではなく build 環境の違いで説明する必要があります。**
+The differing pixels stay at around 0.1% per scene, and the gray-level difference is at most 4. The corpus generator uses OpenCV's `warpPerspective` and `GaussianBlur`. We believe the cause is that SIMD paths and rounding do not agree across build environments, but the isolation has not been completed. **This needs to be explained by the difference in build environment, not architecture.**
 
-**この差は機体をまたぐ数値の比較にだけ影響します。** 同じ機の中で CPU と CUDA-Resident を比べる測定には影響しません。両者は同じ画像を見ています。影響の大きさは、四隅 RMSE の 0.5184 px と 0.5042 px の差、すなわち 2.7% です。
+**This difference affects only comparisons of numbers across machines.** It does not affect measurements comparing CPU and CUDA-Resident within the same machine. Both see the same image. The magnitude of the effect is the difference between corner RMSE 0.5184 px and 0.5042 px, that is, 2.7%.
 
-### 実行環境
+### Execution environment
 
-| 項目 | DGX Spark GB10 | Jetson AGX Orin | GeForce RTX 5070 Ti |
+| Item | DGX Spark GB10 | Jetson AGX Orin | GeForce RTX 5070 Ti |
 | --- | --- | --- | --- |
 | OS | Ubuntu 24.04.4 LTS | Ubuntu 20.04.6 LTS | Ubuntu 24.04.4 LTS |
 | architecture | aarch64 | aarch64 | x86_64 |
 | CPU | Cortex-X925 x10 + A725 x10 | Cortex-A78AE x12 | Core Ultra 7 265 |
-| GPU | NVIDIA GB10 (統合) | Orin (統合) | RTX 5070 Ti (単体) |
+| GPU | NVIDIA GB10 (integrated) | Orin (integrated) | RTX 5070 Ti (discrete) |
 | Compute Capability | 12.1 | 8.7 | 12.0 |
 | CUDA Toolkit | 13.0 | 11.4 | 13.0 |
-| driver | 580.95.05 | 記録なし (注) | 610.43.02 |
-| power mode | 指定なし | MAXN (0) | 指定なし |
-| GPU 最大 clock | 3003 MHz | 1300 MHz | 3090 MHz |
+| driver | 580.95.05 | not recorded (see note) | 610.43.02 |
+| power mode | not specified | MAXN (0) | not specified |
+| GPU max clock | 3003 MHz | 1300 MHz | 3090 MHz |
 | OpenCV | 4.14.0 (`0654a42e`) | 4.14.0 (`0654a42e`) | 4.14.0 (`0654a42e`) |
 
-注: Jetson AGX Orin には `nvidia-smi` が無いため、driver version を同じ手順で取得できません。
+Note: The Jetson AGX Orin has no `nvidia-smi`, so the driver version cannot be obtained by the same procedure.
 
-power mode と clock は benchmark の測定結果 (`docs/measurements/2026-08-29-<機体>-sweep.jsonl`) の `environment` 行に記録します。正確性評価の結果は clock に依存しないため、評価器の出力には含めません。
+Power mode and clock are recorded in the `environment` line of the benchmark measurement results (`docs/measurements/2026-08-29-<machine>-sweep.jsonl`). The accuracy evaluation results do not depend on the clock, so they are not included in the evaluator's output.
 
-## 目標
+## Goals
 
-- 実画像データセットの注釈結果を真値として、同じ指標を同じ区分で出す。
-- 差異のあった場面の可視化画像を成果物として保存する。
-- corpus 生成を build 環境に依存しない形にするか、生成済み corpus を配布するかを決める。
+- Produce the same metrics in the same divisions, using the annotation results of a real-image dataset as ground truth.
+- Save visualization images of the scenes with discrepancies as artifacts.
+- Decide whether to make corpus generation independent of the build environment or to distribute a pre-generated corpus.
 
-## 未確定事項
+## Open questions
 
-- corpus 画像が architecture 間で一致しない原因。OpenCV の SIMD 経路を疑っているが、どの関数かは切り分けていない。
-- 複合劣化での取りこぼし 3 件が、どの段で落ちているか。二値化、輪郭、Dictionary 照合のいずれかは特定していない。
-- ぼけ場面で極点探索の方が真値に近い四隅を返す理由。母数が 16 マーカーしかなく、傾向以上のことは言えない。
-- 1280x720 の 96 px マーカーの扱い。下限がちょうど 96 px であり、真値の実効辺長が丸めでわずかに下回るため「下限以上」の区分に入らない。境界の判定方法を決めていない。
+- The cause of corpus images not matching across architectures. We suspect OpenCV's SIMD paths, but have not isolated which function.
+- At which stage the 3 misses under combined degradation are dropped. We have not identified whether it is thresholding, contours, or dictionary matching.
+- Why extreme point search returns corners closer to the ground truth in blur scenes. With a denominator of only 16 markers, nothing beyond a tendency can be said.
+- How to handle 96 px markers at 1280x720. The bound is exactly 96 px, and the effective side length of the ground truth falls slightly below it due to rounding, so they do not fall into the "at or above bound" division. The method for deciding the boundary has not been settled.
 
-## 付録: 測定の再現
+## Appendix: Reproducing the measurements
 
 ```
-# container 内で実行する。<preset> は機体ごとの build preset。
+# Run inside the container. <preset> is the build preset for the machine.
 B=./build/<preset>/tools/evaluate/aruco3cuda_evaluate
 
-# ArUco3 検出戦略を有効にした測定
+# Measurement with the ArUco3 detection strategy enabled
 $B --preset full --corpus-dir /tmp/c --output accuracy.json
 
-# ArUco3 検出戦略を無効にした測定 (差異の出どころを切り分ける)
+# Measurement with the ArUco3 detection strategy disabled (isolates where the differences come from)
 $B --preset full --corpus-dir /tmp/c --use-aruco3 0 --output accuracy-noaruco3.json
 ```
 
-corpus はこの tool が seed から生成するため、事前の生成は要りません。生成に使う seed と preset は `aruco3cuda_corpusgen` と同じであり、同じ画像になります。
+The corpus is generated from a seed by this tool, so no prior generation is required. The seed and preset used for generation are the same as `aruco3cuda_corpusgen`, producing the same images.
 
-結果は `docs/measurements/2026-08-29-<機体>-accuracy{,-noaruco3}.{json,txt}` にあります。
+The results are in `docs/measurements/2026-08-29-<machine>-accuracy{,-noaruco3}.{json,txt}`.
 
-## 関連
+## See also
 
-- [評価計画](evaluation-plan.md)
-- [benchmark 結果まとめ](benchmark-report.md)
-- [検出パイプライン設計](design/detector-pipeline.md)
-- [対応 Dictionary](dictionaries.md)
-- [正確性評価 CLI](../tools/evaluate/main.md)
-- [正確性評価の指標](../tools/evaluate/accuracy.md)
+- [Evaluation plan](evaluation-plan.md)
+- [Benchmark summary](benchmark-report.md)
+- [Detection pipeline design](design/detector-pipeline.md)
+- [Supported dictionaries](dictionaries.md)
+- [Accuracy evaluation CLI](../tools/evaluate/main.md)
+- [Accuracy evaluation metrics](../tools/evaluate/accuracy.md)

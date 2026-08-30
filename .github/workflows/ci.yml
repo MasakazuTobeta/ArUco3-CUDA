@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# GPU を持たない runner で回せる検査だけを行う。
+# Only the checks that can run on a runner without a GPU.
 #
-# 検出の正しさは GPU 上でしか確かめられないため、402 件の自動 test と
-# Compute Sanitizer は DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の
-# 実機で実行する。CI が守るのは「compile が通ること」と「文書と整形の規約」であり、
-# 正確性の保証ではない。この区別を曖昧にすると、CI の緑を正しさの証明と
-# 読み違える。
+# Detection correctness can only be confirmed on a GPU, so the 402 automated
+# tests and Compute Sanitizer run on real hardware: DGX Spark GB10, Jetson AGX
+# Orin, and GeForce RTX 5070 Ti. What CI protects is that the code compiles and
+# that the documentation and formatting conventions hold; it is not a guarantee
+# of correctness. Blurring that distinction invites reading a green CI run as
+# proof of correctness.
 name: CI
 
 on:
@@ -24,48 +25,49 @@ concurrency:
 
 jobs:
   lint:
-    name: 整形と文書の検査
+    name: Formatting and documentation checks
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
-      # container と同じ 18 系を使う。version が違うと整形結果が変わり、
-      # 手元で通るものが CI で落ちる。
-      - name: clang-format を導入する
+      # Use the same 18.x series as the container. A different version produces
+      # different formatting, so what passes locally fails in CI.
+      - name: Install clang-format
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang-format-18
           echo "CLANG_FORMAT=clang-format-18" >> "$GITHUB_ENV"
 
-      - name: 整形差分を確認する
+      - name: Check formatting differences
         run: ./tools/check-format.sh
 
-      - name: 公開 header の Doxygen を検査する
+      - name: Check the Doxygen comments on the public headers
         run: python3 tools/check_doxygen.py
 
-      - name: 文書の相対 link を検査する
+      - name: Check the relative links in the documentation
         run: python3 tools/check-doc-links.py
 
-      - name: 新規 source file の SPDX 表記を確認する
+      - name: Check the SPDX identifiers on new source files
         run: |
           missing=0
           while IFS= read -r file; do
             if ! head -5 "$file" | grep -q 'SPDX-License-Identifier'; then
-              echo "SPDX 表記が無い: $file"
+              echo "no SPDX identifier: $file"
               missing=1
             fi
           done < <(git ls-files '*.cpp' '*.hpp' '*.cu' '*.cuh' '*.py' '*.sh')
           exit "$missing"
 
   build:
-    name: build と CPU 側 test
+    name: Build and CPU side tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
-      # 開発 container と同じ経路で導入する。third-party action を使わないのは
-      # 供給元を NVIDIA の apt repository へ揃えるためである。
-      - name: CUDA Toolkit を導入する
+      # Install through the same path as the development container. No
+      # third-party action is used, so that the supplier stays the NVIDIA apt
+      # repository.
+      - name: Install the CUDA Toolkit
         run: |
           set -eux
           sudo apt-get update
@@ -74,32 +76,36 @@ jobs:
             https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i /tmp/cuda-keyring.deb
           sudo apt-get update
-          # 本 project は Thrust / CUB / libcu++ を使わないため、nvcc と
-          # cudart の開発 package だけで足りる。開発 container が入れている
-          # sanitizer と profiler は GPU が無い runner では使えないため省く。
+          # This project does not use Thrust / CUB / libcu++, so the nvcc and
+          # cudart development packages are enough. The sanitizer and profiler
+          # the development container installs are unusable on a runner without
+          # a GPU, so they are omitted.
           sudo apt-get install -y --no-install-recommends \
             cuda-nvcc-13-0 cuda-cudart-dev-13-0
           echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
 
-      - name: build 依存を導入する
+      - name: Install the build dependencies
         run: sudo apt-get install -y --no-install-recommends ninja-build libgtest-dev
 
-      # OpenCV を必要とする CPU 基準 runner は build しない。source から build すると
-      # CI の時間の大半を占め、compile の退行検出という目的に見合わない。
-      - name: configure する
+      # The CPU baseline runner, which needs OpenCV, is not built. Building
+      # OpenCV from source would take most of the CI time, which is out of
+      # proportion to the goal of catching compile regressions.
+      - name: Configure
         run: |
           cmake -S . -B build/ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DARUCO3CUDA_BUILD_REFERENCE=OFF \
             -DCMAKE_CUDA_ARCHITECTURES="87;120;121"
 
-      # 3 つの architecture 向けに同時に生成し、機種固有の compile 誤りを捕まえる。
-      - name: build する
+      # Generate for the three architectures at once, to catch compile errors
+      # that are specific to one of them.
+      - name: Build
         run: cmake --build build/ci -j "$(nproc)"
 
-      # GPU を要する suite は除く。ここに挙げた suite が増減した場合、CI は
-      # 落ちて気付かせる。無言で読み替えない。
-      - name: device を必要としない test を実行する
+      # Exclude the suites that require a GPU. If the set of suites listed here
+      # grows or shrinks, CI fails and makes that visible. Never adjust it
+      # silently.
+      - name: Run the tests that do not require a device
         run: |
           ./build/ci/test/aruco3cuda_unit_tests \
             --gtest_filter=-AlignUpTest.*:CudaCheckTest.*:CudaCheckDeliberateErrorTest.*:DeviceProbeTest.*:WorkspaceTest.*

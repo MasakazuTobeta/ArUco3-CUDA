@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 採用した候補の詰め直しと四隅の回転打ち消しを検証する。
+// Verifies the compaction of accepted candidates and the undoing of the corner
+// rotation.
 //
-// S9 の重複整理は「同じ ID を落とすこと」ではない。OpenCV は ID による
-// 重複除去を持たない。重複が消えるのは包含木による打ち切りの結果である。
-// この test は同じ ID が 2 件出ることを固定して、善意の ID 重複除去が
-// 混入するのを防ぐ。
+// The duplicate cleanup in S9 is not "drop candidates with the same ID". OpenCV
+// has no deduplication by ID at all; duplicates disappear as a consequence of
+// the containment tree cutting them off. This test pins down that two
+// detections with the same ID are both emitted, so that a well-meaning ID-based
+// deduplication cannot creep in.
 #include "detection_emit.hpp"
 
 #include <gtest/gtest.h>
@@ -37,7 +39,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 1 候補分の入力。
+/// Input for a single candidate.
 struct CandidateInput {
     std::int32_t x_[4] = {0, 0, 0, 0};
     std::int32_t y_[4] = {0, 0, 0, 0};
@@ -61,7 +63,7 @@ CandidateInput make_candidate(int left, int top, int right, int bottom, int id, 
     return input;
 }
 
-/// 1 件の検出結果。
+/// A single detection result.
 struct Detection {
     int id_ = -1;
     int rotation_ = 0;
@@ -70,7 +72,7 @@ struct Detection {
     float y_[4] = {0.0F, 0.0F, 0.0F, 0.0F};
 };
 
-/// 候補と段数を直接注入して検出結果を作る。
+/// Produces detections by injecting candidates and depths directly.
 class EmitRun {
 public:
     EmitRun() = default;
@@ -188,8 +190,9 @@ private:
         if (this->count_ <= 0) {
             return true;
         }
-        // 検出数を超えた領域は kernel が書かない。初期化していない値を読むと
-        // Compute Sanitizer の initcheck が指摘する。有効な範囲だけ写す。
+        // The kernel does not write past the detection count. Reading
+        // uninitialized values would be flagged by Compute Sanitizer's
+        // initcheck, so copy only the valid range.
         const auto valid = static_cast<std::size_t>(this->count_);
         const auto capacity = static_cast<std::ptrdiff_t>(detections.capacity_);
         std::vector<std::int32_t> ids(valid);
@@ -236,10 +239,10 @@ private:
     Status count_status_ = Status::kOk;
 };
 
-// 正常系: 出力の並びが入力の候補の並びを保つ。
+// Happy path: the output order preserves the order of the input candidates.
 TEST(DetectionEmitTest, order_follows_candidate_index) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 100, 100, 11, 0, 0),
                                                 make_candidate(200, 0, 300, 100, -1, 0, 0),
@@ -257,12 +260,13 @@ TEST(DetectionEmitTest, order_follows_candidate_index) {
     EXPECT_EQ(run.detections()[2].source_, 3);
 }
 
-// 正常系: 四隅が OpenCV の correctCornerPosition と同じ並びになる。
+// Happy path: the corners come out in the same order as OpenCV's
+// correctCornerPosition.
 TEST(DetectionEmitTest, rotation_correction_matches_opencv) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 四隅を互いに違う座標にして、並び替えを見分けられるようにする。
+    // Give each corner a distinct coordinate so that a reordering is visible.
     CandidateInput base;
     const int xs[4] = {10, 90, 80, 20};
     const int ys[4] = {11, 21, 91, 81};
@@ -281,7 +285,7 @@ TEST(DetectionEmitTest, rotation_correction_matches_opencv) {
         ASSERT_EQ(run.count(), 1) << rotation;
         EXPECT_EQ(run.detections()[0].rotation_, rotation) << rotation;
         for (int corner = 0; corner < 4; ++corner) {
-            // OpenCV の std::rotate(begin, begin + 4 - rot, end) と同じ。
+            // Same as OpenCV's std::rotate(begin, begin + 4 - rot, end).
             const int source = (corner + 4 - rotation) % 4;
             EXPECT_FLOAT_EQ(run.detections()[0].x_[corner], static_cast<float>(xs[source]))
                     << "rotation=" << rotation << " corner=" << corner;
@@ -291,17 +295,17 @@ TEST(DetectionEmitTest, rotation_correction_matches_opencv) {
     }
 }
 
-// 正常系: 同じ ID の検出を 2 件とも出す。
+// Happy path: two detections with the same ID are both emitted.
 TEST(DetectionEmitTest, duplicate_ids_are_both_emitted) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 離れた位置に同じ ID のマーカーが 2 枚ある場面。OpenCV は 2 件とも出す。
+    // A scene with two markers of the same ID far apart. OpenCV emits both.
     const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 100, 100, 42, 0, 0),
                                                 make_candidate(300, 300, 400, 400, 42, 0, 0)};
     EmitRun run;
     ASSERT_TRUE(run.run(inputs, 1, 2, DetectorConfig()));
-    // ID による重複除去を入れたらここで 1 になり落ちる。
+    // Adding deduplication by ID would make this 1 and fail here.
     ASSERT_EQ(run.count(), 2);
     EXPECT_EQ(run.detections()[0].id_, 42);
     EXPECT_EQ(run.detections()[1].id_, 42);
@@ -309,12 +313,14 @@ TEST(DetectionEmitTest, duplicate_ids_are_both_emitted) {
     EXPECT_FLOAT_EQ(run.detections()[1].x_[0], 300.0F);
 }
 
-// 正常系: 走査が届かなかった候補は ID があっても出さない。
+// Happy path: a candidate the traversal never reached is not emitted, even if
+// it has an ID.
 TEST(DetectionEmitTest, suppressed_candidate_is_not_emitted) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 段数 1 の候補は ID があるが、打ち切りが 1 なので届かない。
+    // The depth-1 candidate has an ID, but the cutoff is 1 so the traversal
+    // never reaches it.
     const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 300, 300, 77, 0, 1),
                                                 make_candidate(50, 50, 250, 250, 88, 0, 0)};
     EmitRun run;
@@ -324,14 +330,17 @@ TEST(DetectionEmitTest, suppressed_candidate_is_not_emitted) {
     EXPECT_EQ(run.detections()[0].source_, 1);
 }
 
-// 境界値: 候補上限が候補数より大きくても、前回の値が漏れない。
+// Boundary: stale values do not leak through when the candidate capacity
+// exceeds the candidate count.
 //
-// 実運用は候補上限 4096 に対し候補が数件である。述語 kernel が候補数の外を
-// 0 で埋めないと、前の frame の採否が scan に混ざって検出数が壊れる。同じ
-// EmitRun を 2 度使い、1 度目の値が残っている状態で 2 度目を測る。
+// In production the capacity is 4096 candidates while only a handful are
+// present. If the predicate kernel does not zero out the region past the
+// candidate count, the previous frame's accept flags mix into the scan and
+// corrupt the detection count. We reuse the same EmitRun twice and measure the
+// second run while the first run's values are still resident.
 TEST(DetectionEmitTest, stale_values_beyond_candidate_count_are_cleared) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     constexpr int kCapacity = 64;
     std::vector<CandidateInput> many;
@@ -346,7 +355,7 @@ TEST(DetectionEmitTest, stale_values_beyond_candidate_count_are_cleared) {
     ASSERT_TRUE(run.run(many, 1, kCapacity, DetectorConfig(), kCapacity));
     ASSERT_EQ(run.count(), kCapacity);
 
-    // 同じ workspace を使い回して候補を 2 件に減らす。
+    // Reuse the same workspace and drop down to two candidates.
     const std::vector<CandidateInput> few = {make_candidate(0, 0, 30, 30, 5, 0, 0),
                                              make_candidate(100, 100, 130, 130, -1, 0, 0)};
     ASSERT_TRUE(run.run(few, 1, kCapacity, DetectorConfig(), kCapacity));
@@ -357,10 +366,10 @@ TEST(DetectionEmitTest, stale_values_beyond_candidate_count_are_cleared) {
     EXPECT_EQ(run.detections()[0].source_, 0);
 }
 
-// 境界値: 上限を超えたら打ち切り、kMarkerOverflow を返す。
+// Boundary: exceeding the limit truncates and returns kMarkerOverflow.
 TEST(DetectionEmitTest, reports_marker_overflow) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 100, 100, 1, 0, 0),
                                                 make_candidate(200, 0, 300, 100, 2, 0, 0),
@@ -373,10 +382,10 @@ TEST(DetectionEmitTest, reports_marker_overflow) {
     EXPECT_EQ(run.detections()[1].id_, 2);
 }
 
-// 境界値: 採用が 0 件でも成立する。
+// Boundary: works with zero accepted candidates.
 TEST(DetectionEmitTest, handles_no_accepted_candidate) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 100, 100, -1, 0, 0),
                                                 make_candidate(200, 0, 300, 100, -1, 0, 0)};
@@ -386,10 +395,10 @@ TEST(DetectionEmitTest, handles_no_accepted_candidate) {
     EXPECT_EQ(run.count_status(), Status::kOk);
 }
 
-// 正常系: 同じ入力を 2 度流すと同じ結果になる。
+// Happy path: running the same input twice produces the same result.
 TEST(DetectionEmitTest, results_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 100, 100, 3, 2, 0),
                                                 make_candidate(200, 0, 300, 100, -1, 0, 0),
@@ -410,7 +419,7 @@ TEST(DetectionEmitTest, results_are_deterministic) {
     }
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: invalid arguments perform no work.
 TEST(DetectionEmitTest, rejects_invalid_arguments) {
     Workspace workspace;
     DetectorConfig config;
@@ -440,11 +449,13 @@ TEST(DetectionEmitTest, rejects_invalid_arguments) {
     EXPECT_EQ(aruco3cuda::detail::read_detection_count(empty, &count, nullptr),
               Status::kInvalidArgument);
 
-    // 検出上限が候補上限を超える設定は成立しない。
+    // A configuration whose detection limit exceeds the candidate limit is not
+    // valid.
     config.max_markers_ = config.max_candidates_ + 1;
     EXPECT_EQ(aruco3cuda::detail::detection_workspace_bytes(config), 0U);
     config.max_markers_ = 1024;
-    // doc の出力例と同じ値を固定する。ずれると workspace が足りなくなる。
+    // Pin down the same value the documented example output shows; if it
+    // drifts, the workspace will be too small.
     EXPECT_EQ(aruco3cuda::detail::detection_workspace_bytes(config), 62464U);
 }
 

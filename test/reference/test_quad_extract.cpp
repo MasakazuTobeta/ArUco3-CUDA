@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 極点探索による四隅推定を検証する。
+// Verifies the corner estimation by extreme-point search.
 //
-// 四隅の並びは成分の形で決まるため、CPU 基準と同じ角から始まるとは限らない。
-// 判断に必要なのは 4 点の集合が正しい位置にあることなので、対応付けてから
-// 位置の差を測る。あわせて、四隅が定まらない成分を無効にできることを固定する。
+// The order of the four corners follows the shape of the component, so it does
+// not necessarily start at the same corner as the CPU reference. What matters
+// is that the set of four points sits at the right positions, so the corners are
+// matched up first and the positional difference is measured afterwards. The
+// test also pins down that a component whose corners cannot be determined is
+// marked invalid.
 #include "quad_extract.hpp"
 
 #include <gtest/gtest.h>
@@ -41,13 +44,13 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// label 1 つ分の四隅。
+/// The four corners belonging to a single label.
 struct HostQuad {
     bool valid_ = false;
     std::vector<cv::Point2f> corners_;
 };
 
-/// 二値化画像から label、統計、四隅までを一度に求める。
+/// Computes labels, statistics, and corners from a binary image in one pass.
 class QuadRun {
 public:
     QuadRun() = default;
@@ -119,8 +122,9 @@ private:
         if (count == 0U) {
             return true;
         }
-        // 確保数ではなく label 数だけを読む。label 数を超える範囲は書かれて
-        // おらず、読むと未初期化 memory を触ることになる。
+        // Read only as many entries as there are labels, not the whole capacity.
+        // The range beyond the label count was never written, and reading it would
+        // touch uninitialized memory.
         const auto capacity = static_cast<std::size_t>(quads.capacity_);
         std::vector<std::int32_t> corner_x(count * kQuadCornerCount);
         std::vector<std::int32_t> corner_y(count * kQuadCornerCount);
@@ -159,10 +163,13 @@ private:
     int label_count_ = 0;
 };
 
-/// 2 つの四隅を、開始位置と向きの違いを許して突き合わせた最大距離。
+/// Largest distance between two corner sets, matched up while allowing the
+/// starting position and the winding direction to differ.
 ///
-/// 極点探索が返す起点の角は成分の形で決まるため、期待値と同じ角から
-/// 始まるとは限らない。巡回と反転の 8 通りを試し、最も近い対応を採る。
+/// The starting corner returned by the extreme-point search follows the shape of
+/// the component, so it does not necessarily start at the same corner as the
+/// expected value. All eight combinations of rotation and reversal are tried and
+/// the closest correspondence is taken.
 double quad_distance(const std::vector<cv::Point2f>& expected,
                      const std::vector<cv::Point2f>& actual) {
     double best = std::numeric_limits<double>::max();
@@ -185,7 +192,7 @@ double quad_distance(const std::vector<cv::Point2f>& expected,
     return best;
 }
 
-/// 指定した四隅を塗りつぶした二値化画像を作る。
+/// Builds a binary image with the given quadrilateral filled in.
 cv::Mat fill_quad(int width, int height, const std::vector<cv::Point2f>& corners) {
     cv::Mat binary(height, width, CV_8UC1, cv::Scalar(0));
     std::vector<cv::Point> points;
@@ -197,7 +204,7 @@ cv::Mat fill_quad(int width, int height, const std::vector<cv::Point2f>& corners
     return binary;
 }
 
-/// 中心と辺長と回転から正方形の四隅を作る。
+/// Builds the four corners of a square from its center, side length, and rotation.
 std::vector<cv::Point2f> square_corners(double center_x, double center_y, double side,
                                         double degrees) {
     const double radians = degrees * CV_PI / 180.0;
@@ -215,10 +222,10 @@ std::vector<cv::Point2f> square_corners(double center_x, double center_y, double
     return corners;
 }
 
-// 正常系: 軸に平行な正方形の四隅を推定できる。
+// Nominal: the corners of an axis-aligned square are estimated correctly.
 TEST(QuadExtractTest, axis_aligned_square) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const std::vector<cv::Point2f> expected = square_corners(120.0, 90.0, 80.0, 0.0);
     const cv::Mat binary = fill_quad(200, 180, expected);
@@ -229,10 +236,10 @@ TEST(QuadExtractTest, axis_aligned_square) {
     EXPECT_LE(quad_distance(expected, run.quads()[0].corners_), 1.5);
 }
 
-// 正常系: 回転した正方形でも四隅を推定できる。
+// Nominal: the corners of a rotated square are estimated correctly as well.
 TEST(QuadExtractTest, rotated_squares) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const double angles[] = {7.0, 15.0, 30.0, 45.0, 60.0, 80.0};
     double worst = 0.0;
@@ -245,15 +252,15 @@ TEST(QuadExtractTest, rotated_squares) {
         ASSERT_TRUE(run.quads()[0].valid_) << angle;
         const double distance = quad_distance(expected, run.quads()[0].corners_);
         worst = std::max(worst, distance);
-        EXPECT_LE(distance, 1.5) << "角度 " << angle;
+        EXPECT_LE(distance, 1.5) << "angle " << angle;
     }
-    std::printf("[quad] 回転正方形の四隅の最大差 %.4f px\n", worst);
+    std::printf("[quad] largest corner difference over rotated squares %.4f px\n", worst);
 }
 
-// 正常系: 射影で歪んだ四角形でも四隅を推定できる。
+// Nominal: the corners of a perspective-distorted quadrilateral are estimated correctly.
 TEST(QuadExtractTest, perspective_distorted_quad) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const std::vector<cv::Point2f> expected = {
             cv::Point2f(40.0F, 50.0F), cv::Point2f(210.0F, 30.0F), cv::Point2f(240.0F, 190.0F),
@@ -266,15 +273,16 @@ TEST(QuadExtractTest, perspective_distorted_quad) {
     EXPECT_LE(quad_distance(expected, run.quads()[0].corners_), 1.5);
 }
 
-// 正常系: 穴を持つ枠でも外側の四隅を推定できる。マーカーの黒枠に対応する。
+// Nominal: for a ring with a hole, the outer corners are still estimated. This is
+// the case of the black border of a marker.
 TEST(QuadExtractTest, marker_like_ring) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const std::vector<cv::Point2f> expected = square_corners(160.0, 140.0, 120.0, 22.0);
     cv::Mat binary = fill_quad(320, 280, expected);
-    // 内側をくり抜き、枠だけを残す。極点探索は成分の全画素を見るため、
-    // 穴があっても外側の四隅が得られる。
+    // Cut out the inside and leave only the border. The extreme-point search looks
+    // at every pixel of the component, so the outer corners come out even with a hole.
     const std::vector<cv::Point2f> inner = square_corners(160.0, 140.0, 90.0, 22.0);
     std::vector<cv::Point> inner_points;
     inner_points.reserve(inner.size());
@@ -290,10 +298,10 @@ TEST(QuadExtractTest, marker_like_ring) {
     EXPECT_LE(quad_distance(expected, run.quads()[0].corners_), 1.5);
 }
 
-// 正常系: 複数のマーカーが同時にあっても label ごとに四隅が得られる。
+// Nominal: with several markers present at once, corners are still obtained per label.
 TEST(QuadExtractTest, multiple_components) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const std::vector<std::vector<cv::Point2f>> shapes = {square_corners(80.0, 80.0, 60.0, 0.0),
                                                           square_corners(240.0, 90.0, 70.0, 33.0),
@@ -310,7 +318,8 @@ TEST(QuadExtractTest, multiple_components) {
     QuadRun run;
     ASSERT_TRUE(run.run(binary));
     ASSERT_EQ(run.label_count(), 3);
-    // label の並びと図形の並びは対応しないため、最も近いものと突き合わせる。
+    // The order of the labels does not correspond to the order of the shapes, so each
+    // shape is matched against the nearest quadrilateral.
     for (const auto& shape : shapes) {
         double best = std::numeric_limits<double>::max();
         for (const HostQuad& quad : run.quads()) {
@@ -323,10 +332,10 @@ TEST(QuadExtractTest, multiple_components) {
     }
 }
 
-// 境界値: 1 画素の成分は四隅が定まらないため無効になる。
+// Boundary: a single-pixel component is invalid, because its corners cannot be determined.
 TEST(QuadExtractTest, single_pixel_is_invalid) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(40, 40, CV_8UC1, cv::Scalar(0));
     binary.at<std::uint8_t>(20, 20) = 255U;
@@ -336,10 +345,10 @@ TEST(QuadExtractTest, single_pixel_is_invalid) {
     EXPECT_FALSE(run.quads()[0].valid_);
 }
 
-// 境界値: 直線状の成分は片側に点が無いため無効になる。
+// Boundary: a straight-line component is invalid, because one side holds no points.
 TEST(QuadExtractTest, straight_line_is_invalid) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat horizontal(40, 60, CV_8UC1, cv::Scalar(0));
     cv::line(horizontal, cv::Point(5, 20), cv::Point(54, 20), cv::Scalar(255), 1);
@@ -358,10 +367,10 @@ TEST(QuadExtractTest, straight_line_is_invalid) {
     EXPECT_FALSE(diagonal_run.quads()[0].valid_);
 }
 
-// 境界値: 前景が無ければ四隅も 0 件になる。
+// Boundary: with no foreground there are no quadrilaterals either.
 TEST(QuadExtractTest, empty_image_has_no_quad) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat binary(41, 53, CV_8UC1, cv::Scalar(0));
     QuadRun run;
@@ -370,10 +379,10 @@ TEST(QuadExtractTest, empty_image_has_no_quad) {
     EXPECT_TRUE(run.quads().empty());
 }
 
-// 正常系: 四隅の並びは OpenCV と同じ向きへ揃う。
+// Nominal: the corner order is normalized to the same winding OpenCV uses.
 TEST(QuadExtractTest, corner_order_is_normalized) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const std::vector<cv::Point2f> expected = square_corners(120.0, 110.0, 90.0, 17.0);
     const cv::Mat binary = fill_quad(260, 240, expected);
@@ -385,14 +394,14 @@ TEST(QuadExtractTest, corner_order_is_normalized) {
                           static_cast<double>(corners[2].y - corners[0].y)) -
                          (static_cast<double>(corners[1].y - corners[0].y) *
                           static_cast<double>(corners[2].x - corners[0].x));
-    // OpenCV の _reorderCandidatesCorners と同じ符号になる。
+    // The sign matches the one the OpenCV _reorderCandidatesCorners produces.
     EXPECT_GE(cross, 0.0);
 }
 
-// 正常系: 同じ入力からは同じ四隅が得られる。
+// Nominal: the same input yields the same corners.
 TEST(QuadExtractTest, quads_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const std::vector<cv::Point2f> corners = square_corners(150.0, 130.0, 100.0, 41.0);
     const cv::Mat binary = fill_quad(300, 260, corners);
@@ -407,7 +416,7 @@ TEST(QuadExtractTest, quads_are_deterministic) {
     }
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure: nothing runs when the arguments are invalid.
 TEST(QuadExtractTest, rejects_invalid_arguments) {
     Workspace workspace;
     QuadBuffers quads;

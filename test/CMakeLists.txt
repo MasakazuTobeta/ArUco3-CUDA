@@ -16,14 +16,15 @@ add_executable(aruco3cuda_unit_tests
 target_link_libraries(aruco3cuda_unit_tests
   PRIVATE aruco3cuda::core aruco3cuda::util aruco3cuda::dictionary aruco3cuda::warnings aruco3cuda::coverage GTest::gtest GTest::gtest_main)
 
-# test_cuda_check.cpp は core の内部 header を使う。CUDA のエラー文脈は
-# 失敗経路でしか現れず、公開 API 経由では意図的に発生させられないため。
+# test_cuda_check.cpp uses core's internal headers. CUDA error context only
+# appears on failure paths, and those cannot be triggered deliberately through
+# the public API.
 target_include_directories(aruco3cuda_unit_tests
   PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src/core)
 target_link_libraries(aruco3cuda_unit_tests PRIVATE CUDA::cudart)
 
 include(GoogleTest)
-# CUDA context の初期化に時間がかかるため、探索時の timeout を広めに取る。
+# Initializing the CUDA context is slow, so allow a generous discovery timeout.
 gtest_discover_tests(aruco3cuda_unit_tests
   DISCOVERY_TIMEOUT 60
   PROPERTIES TIMEOUT 120)

@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   評価計画が測定条件として要求する power mode と clock を、対象機の違いを
-#   吸収して取得する。取得元が機種ごとに異なるため、その差をここへ集約する。
+# Purpose:
+#   Obtain the power mode and clock that the evaluation plan requires as
+#   measurement conditions, absorbing the differences between target machines.
+#   The sources differ per machine, so those differences are concentrated here.
 #
-# 出力:
-#   key=value 形式を 1 行 1 項目で標準出力へ書く。取得できない項目は行ごと
-#   省略する。空文字列や 0 で埋めない。値が無いことと 0 であることは違う。
+# Output:
+#   key=value pairs, one item per line, on standard output. Items that cannot be
+#   obtained are omitted line and all. They are not padded with an empty string
+#   or 0. Having no value is not the same as having the value 0.
 #
-# 機種差:
-#   DGX Spark は nvidia-smi から driver version と SM clock を取得できる。
-#   Jetson には nvidia-smi が無く、nvpmodel の binary も container へ入らない。
-#   このため nvpmodel の状態 file と sysfs の devfreq から取得する。
+# Machine differences:
+#   On DGX Spark the driver version and the SM clock come from nvidia-smi.
+#   Jetson has no nvidia-smi, and the nvpmodel binary is not present in the
+#   container either, so the values come from the nvpmodel state files and from
+#   devfreq in sysfs.
 set -uo pipefail
 
 emit() {
-  # 値が空の項目は出力しない。呼出側が「未取得」を判別できるようにする。
+  # Items with an empty value are not printed, so that the caller can tell
+  # "not collected" apart.
   [ -n "${2:-}" ] && printf '%s=%s\n' "$1" "$2"
   return 0
 }
@@ -26,12 +30,14 @@ power_mode=""
 if command -v nvpmodel >/dev/null 2>&1; then
   power_mode="$(nvpmodel -q 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g;s/^ *//;s/ *$//')"
 elif [ -r /var/lib/nvpmodel/status ]; then
-  # status は "pmode:0000" 形式。前置 0 を落として mode 番号を取り出す。
+  # status has the form "pmode:0000". Strip the leading zeros to get the mode
+  # number.
   mode_id="$(sed -n 's/.*pmode:0*\([0-9][0-9]*\).*/\1/p' /var/lib/nvpmodel/status | head -1)"
   if [ -n "${mode_id}" ]; then
     mode_name=""
     if [ -r /etc/nvpmodel.conf ]; then
-      # 定義行は "< POWER_MODEL ID=0 NAME=MAXN >" 形式。注釈行を除いて探す。
+      # A definition line has the form "< POWER_MODEL ID=0 NAME=MAXN >". Search
+      # for it while skipping comment lines.
       mode_name="$(grep -E "^< *POWER_MODEL +ID=${mode_id} +NAME=" /etc/nvpmodel.conf 2>/dev/null \
                    | sed -n 's/.*NAME=\([^ >]*\).*/\1/p' | head -1)"
     fi
@@ -54,7 +60,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
                            | head -1 | sed 's/[^0-9]//g')"
 fi
 if [ -z "${gpu_max_clock_mhz}" ]; then
-  # Jetson は sysfs の devfreq に GPU 周波数が出る。単位は Hz。
+  # On Jetson the GPU frequency appears in devfreq under sysfs, in Hz.
   for path in /sys/devices/gpu.0/devfreq/*/max_freq; do
     [ -r "${path}" ] || continue
     gpu_max_clock_mhz="$(( $(cat "${path}") / 1000000 ))"
@@ -79,12 +85,12 @@ if [ -r /etc/nv_tegra_release ]; then
 fi
 emit platform_release "${platform_release}"
 
-# 基板名。Jetson AGX Orin と Orin NX では性能が大きく異なるため、
-# 測定結果には基板まで記録する。
+# Board name. Jetson AGX Orin and Orin NX differ greatly in performance, so the
+# measurement results record the board as well.
 #
-# device tree は /sys/firmware 配下にあるが、Docker は既定でこの経路を
-# mask する。このため compose が model file を直接 mount し、
-# その経路を最優先で参照する。
+# The device tree lives under /sys/firmware, but Docker masks that path by
+# default. Compose therefore mounts the model file directly, and that path is
+# consulted first.
 platform_model=""
 for path in /etc/aruco3cuda-platform-model /sys/firmware/devicetree/base/model /proc/device-tree/model; do
   if [ -r "${path}" ]; then

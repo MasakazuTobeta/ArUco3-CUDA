@@ -1,122 +1,114 @@
 # Contributing
 
-このファイルは、このリポジトリで作業する人間とエージェントの共通ルールです。
+This file is the set of rules shared by the humans and agents who work in this repository.
 
 ## Base Standard
 
-- C++ コーディング規約は MISRA C++ 2023 を基礎とし、本書の規定をリポジトリ固有の上書きとして扱います。
-- CUDA C++ でも、host code と device code の責務、所有権、同期点、エラー境界を明示してください。
-- 将来 OpenCV へコントリビュートできるよう、OpenCV のコーディング規約と Apache-2.0 互換性を意識してください。
-- 本リポジトリへの contribution は、明示的な例外がない限り Apache License 2.0 で提供されます。
-- コピーレフト依存は導入しません。依存追加は Apache-2.0、MIT、BSD 等の permissive license を原則とします。
-- 公式 ArUco の GPLv3 source code をコピー、翻案、移植しません。実装前に [知的財産・ライセンス方針](docs/ip-and-licensing.md) を確認してください。
+- The C++ coding standard is based on MISRA C++ 2023, and the rules in this document act as repository-specific overrides.
+- In CUDA C++ as well, make the responsibilities of host code and device code, ownership, synchronization points, and error boundaries explicit.
+- Keep the OpenCV coding standard and Apache-2.0 compatibility in mind so that the work can be contributed to OpenCV in the future.
+- Contributions to this repository are provided under the Apache License 2.0 unless an explicit exception is stated.
+- Do not introduce copyleft dependencies. As a rule, added dependencies must carry a permissive license such as Apache-2.0, MIT, or BSD.
+- Do not copy, adapt, or port the GPLv3 source code of official ArUco. Review the [Intellectual property and licensing policy](docs/ip-and-licensing.md) before implementing.
 
 ## Development Workflow
 
-1. 変更前に影響範囲、依存関係、リスク、検証方法、更新対象文書を整理する。
-2. 新しいアルゴリズムは論文、OpenCV CPU 実装の観測可能な挙動、公開仕様から要件を定義する。
-3. 可能な限り、期待動作を固定するテストを先に用意する。
-4. CPU 基準実装との正確性比較を通した後に性能最適化を行う。
-5. 最適化前後で、正確性、カーネル時間、end-to-end 時間、メモリ使用量を記録する。
-6. API、設定、評価条件、対応環境が変わる場合は関連文書を同じ変更で更新する。
+1. Before making a change, work out its scope of impact, dependencies, risks, verification method, and the documents that need updating.
+2. Derive the requirements for a new algorithm from papers, the observable behavior of the OpenCV CPU implementation, and public specifications.
+3. Wherever possible, first write tests that pin down the expected behavior.
+4. Optimize performance only after passing an accuracy comparison against the CPU baseline implementation.
+5. Record accuracy, kernel time, end-to-end time, and memory usage before and after an optimization.
+6. When the API, configuration, evaluation conditions, or supported environments change, update the related documents in the same change.
 
 ## C++ / CUDA Coding Rules
 
-- C++17 以上を使用し、RAII を徹底する。
-- raw `new` / `delete` を使用しない。
-- 型と class は `PascalCase`、関数とローカル変数は `snake_case`、定数は `kPascalCase`、名前空間は小文字を使用する。
-- 継続保持するメンバ変数は末尾 `_` とし、参照時は必ず `this->` を付ける。
-- `auto` は型が明白な場合に限り使用する。
-- 単位を持つ値は名前または型で単位を示す。例: `elapsed_ms`、`marker_length_px`。
-- CUDA カーネル内で動的メモリ確保、例外、暗黙の device-wide synchronization を使用しない。
-- CUDA API とカーネル起動のエラーを確認する。非同期処理では、失敗を検出する同期点をテストまたは呼出側に設ける。
-- フレームごとの `cudaMalloc` / `cudaFree` を避け、再利用可能な作業領域を使用する。
-- `cudaStream_t` を公開 API から扱える設計とし、既定 stream への暗黙依存を避ける。
-- `__CUDA_ARCH__` による機種固有分岐は局所化し、共通実装を保つ。
-- `clang-format` を適用し、静的解析の警告を放置しない。
+- Use C++17 or later and apply RAII consistently.
+- Do not use raw `new` / `delete`.
+- Use `PascalCase` for types and classes, `snake_case` for functions and local variables, `kPascalCase` for constants, and lowercase for namespaces.
+- Give member variables that persist a trailing `_`, and always prefix `this->` when referring to them.
+- Use `auto` only where the type is obvious.
+- Indicate the unit of a value that has one in its name or its type. For example: `elapsed_ms`, `marker_length_px`.
+- Do not use dynamic memory allocation, exceptions, or implicit device-wide synchronization inside CUDA kernels.
+- Check errors from CUDA API calls and kernel launches. For asynchronous work, provide a synchronization point in the test or the caller that detects failures.
+- Avoid per-frame `cudaMalloc` / `cudaFree`; use a reusable workspace instead.
+- Design so that `cudaStream_t` can be supplied through the public API, and avoid an implicit dependency on the default stream.
+- Keep machine-specific branching on `__CUDA_ARCH__` local, and maintain a common implementation.
+- Apply `clang-format` and do not leave static analysis warnings unaddressed.
 
 ## Code Provenance Rules
 
-- 実装根拠にした論文、仕様、permissive license の source code を `docs/ip-and-licensing.md` または実装の sidecar 文書へ記録する。
-- 公式 ArUco GPLv3 code の構造、表現、コメント、関数分割を移植しない。
-- OpenCV の Apache-2.0 code を改変または一部利用する場合は、対象 file、commit、ライセンス、変更内容を記録し、必要な copyright と notice を保持する。
-- ArUco3 検出戦略の実装根拠は、2018 年の論文と Apache-2.0 の OpenCV 4.x に限定する。公式 ArUco GPLv3 source code は、実装、レビュー、最適化、test data 作成の根拠に使用しない。
-- 定義済み Dictionary は、version と commit を固定した OpenCV 4.x の `predefined_dictionaries.hpp` を正本とする。公式 ArUco GPLv3 配布物から codeword、table、画像を抽出しない。
-- OpenCV の定義済み Dictionary を repository 内へ格納する場合は、取得元 file、commit、license、変換手順、変換前後の hash を記録し、必要な notice を保持する。
-- `extendDictionary()` 等で生成した custom Dictionary を `DICT_ARUCO_MIP_36h12` と同一であるかのように扱わない。既定 Dictionary と custom Dictionary は識別子、metadata、test を分離する。
-- CPU 実装を互換性 oracle として実行しただけの場合も、使用 version と設定を評価結果へ記録する。
-- code provenance が説明できない寄稿は取り込まない。
-- 特許の有無は source code license と別に扱う。商用公開前に必要な patent clearance を行う。
+- Record the papers, specifications, and permissively licensed source code that an implementation is based on in `docs/ip-and-licensing.md` or in the implementation's sidecar document.
+- Do not port the structure, expression, comments, or function decomposition of official ArUco GPLv3 code.
+- When modifying or partially using Apache-2.0 code from OpenCV, record the file, commit, license, and the nature of the change, and preserve the required copyright and notices.
+- Limit the implementation basis for the ArUco3 detection strategy to the 2018 paper and Apache-2.0 OpenCV 4.x. Do not use official ArUco GPLv3 source code as a basis for implementation, review, optimization, or test data creation.
+- Treat `predefined_dictionaries.hpp` from OpenCV 4.x, with the version and commit pinned, as the authoritative source for predefined Dictionaries. Do not extract codewords, tables, or images from official ArUco GPLv3 distributions.
+- When storing an OpenCV predefined Dictionary inside the repository, record the source file, commit, license, conversion procedure, and the hashes before and after conversion, and preserve the required notices.
+- Do not treat a custom Dictionary generated with `extendDictionary()` or similar as if it were identical to `DICT_ARUCO_MIP_36h12`. Keep identifiers, metadata, and tests separate for predefined Dictionaries and custom Dictionaries.
+- Even when the CPU implementation was merely run as a compatibility oracle, record the version and configuration used in the evaluation results.
+- Do not accept a contribution whose code provenance cannot be explained.
+- Treat patents separately from the source code license. Perform the necessary patent clearance before a commercial release.
 
 ## Error Handling And Validation
 
-- public API の画像型、寸法、stride、Dictionary、設定値、pointer、stream を境界で検証する。
-- host code の失敗は例外または明示的な状態値で通知し、無言で継続しない。
-- destructors、CUDA callback、device code から例外を送出しない。
-- CUDA のエラーには API 名、device、stream、処理段階を追跡できる文脈を付ける。
-- 外部入力、ファイル、環境変数、データセットを信頼せず、サイズ上限と形式を検証する。
+- Validate image type, dimensions, stride, Dictionary, configuration values, pointers, and streams at the boundary of the public API.
+- Report failures in host code through exceptions or explicit status values; never continue silently.
+- Do not throw exceptions from destructors, CUDA callbacks, or device code.
+- Attach context to CUDA errors so that the API name, device, stream, and processing stage can be traced.
+- Do not trust external input, files, environment variables, or datasets; validate size limits and formats.
 
 ## Comment Rules
 
-- program file 内の説明コメントと Doxygen は原則として日本語で記述する。
-- public class と関数には、目的、引数、戻り値、所有権、同期動作、入力例、出力例を記載する。`tools/check_doxygen.py` が欠落を検出する。`ctest` からも実行される。
-- 所有権と同期動作が class 全体で共通する場合は、class の Doxygen へ「全ての public member 関数に適用される」と明記してよい。同一の記述を member ごとに複写しない。
-- コメントは処理の言い換えではなく、設計理由、前提、失敗時の扱い、性能上の意図を説明する。
-- CUDA カーネルでは、thread / block とデータの対応、競合回避、境界条件を説明する。
+- Write everything in English: documents, explanatory comments inside program files, Doxygen, commit messages, and PR bodies.
+- Two exceptions. Quote legal wording in its original language and add an English gloss in parentheses; translating a designation of goods or a licence notice changes what it says. And keep non-ASCII test data that exists to exercise encoding, marking why it stays.
+- For public classes and functions, document the purpose, arguments, return value, ownership, synchronization behavior, an input example, and an output example. `tools/check_doxygen.py` detects omissions. It also runs from `ctest`.
+- When ownership and synchronization behavior are common to the whole class, it is acceptable to state in the class Doxygen that they "apply to all public member functions". Do not copy the same text onto every member.
+- Comments should explain the design rationale, assumptions, handling of failures, and performance intent, not restate what the code does.
+- For CUDA kernels, explain the mapping between threads / blocks and data, how races are avoided, and the boundary conditions.
 
 ## Testing Rules
 
-- 正常系、異常系、境界値を自動テストする。
-- CPU 基準実装と ID、回転、四隅座標、未検出結果を比較する。
-- 画像寸法、stride、ROI、マーカーサイズ、Dictionary、歪み、照明、ぼけ、遮蔽の代表条件を含める。
-- Compute Sanitizer を使用するテスト経路を設ける。
-- C0 および C1 カバレッジ 100% を目標とし、未達の場合は対象外理由を記録する。CUDA device code は host coverage と別に、入力分割と境界値で実行経路を確認する。測定は `cmake --preset coverage` の後 `cmake --build build/coverage --target coverage-report` で行い、現状と未達理由は [実装計画](docs/implementation-plan.md) に記録する。
-- 意図的に CUDA API を失敗させる test は suite 名へ `DeliberateError` を含め、Compute Sanitizer の実行から除外できるようにする。
-- 性能テストを正確性テストの代用にしない。
+- Test normal cases, error cases, and boundary values automatically.
+- Compare IDs, rotation, corner coordinates, and missed detections against the CPU baseline implementation.
+- Include representative conditions for image dimensions, stride, ROI, marker size, Dictionary, distortion, lighting, blur, and occlusion.
+- Provide a test route that uses Compute Sanitizer.
+- Aim for 100% C0 and C1 coverage, and record the reason for exclusion where it is not met. For CUDA device code, verify execution paths through input partitioning and boundary values, separately from host coverage. Measure with `cmake --preset coverage` followed by `cmake --build build/coverage --target coverage-report`, and record the current state and the reasons for shortfalls in the [implementation plan](docs/implementation-plan.md).
+- For tests that deliberately make a CUDA API fail, include `DeliberateError` in the suite name so they can be excluded from Compute Sanitizer runs.
+- Do not substitute performance tests for accuracy tests.
 
 ## Benchmark Rules
 
-- warm-up 回数、測定回数、解像度、マーカー条件、power mode、clock、CUDA / driver / OpenCV version を記録する。
-- `T_kernel`、`T_end_to_end`、単一フレーム遅延、複数フレームのスループットを分離する。
-- 平均値だけでなく、中央値、p95、p99 を保存する。
-- CPU と CUDA で同じ入力と検出条件を使用する。
-- GPU 常駐入力と host 入力からの転送込みを別結果として扱う。
-- 有利な結果だけを選択せず、CPU が速い条件を含めて crossover point を報告する。
+- Record the number of warm-up iterations, the number of measurement iterations, resolution, marker conditions, power mode, clocks, and the CUDA / driver / OpenCV versions.
+- Separate `T_kernel`, `T_end_to_end`, single-frame latency, and multi-frame throughput.
+- Store the median, p95, and p99, not just the mean.
+- Use the same inputs and detection conditions for CPU and CUDA.
+- Treat GPU-resident input and input including the transfer from the host as separate results.
+- Do not cherry-pick favorable results; include conditions where the CPU is faster and report the crossover point.
 
-## Documentation
+## What CI Covers
 
-- 文書は原則として日本語で記述し、`docs/terminology.md` の推奨表現を使用する。
-- 仕様・構想では、`現状` と `目標` を明確に分ける。
-- 設計判断が code の Doxygen だけでは伝わらない module には、隣接する sidecar `*.md` を置く。
-- sidecar には `目的`、`対象範囲`、`現状`、`実装上の判断`、`目標`、`関連` を含める。
-- 設計判断の記録先は領域ごとに決まっている。`src/core` の各段は [検出パイプライン設計](docs/design/detector-pipeline.md) が正本であり、sidecar は置かない。`tools/`、`bench/`、`reference/` は独立した道具なので sidecar を置く。test file には置かない。
-- 将来の判断に影響する採用理由と制約は ADR または関連文書へ残す。
+GitHub Actions runs on runners without a GPU. Therefore **a green CI does not mean the detection results are correct.**
 
-## CI が守る範囲
-
-GitHub Actions は GPU を持たない runner で動きます。したがって **CI が緑であることは検出結果の正しさを意味しません。**
-
-| 検査 | 実行場所 |
+| Check | Where it runs |
 | --- | --- |
-| clang-format の整形差分 | CI (`tools/check-format.sh`) |
-| 公開 header の Doxygen 要素 | CI (`tools/check_doxygen.py`) |
-| 文書の相対 link | CI (`tools/check-doc-links.py`) |
-| source file の SPDX 表記 | CI |
-| 3 architecture 向けの compile | CI (`ARUCO3CUDA_BUILD_REFERENCE=OFF`) |
-| device を必要としない test 54 件 | CI |
-| **自動 test 402 件** | **実機 3 台** |
-| **Compute Sanitizer 4 tool** | **実機 3 台** |
-| **CPU 基準との突き合わせ** | **実機 3 台** (OpenCV を要する) |
+| clang-format formatting diff | CI (`tools/check-format.sh`) |
+| Doxygen elements in public headers | CI (`tools/check_doxygen.py`) |
+| Relative links in documents | CI (`tools/check-doc-links.py`) |
+| SPDX notice in source files | CI |
+| Compilation for 3 architectures | CI (`ARUCO3CUDA_BUILD_REFERENCE=OFF`) |
+| 54 tests that need no device | CI |
+| **402 automated tests** | **3 physical machines** |
+| **4 Compute Sanitizer tools** | **3 physical machines** |
+| **Cross-check against the CPU baseline** | **3 physical machines** (requires OpenCV) |
 
-CI が OpenCV を build しないのは、source から build すると CI 時間の大半を占め、compile の退行検出という目的に見合わないためです。CPU 基準との比較は実機で行います。
+CI does not build OpenCV because building it from source would take up most of the CI time, which is out of proportion to the goal of detecting compilation regressions. Comparison against the CPU baseline is done on physical machines.
 
-整形と link の判定は CI と手元で同じ script を使います。`cmake --build <dir> --target format-check` と CI は同じ `tools/check-format.sh` を呼びます。判定を二重に持つと必ず食い違います。
+Formatting and link checks use the same script in CI and locally. `cmake --build <dir> --target format-check` and CI both invoke the same `tools/check-format.sh`. Two separate implementations of the same check will always drift apart.
 
 ## Commit And Review
 
-- commit message は Conventional Commits 形式を使用する。
-- 1 commit は 1 つの目的にまとめる。
-- PR 本文は原則として日本語で記述し、概要、変更点、検証結果、未実施項目、関連文書を含める。
-- secret、認証情報、ビルド生成物、測定用の大容量動画・画像を commit しない。
-- 新規 source file には `SPDX-License-Identifier: Apache-2.0` を記載する。
-- 第三者 code の license は project 全体の LICENSE ではなく **file の header** で判断する。OpenCV 4.x は全体が Apache-2.0 だが、`imgproc` の古い file は 3 条項 BSD の header を残している。写した場合の著作権表示は `NOTICE` へ保持する。
+- Write commit messages in English, using the Conventional Commits format.
+- Keep one commit to one purpose.
+- As a rule, write the PR body in English, and include a summary, the changes, verification results, items not done, and related documents.
+- Do not commit secrets, credentials, build outputs, or large videos and images used for measurement.
+- Add `SPDX-License-Identifier: Apache-2.0` to new source files.
+- Determine the license of third-party code from the **file header**, not from the project-wide LICENSE. OpenCV 4.x is Apache-2.0 as a whole, but older files in `imgproc` still carry a 3-clause BSD header. Preserve the copyright notice for anything copied in `NOTICE`.

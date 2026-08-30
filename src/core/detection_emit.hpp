@@ -18,107 +18,114 @@
 
 namespace aruco3cuda::detail {
 
-/// device 上に留まる検出結果。
+/// Detection results that stay on the device.
 ///
-/// 定義は公開 header にある。段の間で受け渡す型が公開型と食い違うと、
-/// 公開 API が内部の並びを写し直すことになる。同じ型を使う。
+/// The definition lives in the public header. If the type handed between stages
+/// differed from the public type, the public API would have to copy the internal
+/// layout across. The same type is used instead.
 using DeviceDetections = ::aruco3cuda::DeviceDetections;
 
-/// compaction の作業領域。
+/// Scratch space for the compaction.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: every region the pointers refer to is owned by the workspace.
+/// Synchronization: only a set of references; it holds no synchronization point.
 ///
-/// 入力例: max_candidates_ = 4096 の設定
-/// 出力例: offsets_ が 4096 要素
+/// Example input: settings with max_candidates_ = 4096
+/// Example output: offsets_ with 4096 elements
 struct DetectionEmitBuffers {
-    /// 候補ごとの採否 (0 か 1)。scan の後は書き出し先の index になる。
+    /// Verdict per candidate (0 or 1). After the scan it holds the write index.
     std::int32_t* offsets_ = nullptr;
     ScanBuffers scan_;
     int capacity_ = 0;
 };
 
-/// 検出結果と作業領域に必要な workspace の大きさを返す。
+/// Returns the workspace size needed for the detections and the scratch space.
 ///
-/// 述語は候補の空間 (max_candidates_)、出力は検出の空間 (max_markers_) で
-/// あり、要素数が違う。scan は候補の空間で行う。
+/// The predicate lives in candidate space (max_candidates_) and the output in
+/// detection space (max_markers_), so their element counts differ. The scan runs
+/// in candidate space.
 ///
-/// @param config 候補上限と検出上限を含む設定。
-/// @return 必要な byte 数。config が不正なら 0。
+/// @param config Settings including the candidate limit and the detection limit.
+/// @return Required byte count. 0 when config is invalid.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: does not retain the argument regions.
+/// Synchronization: host only; it holds no synchronization point. Calls no CUDA API.
 ///
-/// 入力例: max_candidates_ = 4096、max_markers_ = 1024 の設定
-/// 出力例: 62464
+/// Example input: settings with max_candidates_ = 4096 and max_markers_ = 1024
+/// Example output: 62464
 std::size_t detection_workspace_bytes(const DetectorConfig& config);
 
-/// 検出結果と作業領域を確保する。
+/// Allocates the detections and the scratch space.
 ///
-/// @param config 候補上限と検出上限を含む設定。
-/// @param workspace device 空間の workspace。
-/// @param out_buffers 成功時に作業領域を格納する。領域の所有権は呼出側にある。
-/// @param out 成功時に検出結果の参照を格納する。領域の所有権は呼出側にある。
-/// @return kOk。引数が不正なら kInvalidArgument、容量不足なら kInvalidConfig。
+/// @param config Settings including the candidate limit and the detection limit.
+/// @param workspace Workspace in device space.
+/// @param out_buffers Receives the scratch space on success. The regions stay owned by the caller.
+/// @param out Receives the references to the detections on success. The regions
+///            stay owned by the caller.
+/// @return kOk. kInvalidArgument on invalid arguments, kInvalidConfig when the
+///         capacity is insufficient.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: does not retain the argument regions.
+/// Synchronization: host only; it holds no synchronization point.
 ///
-/// 入力例: 既定の設定、空きのある workspace
-/// 出力例: kOk。out->capacity_ = 1024、out_buffers->capacity_ = 4096
+/// Example input: the default settings and a workspace with room
+/// Example output: kOk. out->capacity_ = 1024, out_buffers->capacity_ = 4096
 Status reserve_detections(const DetectorConfig& config, Workspace& workspace,
                           DetectionEmitBuffers* out_buffers, DeviceDetections* out);
 
-/// 採用した候補を詰めて検出結果を作る。
+/// Packs the accepted candidates into the detection results.
 ///
-/// 採用の条件は次の 3 つを全て満たすことである。
+/// A candidate is accepted when all three of the following hold.
 ///
-/// 1. 候補数の範囲内にある
-/// 2. 段数が打ち切りの段数未満である (走査が届いている)
-/// 3. Dictionary 照合で ID が付いている
+/// 1. It lies within the candidate count
+/// 2. Its level is below the cutoff level (the walk reached it)
+/// 3. Dictionary matching gave it an ID
 ///
-/// **同じ ID の検出は落とさない。** OpenCV も ID による重複除去を持たない。
-/// 離れた位置に同じマーカーが 2 枚あれば 2 件とも出す。重複が消えるのは
-/// 包含木による打ち切りの結果であり、ID の比較によるものではない。
+/// **Detections sharing an ID are not dropped.** OpenCV has no ID-based
+/// duplicate removal either. Two copies of the same marker in different places
+/// are both emitted. Duplicates disappear as a result of the cutoff through the
+/// containment tree, not from comparing IDs.
 ///
-/// 出力の並びは入力の候補の並びをそのまま保つ。統合後の候補は周長の降順に
-/// 並んでいるため、検出も周長の降順になる。OpenCV の accepted と同じ順である。
+/// The output preserves the order of the input candidates. Merged candidates are
+/// ordered by descending perimeter, so the detections are too. This is the same
+/// order as OpenCV's accepted.
 ///
-/// @param grouped 統合後の候補。
-/// @param matches 照合結果。
-/// @param tree 段数と打ち切りの段数を格納済みの buffer。
-/// @param buffers 作業領域。
-/// @param out 出力先。
-/// @param stream kernel を発行する stream。
-/// @return kOk。引数が不正なら kInvalidArgument、kernel 起動に失敗したら
-///         kCudaError。上限超過はここでは返さない。read_detection_count で
-///         受け取る。
+/// @param grouped Merged candidates.
+/// @param matches Match results.
+/// @param tree Buffer with the levels and the cutoff level already stored.
+/// @param buffers Scratch space.
+/// @param out Destination.
+/// @param stream Stream the kernels are submitted to.
+/// @return kOk. kInvalidArgument on invalid arguments, kCudaError when a kernel
+///         launch fails. Exceeding the limit is not returned here; pick it up
+///         from read_detection_count.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: kernel を stream 上で非同期に発行する。呼出側が同期するまで
-///           結果は確定しない。
+/// Ownership: does not retain the argument regions.
+/// Synchronization: submits kernels asynchronously on the stream. The results
+///                  are not final until the caller synchronizes.
 ///
-/// 入力例: 候補 3 件、うち 2 件に ID あり
-/// 出力例: kOk。count_ = 2
+/// Example input: 3 candidates, 2 of which have an ID
+/// Example output: kOk. count_ = 2
 Status emit_detections_async(const DeviceCandidates& grouped, const MatchBuffers& matches,
                              const CandidateTreeBuffers& tree, DetectionEmitBuffers* buffers,
                              DeviceDetections* out, cudaStream_t stream);
 
-/// 検出数を host へ読み出す。
+/// Reads the detection count back to the host.
 ///
-/// @param detections 対象。
-/// @param out_count 成功時に検出数を格納する。領域の所有権は呼出側にある。
-/// @param stream 同期する stream。
-/// @return kOk。上限で打ち切った場合は kMarkerOverflow。引数が不正なら
-///         kInvalidArgument、CUDA API が失敗したら kCudaError。
+/// @param detections Subject.
+/// @param out_count Receives the detection count on success. The region stays owned by the caller.
+/// @param stream Stream to synchronize.
+/// @return kOk. kMarkerOverflow when truncated at the limit. kInvalidArgument on
+///         invalid arguments, kCudaError when a CUDA API call fails.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: **stream を同期する。** この関数だけが host 同期を伴う。
+/// Ownership: does not retain the argument regions.
+/// Synchronization: **synchronizes the stream.** This is the only function here
+///                  that synchronizes with the host.
 ///
-/// 入力例: 検出 2 件、上限 1024
-/// 出力例: kOk。*out_count = 2
-/// 入力例: 検出 3 件、上限 2
-/// 出力例: kMarkerOverflow。*out_count = 2
+/// Example input: 2 detections with a limit of 1024
+/// Example output: kOk. *out_count = 2
+/// Example input: 3 detections with a limit of 2
+/// Example output: kMarkerOverflow. *out_count = 2
 Status read_detection_count(const DeviceDetections& detections, int* out_count,
                             cudaStream_t stream);
 

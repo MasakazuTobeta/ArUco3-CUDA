@@ -42,12 +42,13 @@ const std::map<std::string, int>& dictionary_id_table() {
     return kTable;
 }
 
-/// scene ごとに独立した乱数列を作る。
+/// Builds an independent random sequence for each scene.
 ///
-/// seed だけを共有し scene_index で分岐させることで、scene を追加しても
-/// 既存 scene の乱数列が変わらないようにする。
+/// Only the seed is shared and scene_index selects the branch, so adding a scene
+/// leaves the random sequence of the existing scenes unchanged.
 std::mt19937_64 make_rng(std::uint64_t seed, std::size_t scene_index) {
-    // 黄金比に基づく定数で混ぜる。連続する index が近い状態にならないようにする。
+    // Mix with a constant derived from the golden ratio, so consecutive indices do
+    // not start from nearby states.
     constexpr std::uint64_t kMix = 0x9E3779B97F4A7C15ULL;
     return std::mt19937_64(seed ^ (kMix * static_cast<std::uint64_t>(scene_index + 1U)));
 }
@@ -57,11 +58,12 @@ double uniform(std::mt19937_64& rng, double low, double high) {
     return distribution(rng);
 }
 
-/// マーカー座標系の四隅を、指定した中心・辺長・回転・射影歪みで画像平面へ写す。
+/// Maps the four corners in marker coordinates onto the image plane using the given
+/// center, side length, rotation, and perspective distortion.
 std::array<cv::Point2d, 4> make_destination_quad(std::mt19937_64& rng, const SceneSpec& spec,
                                                  double center_x, double center_y) {
     const double half = spec.marker_side_px_ * 0.5;
-    // マーカー座標系での四隅。順序は (0,0)、(S,0)、(S,S)、(0,S)。
+    // The four corners in marker coordinates, ordered (0,0), (S,0), (S,S), (0,S).
     const std::array<cv::Point2d, 4> local = {cv::Point2d(-half, -half), cv::Point2d(half, -half),
                                               cv::Point2d(half, half), cv::Point2d(-half, half)};
 
@@ -74,7 +76,8 @@ std::array<cv::Point2d, 4> make_destination_quad(std::mt19937_64& rng, const Sce
         double x = local[i].x * cos_a - local[i].y * sin_a;
         double y = local[i].x * sin_a + local[i].y * cos_a;
         if (spec.perspective_strength_ > 0.0) {
-            // 四隅を独立にずらして射影歪みを作る。最大で辺長の 25%。
+            // Displace each corner independently to create the perspective
+            // distortion, by at most 25% of the side length.
             const double range = spec.marker_side_px_ * 0.25 * spec.perspective_strength_;
             x += uniform(rng, -range, range);
             y += uniform(rng, -range, range);
@@ -94,7 +97,7 @@ bool quad_inside_image(const std::array<cv::Point2d, 4>& quad, int width_px, int
     return true;
 }
 
-/// 決定的な Gaussian noise を加える。OpenCV の大域 RNG を使わない。
+/// Adds deterministic Gaussian noise. Deliberately avoids the OpenCV global RNG.
 void add_noise(cv::Mat& image, std::mt19937_64& rng, double sigma_levels) {
     if (sigma_levels <= 0.0) {
         return;
@@ -109,7 +112,7 @@ void add_noise(cv::Mat& image, std::mt19937_64& rng, double sigma_levels) {
     }
 }
 
-/// 中心から端へ向かって暗くなる照度勾配を掛ける。
+/// Applies an illumination gradient that darkens from the center toward the edges.
 void apply_illumination(cv::Mat& image, double strength) {
     if (strength <= 0.0) {
         return;
@@ -141,8 +144,8 @@ bool validate_scene(const CorpusConfig& config, const SceneSpec& spec, std::stri
         int minimum;
         int maximum;
     };
-    // canonical 解像度の上限は memory 使用量から決める。1 marker あたり
-    // canonical_marker_px^2 byte を確保するため、8192 で 64 MiB になる。
+    // The upper bound on the canonical resolution comes from memory use. Each marker
+    // allocates canonical_marker_px^2 bytes, so 8192 amounts to 64 MiB.
     const IntRange int_ranges[] = {
             {"width_px", spec.width_px_, 1, 65536},
             {"height_px", spec.height_px_, 1, 65536},
@@ -152,16 +155,18 @@ bool validate_scene(const CorpusConfig& config, const SceneSpec& spec, std::stri
     };
     for (const IntRange& range : int_ranges) {
         if (range.value < range.minimum || range.value > range.maximum) {
-            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
-                         std::to_string(range.value) + " (有効範囲 " +
-                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+            *out_error = std::string("setting out of range: ") + range.name + "=" +
+                         std::to_string(range.value) + " (valid range " +
+                         std::to_string(range.minimum) + " to " + std::to_string(range.maximum) +
                          ")";
             return false;
         }
     }
-    // OpenCV の generateImageMarker は辺長が border 込みの cell 数以上を要求する。
+    // The OpenCV generateImageMarker requires the side length to be at least the cell
+    // count including the border.
     if (config.canonical_marker_px_ < config.marker_border_bits_ * 2 + 1) {
-        *out_error = "設定値が矛盾: canonical_marker_px が marker_border_bits に対して小さすぎる";
+        *out_error =
+                "inconsistent settings: canonical_marker_px is too small for marker_border_bits";
         return false;
     }
 
@@ -181,22 +186,22 @@ bool validate_scene(const CorpusConfig& config, const SceneSpec& spec, std::stri
             {"occlusion_ratio", spec.occlusion_ratio_, 0.0, 1.0},
     };
     for (const DoubleRange& range : double_ranges) {
-        // NaN は比較が全て false になるため、この書き方で同時に弾ける。
+        // Every comparison against NaN is false, so writing it this way rejects NaN too.
         if (!(range.value >= range.minimum) || !(range.value <= range.maximum)) {
-            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
-                         std::to_string(range.value) + " (有効範囲 " +
-                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+            *out_error = std::string("setting out of range: ") + range.name + "=" +
+                         std::to_string(range.value) + " (valid range " +
+                         std::to_string(range.minimum) + " to " + std::to_string(range.maximum) +
                          ")";
             return false;
         }
     }
     if (spec.marker_count_ > 0 &&
         (spec.marker_side_px_ > spec.width_px_ || spec.marker_side_px_ > spec.height_px_)) {
-        *out_error = "設定値が矛盾: marker_side_px が画像寸法を超えている";
+        *out_error = "inconsistent settings: marker_side_px exceeds the image dimensions";
         return false;
     }
     if (spec.name_.empty()) {
-        *out_error = "scene 名が空である。出力 file 名を決められない";
+        *out_error = "the scene name is empty; the output file name cannot be determined";
         return false;
     }
     return true;
@@ -218,7 +223,8 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
     }
     std::vector<SceneSpec> specs;
 
-    // 評価計画の入力条件に対応する。解像度、マーカー数、辺長、劣化条件を分けて並べる。
+    // Mirrors the input conditions of the evaluation plan. Resolution, marker count,
+    // side length, and degradation are varied separately.
     const std::vector<std::pair<int, int>> resolutions_full = {
             {640, 480}, {1280, 720}, {1920, 1080}, {3840, 2160}};
     const std::vector<std::pair<int, int>> resolutions_basic = {{640, 480}, {1280, 720}};
@@ -236,9 +242,9 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
     };
 
     if (preset == "smoke") {
-        // 既定の S = 32、tau_i = 0.05 では、1280x720 における下限辺長は
-        // 32 + 1280 * 0.05 = 96 pixel になる。境界ちょうどでは再標本化の影響で
-        // 検出できないため、smoke では余裕のある 128 pixel を使う。
+        // With the defaults S = 32 and tau_i = 0.05, the lower bound on the side
+        // length at 1280x720 is 32 + 1280 * 0.05 = 96 pixels. Exactly at the boundary
+        // the resampling can prevent detection, so smoke uses 128 pixels for margin.
         add_clean("clean", 1280, 720, 1, 128);
         add_clean("clean", 1280, 720, 4, 128);
         SceneSpec degraded;
@@ -261,9 +267,10 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
             for (const int count : counts) {
                 for (const double side : sides) {
                     if (count == 0 && side != sides.front()) {
-                        continue;  // マーカー 0 個の場合は辺長を変えても同じ画像になる
+                        // With zero markers, changing the side length yields the same image.
+                        continue;
                     }
-                    // マーカーが画像へ収まらない組み合わせは飛ばす。
+                    // Skip the combinations where the markers do not fit in the image.
                     const double needed = side * std::sqrt(static_cast<double>(std::max(count, 1)));
                     if (count > 0 &&
                         (needed > resolution.first * 0.9 || needed > resolution.second * 0.9)) {
@@ -273,7 +280,8 @@ bool build_preset(const std::string& preset, std::vector<SceneSpec>* out_specs) 
                 }
             }
         }
-        // 劣化条件。基準となる解像度とマーカー数を固定し、条件を 1 つずつ変える。
+        // Degradation conditions. The reference resolution and marker count are held
+        // fixed and one condition is varied at a time.
         struct Degradation {
             const char* name;
             double rotation_deg;
@@ -329,7 +337,7 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
     }
     const auto dictionary_entry = dictionary_id_table().find(config.dictionary_name_);
     if (dictionary_entry == dictionary_id_table().end()) {
-        *out_error = "未対応の Dictionary: " + config.dictionary_name_;
+        *out_error = "unsupported Dictionary: " + config.dictionary_name_;
         return false;
     }
     if (!validate_scene(config, spec, out_error)) {
@@ -340,10 +348,12 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(dictionary_entry->second);
 
-    // 背景は一様な明るい灰色。純白にすると noise が片側へのみ振れる。
+    // The background is a uniform light gray. Pure white would let the noise swing in
+    // one direction only.
     cv::Mat scene(spec.height_px_, spec.width_px_, CV_8UC1, cv::Scalar(230));
 
-    // マーカーを重ならないように格子状へ配置し、各区画内で少し揺らす。
+    // Place the markers on a grid so they do not overlap, jittering slightly within
+    // each cell.
     const int columns = static_cast<int>(
             std::ceil(std::sqrt(static_cast<double>(std::max(spec.marker_count_, 1)))));
     const int rows = (spec.marker_count_ + columns - 1) / std::max(columns, 1);
@@ -356,8 +366,9 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
     result.width_px_ = spec.width_px_;
     result.height_px_ = spec.height_px_;
 
-    // canonical 画像の外周を pixel の境界で表す。pixel 中心が 0 のとき、
-    // 外周は -0.5 から size - 0.5 になる。ground truth はこの規約で定義する。
+    // Express the outer edge of the canonical image at the pixel boundary. With the
+    // pixel center at 0, the edge runs from -0.5 to size - 0.5. The ground truth is
+    // defined under this convention.
     const float canonical_edge = static_cast<float>(config.canonical_marker_px_) - 0.5F;
     const std::array<cv::Point2f, 4> source_quad = {
             cv::Point2f(-0.5F, -0.5F), cv::Point2f(canonical_edge, -0.5F),
@@ -374,14 +385,15 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
         const int cell_row = index / std::max(columns, 1);
         double center_x = (cell_col + 0.5) * cell_width;
         double center_y = (cell_row + 0.5) * cell_height;
-        // 区画内で位置を揺らす。マーカーが区画からはみ出さない範囲に留める。
+        // Jitter the position within the cell, staying within the range that keeps the
+        // marker inside it.
         const double jitter_x = std::max(0.0, (cell_width - spec.marker_side_px_ * 1.5) * 0.5);
         const double jitter_y = std::max(0.0, (cell_height - spec.marker_side_px_ * 1.5) * 0.5);
         center_x += uniform(rng, -jitter_x, jitter_x);
         center_y += uniform(rng, -jitter_y, jitter_y);
 
         if (spec.allow_border_clip_ && index == 0) {
-            // 画像境界にかかる配置を意図的に作る。
+            // Deliberately create a placement that crosses the image boundary.
             center_x = spec.marker_side_px_ * 0.35;
             center_y = spec.height_px_ * 0.5;
         }
@@ -419,7 +431,8 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
         truth.fully_inside_ = quad_inside_image(quad, spec.width_px_, spec.height_px_);
 
         if (spec.occlusion_ratio_ > 0.0) {
-            // マーカーの一部を矩形で覆う。面積比から矩形の幅を決める。
+            // Cover part of the marker with a rectangle, deriving its width from the
+            // area ratio.
             const double width = spec.marker_side_px_ * spec.occlusion_ratio_;
             const cv::Rect2d occluder(center_x - spec.marker_side_px_ * 0.5,
                                       center_y - spec.marker_side_px_ * 0.5, width,
@@ -430,7 +443,8 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
         result.markers_.push_back(truth);
     }
 
-    // 劣化は配置の後に画像全体へ適用する。順序を固定して再現性を保つ。
+    // The degradations are applied to the whole image after placement. The order is
+    // fixed to keep the result reproducible.
     if (spec.blur_sigma_px_ > 0.0) {
         cv::GaussianBlur(scene, scene, cv::Size(0, 0), spec.blur_sigma_px_, spec.blur_sigma_px_,
                          cv::BORDER_REPLICATE);
@@ -438,23 +452,24 @@ bool generate_scene(const CorpusConfig& config, const SceneSpec& spec, std::size
     apply_illumination(scene, spec.illumination_strength_);
     add_noise(scene, rng, spec.noise_sigma_levels_);
 
-    // 出力先が無ければ作る。imwrite は directory を作らない。
+    // Create the destination if it does not exist; imwrite does not create directories.
     std::error_code directory_error;
     std::filesystem::create_directories(config.output_dir_, directory_error);
     if (directory_error) {
-        *out_error = "出力 directory を作成できない: " + config.output_dir_;
+        *out_error = "cannot create the output directory: " + config.output_dir_;
         return false;
     }
 
     result.path_ = config.output_dir_ + "/" + spec.name_ + ".png";
-    // PNG は可逆であり、圧縮 level を固定すれば byte 単位で再現できる。
+    // PNG is lossless, and with a fixed compression level the file is reproducible
+    // byte for byte.
     const std::vector<int> encode_params = {cv::IMWRITE_PNG_COMPRESSION, 6};
     if (!cv::imwrite(result.path_, scene, encode_params)) {
-        *out_error = "画像を保存できない: " + result.path_;
+        *out_error = "cannot save the image: " + result.path_;
         return false;
     }
     if (!aruco3cuda::util::sha256_file(result.path_, &result.sha256_)) {
-        *out_error = "checksum を計算できない: " + result.path_;
+        *out_error = "cannot compute the checksum: " + result.path_;
         return false;
     }
 
@@ -466,8 +481,9 @@ void write_manifest_json(std::ostream& out, const CorpusConfig& config, const st
                          const std::vector<GeneratedScene>& scenes) {
     JsonWriter writer(out);
     writer.begin_object();
-    // version 2: blur_sigma を blur_sigma_px へ、noise_sigma を noise_sigma_levels へ
-    // 改名した。単位を名前へ示す規約に合わせるための破壊的変更である。
+    // Version 2 renamed blur_sigma to blur_sigma_px and noise_sigma to
+    // noise_sigma_levels. This is a breaking change made to follow the convention of
+    // naming the unit in the field name.
     writer.member_int("schema_version", 2);
     writer.member_string("producer", "aruco3cuda_corpusgen");
     writer.member_string("preset", preset);

@@ -1,66 +1,66 @@
-# 正確性評価 CLI (aruco3cuda_evaluate)
+# Accuracy evaluation CLI (aruco3cuda_evaluate)
 
-## 目的
+## Purpose
 
-合成 corpus を seed 固定で生成し、CPU 基準・hybrid・CUDA の 3 経路を同じ画像へ
-適用して、評価計画の正確性指標を条件別に出します。
+Generates the synthetic corpus with a fixed seed, applies the three routes — CPU baseline, hybrid, and CUDA — to the same images,
+and produces the accuracy metrics of the evaluation plan broken down by condition.
 
-## 対象範囲
+## Scope
 
-corpus の生成、3 経路の実行、真値との突き合わせ、CPU 基準との差異分類、
-device memory の使用量の記録を対象とします。指標そのものの算出は
-[accuracy](accuracy.md) の責務です。速度は測りません。速度は
-[benchmark harness](../../bench/benchmark_harness.md) が測ります。
+Covers generating the corpus, running the three routes, matching against ground truth, classifying differences from the CPU baseline,
+and recording device memory usage. Computing the metrics themselves is the responsibility of
+[accuracy](accuracy.md). Speed is not measured. Speed is measured by the
+[benchmark harness](../../bench/benchmark_harness.md).
 
-## 現状
+## Current state
 
-次を出力します。
+The following are output.
 
-- 真値との突き合わせ (全体、ArUco3 の下限以上、下限未満の 3 区分)
-- 条件別、マーカー 1 辺別、解像度別の内訳
-- CPU 基準との差異の種類別件数と、差異のある場面の一覧
-- workspace の最大使用量と、検出中に増えた確保回数
+- Matching against ground truth (three divisions: overall, at or above the ArUco3 lower bound, and below it)
+- Breakdowns by condition, by marker side length, and by resolution
+- Counts by type of difference from the CPU baseline, and a list of the scenes with differences
+- The maximum workspace usage and the number of allocations added during detection
 
-## 実装上の判断
+## Design decisions
 
-### corpus を manifest から読まず、その場で生成する
+### The corpus is generated on the spot rather than read from the manifest
 
-manifest は JSON であり、読むには parser が要ります。corpus 生成器は library
-として使えるため、同じ seed から同じ場面をその場で作れば parser を持たずに
-真値を得られます。生成器の乱数種は場面の通し番号から導出されるため、preset を
-変えない限り `aruco3cuda_corpusgen` が作る画像と一致します。
+The manifest is JSON, and reading it requires a parser. The corpus generator can be used as a library,
+so building the same scenes on the spot from the same seed yields the ground truth without needing a parser.
+The generator's random seed is derived from the scene's sequence number, so as long as the preset is not
+changed, the images match those produced by `aruco3cuda_corpusgen`.
 
-### recall は「ArUco3 が原理上検出できる大きさ」で区分する
+### Recall is divided by "the size ArUco3 can detect in principle"
 
-ArUco3 は縮小後の 1 辺が `min_side_length_canonical_img` を下回るマーカーを
-検出しません。下限は `S + L * tau_i` であり、既定 (S=32、tau_i=0.05) では
-3840x2160 で 224 pixel になります。corpus はこの下限を下回る大きさを意図的に
-含むため、全体の recall は戦略上の下限に支配されます。実装の取りこぼしを
-読み取れるよう、下限以上の真値だけを集めた区分を別に出します。
+ArUco3 does not detect markers whose side after downscaling falls below `min_side_length_canonical_img`.
+The lower bound is `S + L * tau_i`, which by default (S=32, tau_i=0.05) is
+224 pixels at 3840x2160. The corpus deliberately includes sizes below this lower bound,
+so the overall recall is dominated by the lower bound of the strategy. So that the implementation's misses
+can be read out, a separate division collecting only the ground truth items at or above the lower bound is also produced.
 
-区分した集計には、どの真値にも属さない false positive を足し込みません。
-そのため precision はこの区分では定義せず、表示もしません。「検出 0 件で
-precision 100%」のような、数え方の都合でしかない値を読ませないためです。
+False positives that belong to no ground truth item are not added into the divided aggregation.
+Precision is therefore not defined for this division and is not displayed. This is to avoid presenting values that are
+merely an artifact of how things are counted, such as "0 detections with 100% precision".
 
-### 経路ごとに検出器を作り直す
+### The detector is rebuilt for each route
 
-workspace の確保量を画像の寸法に合わせるためです。既定の上限のままだと、
-640x480 の場面でも 4K 相当の領域を抱えたまま測ることになります。検出中に
-確保が増えないことは、検出前後の確保回数の差で確かめます。
+This is to match the workspace allocation to the dimensions of the image. Left at the default upper bound,
+even a 640x480 scene would be measured while holding a region equivalent to 4K. That no allocation is added
+during detection is confirmed by the difference in allocation counts before and after detection.
 
-### 差異のある場面を全て挙げる
+### Every scene with a difference is listed
 
-件数だけでは、どの条件で起きたのかが分からず原因を追えません。件数が
-増えた場合も一覧が伸びるだけで、有利な結果を選ぶ余地が残りません。
+Counts alone do not show under which condition it occurred, so the cause cannot be traced. Even when the count
+grows, the list simply gets longer, leaving no room to select favorable results.
 
-## 目標
+## Goals
 
-- 差異のあった場面の可視化画像を保存する
-- 実画像データセットの注釈結果を真値として同じ指標を出す
+- Save visualization images of the scenes where differences occurred
+- Produce the same metrics with annotations of a real-image dataset as ground truth
 
-## 関連
+## See also
 
-- [正確性評価の指標](accuracy.md)
-- [差分レポート](../report/report_diff.hpp)
-- [合成 corpus 生成器](../corpusgen/corpus_generator.md)
-- [評価計画](../../docs/evaluation-plan.md)
+- [Accuracy evaluation metrics](accuracy.md)
+- [Diff report](../report/report_diff.hpp)
+- [Synthetic corpus generator](../corpusgen/corpus_generator.md)
+- [Evaluation plan](../../docs/evaluation-plan.md)

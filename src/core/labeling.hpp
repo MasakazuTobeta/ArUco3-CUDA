@@ -14,206 +14,229 @@
 
 namespace aruco3cuda::detail {
 
-/// 背景画素に入る label。
+/// Label stored in background pixels.
 ///
-/// 前景の label は 0 から始まる連番であるため、負値を背景へ割り当てる。
-/// 0 を背景に使うと label の連番を 1 起点にする必要があり、統計配列の
-/// 添字と label が 1 ずれる。ずれは取り違えの原因になるため避ける。
+/// Foreground labels are consecutive numbers starting at 0, so the background is
+/// given a negative value. Using 0 for the background would force the foreground
+/// numbering to start at 1, putting the label and the index into the statistics
+/// arrays off by one. That kind of skew invites mix-ups, so it is avoided.
 constexpr std::int32_t kBackgroundLabel = -1;
 
-/// 連結成分ラベリングの出力と作業領域。
+/// Output and scratch space of connected-component labeling.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。この構造体は
-///         参照のみを持ち、複製も解放も行わない。workspace を reset() または
-///         破棄すると全ての pointer が無効になる。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。内容は発行済みの
-///           kernel が完了するまで確定しない。
+/// Ownership: the regions all of the pointers refer to are owned by the
+///            workspace. This struct holds references only; it neither copies nor
+///            frees. Every pointer becomes invalid once the workspace is reset()
+///            or destroyed.
+/// Synchronization: a plain set of references, so it carries no synchronization
+///                  point. The contents are not settled until the already-issued
+///                  kernels complete.
 ///
-/// 入力例: 427x240 の二値化画像
-/// 出力例: labels_ が 102480 要素、label 数が label_count_ に入る
+/// Example input: a 427x240 binary image
+/// Example output: labels_ holds 102480 elements, and the label count lands in
+///                 label_count_
 struct LabelBuffers {
-    /// 画素ごとの label。要素数は width_px_ * height_px_。
+    /// Label per pixel. The element count is width_px_ * height_px_.
     ///
-    /// pitch を持たせず、行方向へ詰めて並べる。union-find は画素を線形
-    /// index で辿るため、pitch があると添字から address への変換が
-    /// 内側の loop へ入る。ラベリングでは 2 次元の近傍参照より線形走査の
-    /// 方が支配的であり、pitch の利点より変換の costs が上回る。
+    /// Carries no pitch; the rows are packed one after another. Union-find walks
+    /// pixels by linear index, and a pitch would push the index-to-address
+    /// conversion into the inner loop. In labeling, the linear traversal dominates
+    /// over 2D neighbor reads, so the conversion cost outweighs the benefit of a
+    /// pitch.
     std::int32_t* labels_ = nullptr;
-    /// root の線形 index から詰めた label への写像。要素数は labels_ と同じ。
+    /// Mapping from a root's linear index to the compacted label. Same element
+    /// count as labels_.
     ///
-    /// scan の入出力を兼ねる。root であることを示す 1/0 を書き込んでから
-    /// 排他 scan を掛けると、そのまま詰めた label になる。
+    /// Doubles as the scan's input and output. Writing a 1/0 flag marking whether
+    /// a pixel is a root and then applying the exclusive scan yields the compacted
+    /// label directly.
     std::int32_t* compact_ids_ = nullptr;
-    /// 詰めた label を求める排他 scan の作業領域。
+    /// Scratch space for the exclusive scan that derives the compacted labels.
     ScanBuffers scan_;
-    /// device 側の label 数。要素数 1。scan の総和と同じ領域を指す。
+    /// Device-side label count. One element. Points at the same region as the
+    /// scan's grand total.
     std::int32_t* label_count_ = nullptr;
     int width_px_ = 0;
     int height_px_ = 0;
 };
 
-/// 必要な workspace の容量を返す。
+/// Returns the required workspace capacity.
 ///
-/// @param width_px 二値化画像の幅。
-/// @param height_px 二値化画像の高さ。
-/// @return 必要な byte 数。桁溢れや引数が不正なら 0。
+/// @param width_px Width of the binary image.
+/// @param height_px Height of the binary image.
+/// @return Required byte count. 0 on overflow or an invalid argument.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240
-/// 出力例: label 配列 2 枚と scan の作業領域を収める byte 数
+/// Example input: 427 and 240
+/// Example output: the byte count that holds 2 label arrays and the scan scratch
+///                 space
 std::size_t labeling_workspace_bytes(int width_px, int height_px);
 
-/// workspace からラベリング用の領域を切り出す。
+/// Carves the labeling regions out of the workspace.
 ///
-/// @param width_px 二値化画像の幅。1 以上。
-/// @param height_px 二値化画像の高さ。1 以上。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer 一式を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param width_px Width of the binary image. At least 1.
+/// @param height_px Height of the binary image. At least 1.
+/// @param workspace Source of the carve-out. Owned by the caller.
+/// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument when an argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the carved-out regions stay owned by the workspace.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240 と十分な容量の workspace
-/// 出力例: labels_ と compact_ids_ に pointer が入る
+/// Example input: 427, 240, and a workspace with sufficient capacity
+/// Example output: labels_ and compact_ids_ receive pointers
 Status reserve_labeling(int width_px, int height_px, Workspace& workspace, LabelBuffers* out);
 
-/// 二値化画像の前景を 8 近傍で連結成分へ分ける。
+/// Splits the foreground of a binary image into 8-connected components.
 ///
-/// 8 近傍とするのは、OpenCV の `findContours` が前景を 8 連結として辿る
-/// ためである。4 近傍にすると、対角にのみ接する前景が別成分になり、
-/// CPU 基準が 1 つの候補とする形が 2 つに割れる。
+/// 8-connectivity is used because OpenCV `findContours` traverses the foreground
+/// as 8-connected. With 4-connectivity, foreground regions that touch only
+/// diagonally would fall into separate components, splitting a shape the CPU
+/// reference treats as one candidate into two.
 ///
-/// label は 0 から始まる連番で、値は root の線形 index の昇順に振る。
-/// 実行ごとに同じ入力から同じ label が得られるようにするためであり、
-/// atomics の到着順に依存する採番は使わない。
+/// Labels are consecutive numbers starting at 0, assigned in ascending order of
+/// the root's linear index. This is what makes the same input yield the same
+/// labels on every run; numbering that depends on the arrival order of atomics is
+/// not used.
 ///
-/// @param binary 入力二値化画像。0 を背景、それ以外を前景とみなす。
-///               reserve_labeling と同じ寸法である必要がある。
-/// @param buffers reserve_labeling が返した buffer 一式。nullptr は不可。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param binary Input binary image. 0 is treated as background and anything else
+///               as foreground. Must have the same size as passed to
+///               reserve_labeling.
+/// @param buffers The set of buffers returned by reserve_labeling. Must not be
+///                nullptr.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: buffers が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
+/// Ownership: the regions buffers points at stay owned by the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization.
 ///
-/// 入力例: 中央に 1 つの正方形がある 427x240 の二値化画像
-/// 出力例: 正方形の画素が label 0、他が kBackgroundLabel
+/// Example input: a 427x240 binary image with a single square at its center
+/// Example output: the square's pixels carry label 0 and the rest kBackgroundLabel
 Status build_labels_async(const ImagePlaneU8& binary, LabelBuffers* buffers, cudaStream_t stream);
 
-/// label 数を host へ読み出す。
+/// Reads the label count back to the host.
 ///
-/// @param buffers build_labels_async へ渡した buffer 一式。
-/// @param out_count 成功時に label 数を格納する。nullptr は不可。
-/// @param stream 発行先の stream。転送の完了まで待つ。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param buffers The set of buffers passed to build_labels_async.
+/// @param out_count Receives the label count on success. Must not be nullptr.
+/// @param stream Stream to issue on. Waits for the transfer to complete.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: stream の完了を待つ。呼び出しから戻った時点で out_count は確定する。
+/// Ownership: retains none of the regions passed as arguments.
+/// Synchronization: waits for the stream to complete. out_count is settled by the
+///                  time the call returns.
 ///
-/// 入力例: 正方形が 4 つある画像を処理した後の buffer
-/// 出力例: out_count = 4
+/// Example input: the buffers after processing an image with 4 squares
+/// Example output: out_count = 4
 Status read_label_count(const LabelBuffers& buffers, int* out_count, cudaStream_t stream);
 
-/// label ごとの統計。構造体の配列ではなく配列の構造体として持つ。
+/// Per-label statistics, held as a structure of arrays rather than an array of
+/// structures.
 ///
-/// 集計は label 単位の atomics であり、同じ項目へ多数の thread が集まる。
-/// 項目ごとに配列を分けると、1 つの atomics が隣接項目の cache line を
-/// 巻き込まない。
+/// The aggregation uses per-label atomics, so many threads converge on the same
+/// field. Keeping a separate array per field prevents one atomic from dragging in
+/// the cache line of a neighboring field.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。内容は発行済みの
-///           kernel が完了するまで確定しない。
+/// Ownership: the regions all of the pointers refer to are owned by the workspace.
+/// Synchronization: a plain set of references, so it carries no synchronization
+///                  point. The contents are not settled until the already-issued
+///                  kernels complete.
 ///
-/// 入力例: 427x240 の画像に対する reserve_label_stats
-/// 出力例: capacity_ = 214 * 120 = 25680
+/// Example input: reserve_label_stats for a 427x240 image
+/// Example output: capacity_ = 214 * 120 = 25680
 struct LabelStatisticsBuffers {
-    /// 外接矩形。min は包含、max も包含する。
+    /// Bounding box. Both min and max are inclusive.
     std::int32_t* min_x_ = nullptr;
     std::int32_t* min_y_ = nullptr;
     std::int32_t* max_x_ = nullptr;
     std::int32_t* max_y_ = nullptr;
-    /// 成分に属する画素数。
+    /// Number of pixels belonging to the component.
     std::int32_t* pixel_count_ = nullptr;
-    /// 座標の総和。重心を求めるために保持する。
+    /// Sum of the coordinates. Kept in order to derive the centroid.
     ///
-    /// 型を unsigned long long とするのは atomicAdd の overload に合わせる
-    /// ためである。LP64 では std::uint64_t は unsigned long であり、
-    /// pointer 型が一致しない。
+    /// The type is unsigned long long to match the atomicAdd overload. Under LP64,
+    /// std::uint64_t is unsigned long, and the pointer types would not match.
     unsigned long long* sum_x_ = nullptr;
     unsigned long long* sum_y_ = nullptr;
-    /// 重心。総和を画素数で割ったもの。
+    /// Centroid. The sums divided by the pixel count.
     float* centroid_x_ = nullptr;
     float* centroid_y_ = nullptr;
-    /// 確保した label 数。max_label_count() と等しい。
+    /// Number of labels allocated for. Equal to max_label_count().
     int capacity_ = 0;
 };
 
-/// 画像寸法から label 数の上限を返す。
+/// Returns the upper bound on the label count for the given image size.
 ///
-/// 8 近傍では、別成分どうしは縦横斜めのいずれでも接してはならない。
-/// 成分を最も多く作る配置は 1 画素を 1 つ飛ばしに置いたものであり、
-/// 上限は ceil(W/2) * ceil(H/2) になる。この値で確保すれば label の
-/// 溢れは起こらないため、統計の側に溢れの経路を持たなくてよい。
+/// Under 8-connectivity, distinct components must not touch horizontally,
+/// vertically, or diagonally. The arrangement that produces the most components
+/// places single pixels every other position, so the bound is
+/// ceil(W/2) * ceil(H/2). Allocating for that value makes a label overflow
+/// impossible, so the statistics side needs no overflow path.
 ///
-/// @param width_px 画像の幅。
-/// @param height_px 画像の高さ。
-/// @return label 数の上限。引数が不正なら 0。
+/// @param width_px Image width.
+/// @param height_px Image height.
+/// @return Upper bound on the label count. 0 when an argument is invalid.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240
-/// 出力例: 214 * 120 = 25680
+/// Example input: 427 and 240
+/// Example output: 214 * 120 = 25680
 int max_label_count(int width_px, int height_px);
 
-/// 統計に必要な workspace の容量を返す。
+/// Returns the workspace capacity the statistics require.
 ///
-/// @param width_px 画像の幅。
-/// @param height_px 画像の高さ。
-/// @return 必要な byte 数。桁溢れや引数が不正なら 0。
+/// @param width_px Image width.
+/// @param height_px Image height.
+/// @return Required byte count. 0 on overflow or an invalid argument.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240
-/// 出力例: 25680 label 分の統計を収める byte 数
+/// Example input: 427 and 240
+/// Example output: the byte count that holds the statistics for 25680 labels
 std::size_t label_stats_workspace_bytes(int width_px, int height_px);
 
-/// workspace から統計用の領域を切り出す。
+/// Carves the statistics regions out of the workspace.
 ///
-/// @param width_px 画像の幅。1 以上。
-/// @param height_px 画像の高さ。1 以上。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer 一式を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param width_px Image width. At least 1.
+/// @param height_px Image height. At least 1.
+/// @param workspace Source of the carve-out. Owned by the caller.
+/// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument when an argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the carved-out regions stay owned by the workspace.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240 と十分な容量の workspace
-/// 出力例: capacity_ = 25680 で各配列に pointer が入る
+/// Example input: 427, 240, and a workspace with sufficient capacity
+/// Example output: capacity_ = 25680 and every array receives a pointer
 Status reserve_label_stats(int width_px, int height_px, Workspace& workspace,
                            LabelStatisticsBuffers* out);
 
-/// label ごとの外接矩形、画素数、重心を集計する。
+/// Aggregates the bounding box, pixel count, and centroid per label.
 ///
-/// 集計は整数の atomics のみで行う。加算の順序が変わっても結果が変わらず、
-/// 実行ごとに同じ値が得られる。重心は総和を画素数で割った時点で 1 度だけ
-/// 求めるため、割り算の順序による差も生じない。
+/// The aggregation uses integer atomics only. Changing the order of the additions
+/// does not change the result, so every run yields the same values. The centroid
+/// is computed exactly once, when the sums are divided by the pixel count, so no
+/// difference arises from the order of the divisions either.
 ///
-/// @param labels build_labels_async が埋めた label 一式。
-/// @param stats reserve_label_stats が返した buffer 一式。nullptr は不可。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param labels The set of labels filled in by build_labels_async.
+/// @param stats The set of buffers returned by reserve_label_stats. Must not be
+///              nullptr.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: 引数が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
+/// Ownership: the regions the arguments refer to stay owned by the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization.
 ///
-/// 入力例: 中央の 30x30 の正方形が label 0 になっている label 画像
-/// 出力例: pixel_count_[0] = 900、外接矩形が正方形の範囲、重心が中心
+/// Example input: a label image whose central 30x30 square carries label 0
+/// Example output: pixel_count_[0] = 900, the bounding box covers the square, and
+///                 the centroid sits at its center
 Status build_label_stats_async(const LabelBuffers& labels, LabelStatisticsBuffers* stats,
                                cudaStream_t stream);
 

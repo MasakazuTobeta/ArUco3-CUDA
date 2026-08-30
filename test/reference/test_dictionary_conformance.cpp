@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// docs/dictionaries.md が Dictionary ごとに必須と定める検証 1 から 5 を実装する。
-// 生成済み table を、その場で取得した OpenCV の Dictionary と突き合わせる。
+// Implements checks 1 through 5 that docs/dictionaries.md requires for every
+// dictionary. The generated table is cross-checked against the OpenCV
+// dictionary obtained on the spot.
 #include <gtest/gtest.h>
 
 #include <opencv2/core.hpp>
@@ -29,7 +30,7 @@ cv::aruco::Dictionary opencv_dictionary() {
     return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
 }
 
-/// OpenCV の bits Mat を packed 表現へ変換する。
+/// Converts an OpenCV bits Mat into the packed representation.
 aruco3cuda::MarkerCode pack_from_mat(const cv::Mat& bits, int marker_size) {
     std::vector<std::uint8_t> flat;
     flat.reserve(static_cast<std::size_t>(bits.total()));
@@ -44,7 +45,8 @@ aruco3cuda::MarkerCode pack_from_mat(const cv::Mat& bits, int marker_size) {
     return code;
 }
 
-// 検証 1: ID 数、marker size、最大訂正 bit 数が OpenCV 基準と一致する。
+// Check 1: the ID count, the marker size, and the maximum number of
+// correctable bits match the OpenCV reference.
 TEST(DictionaryConformanceTest, metadata_matches_opencv) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
@@ -53,7 +55,8 @@ TEST(DictionaryConformanceTest, metadata_matches_opencv) {
     EXPECT_EQ(table.max_correction_bits_, dictionary.maxCorrectionBits);
 }
 
-// 検証 2: 全 ID、全 4 回転の packed codeword が OpenCV の bytesList と一致する。
+// Check 2: the packed codewords for every ID and all four rotations match
+// OpenCV's bytesList.
 TEST(DictionaryConformanceTest, all_codewords_match_opencv_bytes_list) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
@@ -72,14 +75,16 @@ TEST(DictionaryConformanceTest, all_codewords_match_opencv_bytes_list) {
     }
 }
 
-// 検証 3: 全 ID の marker image を decode し、元の ID と回転を得られる。
+// Check 3: decoding the marker image of every ID recovers the original ID and
+// rotation.
 TEST(DictionaryConformanceTest, decodes_generated_marker_images) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
 
     for (int id = 0; id < table.code_count_; ++id) {
-        // generateImageMarker は borderBits > 0 を要求する。border 込みで
-        // 1 cell = 1 pixel になる辺長を指定し、内側の bit 格子を切り出す。
+        // generateImageMarker requires borderBits > 0. Ask for the side length
+        // at which one cell is one pixel including the border, then crop out
+        // the inner bit grid.
         constexpr int kBorderBits = 1;
         cv::Mat image;
         dictionary.generateImageMarker(id, dictionary.markerSize + 2 * kBorderBits, image,
@@ -92,7 +97,7 @@ TEST(DictionaryConformanceTest, decodes_generated_marker_images) {
         bits.reserve(static_cast<std::size_t>(payload.total()));
         for (int r = 0; r < payload.rows; ++r) {
             for (int c = 0; c < payload.cols; ++c) {
-                // 白 (255) が bit 1、黒 (0) が bit 0。
+                // White (255) is bit 1; black (0) is bit 0.
                 bits.push_back(
                         static_cast<std::uint8_t>(payload.at<std::uint8_t>(r, c) > 127 ? 1 : 0));
             }
@@ -107,7 +112,8 @@ TEST(DictionaryConformanceTest, decodes_generated_marker_images) {
         EXPECT_EQ(match.rotation_, 0);
         EXPECT_EQ(match.distance_, 0);
 
-        // 回転させた bit 列も、対応する rotation として復号できる。
+        // A rotated bit pattern also decodes, reported as the corresponding
+        // rotation.
         aruco3cuda::MarkerCode rotated = code;
         for (int rotation = 1; rotation < 4; ++rotation) {
             ASSERT_EQ(aruco3cuda::rotate_marker_code(rotated, table.marker_size_, &rotated),
@@ -121,11 +127,12 @@ TEST(DictionaryConformanceTest, decodes_generated_marker_images) {
     }
 }
 
-// 検証 4: bit 反転に対する accept / reject が OpenCV と一致する。
+// Check 4: accept / reject decisions under bit flips match OpenCV.
 TEST(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
-    // OpenCV は maxCorrectionBits * maxCorrectionRate を許容誤り数として使う。
+    // OpenCV uses maxCorrectionBits * maxCorrectionRate as the number of
+    // tolerated errors.
     constexpr double kMaxCorrectionRate = 0.6;
     const int allowed_errors = static_cast<int>(dictionary.maxCorrectionBits * kMaxCorrectionRate);
     ASSERT_EQ(allowed_errors, 3);
@@ -135,8 +142,8 @@ TEST(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
         for (int flips = 0; flips <= dictionary.maxCorrectionBits + 1; ++flips) {
             cv::Mat bits = cv::aruco::Dictionary::getBitsFromByteList(
                     dictionary.bytesList.rowRange(id, id + 1), dictionary.markerSize, 0);
-            // 決まった順序で bit を反転する。OpenCV 側と同じ入力を作るため
-            // 乱数を使わない。
+            // Flip bits in a fixed order. No randomness, so that the OpenCV
+            // side receives exactly the same input.
             for (int flip = 0; flip < flips; ++flip) {
                 const int row = flip / dictionary.markerSize;
                 const int col = flip % dictionary.markerSize;
@@ -164,18 +171,21 @@ TEST(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
     }
 }
 
-// 検証 4b: セル比から直接照合しても OpenCV と一致する。
+// Check 4b: matching directly from cell ratios also agrees with OpenCV.
 //
-// 検証 4 は bit 列 (0 か 1) を入力にしている。実際の検出では比は中間値を取り、
-// 閾値のごく近くでは「黒でも白でもない」という第 3 の状態になる。この状態は
-// 1 つの bit 列へ潰すと表現できないため、比のまま突き合わせる。
+// Check 4 feeds in a bit pattern (0 or 1). In real detection the ratios take
+// intermediate values, and very close to the threshold they land in a third
+// state that is "neither black nor white". That state cannot be expressed once
+// it is collapsed into a single bit pattern, so here we cross-check on the
+// ratios themselves.
 TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     constexpr double kMaxCorrectionRate = 0.6;
     constexpr float kValidBitThreshold = 0.49F;
 
-    // 比の候補。閾値 0.49 と上限 0.51 の両側および境界そのものを含める。
+    // Candidate ratios, covering both sides of the 0.49 threshold and its 0.51
+    // upper counterpart, as well as the boundaries themselves.
     const std::vector<float> ratio_values = {0.0F,  0.25F, 0.48F, 0.49F, 0.50F,
                                              0.51F, 0.52F, 0.75F, 1.0F};
     std::mt19937_64 rng(20260828U);
@@ -185,8 +195,9 @@ TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
     std::size_t ambiguous_cases = 0;
     for (const int id : ids_under_test) {
         for (int trial = 0; trial < 200; ++trial) {
-            // ID の codeword を土台にし、一部のセルだけ比を崩す。全て乱数では
-            // どの ID にも遠くなり、accept 側の経路を通らない。
+            // Start from the ID's codeword and disturb the ratio of only a few
+            // cells. Fully random ratios would land far from every ID and would
+            // never take the accepting path.
             cv::Mat bits = cv::aruco::Dictionary::getBitsFromByteList(
                     dictionary.bytesList.rowRange(id, id + 1), dictionary.markerSize, 0);
             cv::Mat ratios(dictionary.markerSize, dictionary.markerSize, CV_32FC1);
@@ -212,7 +223,8 @@ TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
             ASSERT_EQ(aruco3cuda::build_cell_masks(ratios.ptr<float>(0), table.marker_size_,
                                                    kValidBitThreshold, &masks),
                       aruco3cuda::Status::kOk);
-            // 両方の mask に立った bit は「黒でも白でもない」セルである。
+            // A bit set in both masks marks a cell that is neither black nor
+            // white.
             if ((masks.not_black_ & masks.not_white_) != 0U) {
                 ++ambiguous_cases;
             }
@@ -227,13 +239,14 @@ TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
             }
         }
     }
-    // 曖昧なセルを含む場合を実際に通ったことを確かめる。通っていなければ
-    // この test は bit 列の場合しか見ておらず、検証 4 と変わらない。
-    std::printf("[dict] 曖昧なセルを含む場合 %zu 件\n", ambiguous_cases);
+    // Confirm that cases with ambiguous cells were actually exercised. If they
+    // were not, this test only covers the bit-pattern case and adds nothing over
+    // check 4.
+    std::printf("[dict] cases containing an ambiguous cell: %zu\n", ambiguous_cases);
     EXPECT_GT(ambiguous_cases, 0U);
 }
 
-// 検証 5: 最小 Hamming 距離を再計算し、公称値と一致する。
+// Check 5: recomputing the minimum Hamming distance matches the nominal value.
 TEST(DictionaryConformanceTest, minimum_hamming_distance_matches_nominal) {
     const aruco3cuda::DictionaryTable& table = generated_table();
     int distance = 0;

@@ -1,84 +1,84 @@
-# Dictionary 方針
+# Dictionary policy
 
-## 目的
+## Purpose
 
-ArUco3-CUDA が対応する marker Dictionary の互換性、生成方法、データ由来、検証方法を定義します。
+This document defines the compatibility, generation method, data provenance, and verification method for the marker Dictionaries that ArUco3-CUDA supports.
 
-## 対象範囲
+## Scope
 
-- OpenCV 4.x の定義済み ArUco Dictionary
+- The predefined ArUco Dictionaries of OpenCV 4.x
 - `DICT_ARUCO_MIP_36h12`
-- marker image の生成
-- custom Dictionary の生成
-- CUDA 向け lookup table への変換
+- Generation of marker images
+- Generation of custom Dictionaries
+- Conversion into lookup tables for CUDA
 
-## 現状
+## Current state
 
-- CUDA detector は未実装です。Dictionary の packed table、照合処理、変換 tool は実装済みです。
-- 現在の OpenCV 4.x は `DICT_ARUCO_MIP_36h12` を定義済み Dictionary として収録しています。
-- `DICT_ARUCO_MIP_36h12` は 6x6 bits、250 codes、最小 Hamming 距離 12 です。OpenCV 4.14.0 で実測したところ、`markerSize = 6`、`bytesList` の行数 250、`maxCorrectionBits = 5` でした。
-- OpenCV の `getPredefinedDictionary()` は収録済み codeword を取得します。
-- `Dictionary::generateImageMarker()` は取得した Dictionary の指定 ID を画像化します。
-- `extendDictionary()` は custom Dictionary を生成できますが、MILP で生成された既定の `DICT_ARUCO_MIP_36h12` と同じ codeword 集合を再現する API ではありません。
+- The CUDA detector is not implemented. The Dictionary packed table, the matching processing, and the conversion tool are implemented.
+- Current OpenCV 4.x includes `DICT_ARUCO_MIP_36h12` as a predefined Dictionary.
+- `DICT_ARUCO_MIP_36h12` is 6x6 bits, 250 codes, with a minimum Hamming distance of 12. Measured on OpenCV 4.14.0, it gives `markerSize = 6`, 250 rows in `bytesList`, and `maxCorrectionBits = 5`.
+- OpenCV's `getPredefinedDictionary()` retrieves the codewords that ship with it.
+- `Dictionary::generateImageMarker()` renders an image of the specified ID from a retrieved Dictionary.
+- `extendDictionary()` can generate a custom Dictionary, but it is not an API for reproducing the same codeword set as the predefined `DICT_ARUCO_MIP_36h12`, which was generated with MILP.
 
-## 用語の区別
+## Terminology distinctions
 
-| 用語 | 意味 |
+| Term | Meaning |
 | --- | --- |
-| Dictionary 取得 | OpenCV に収録済みの `bytesList`、`markerSize`、`maxCorrectionBits` を読み出すこと |
-| marker image 生成 | Dictionary と ID から、黒枠を含む印刷・評価用画像を描画すること |
-| custom Dictionary 生成 | 指定された marker size と code 数から、新しい codeword 集合を探索すること |
-| MIP Dictionary 再生成 | 論文の MILP 問題を解き、既定 MIP Dictionary と同等または同一の codeword 集合を得ること |
+| Dictionary retrieval | Reading out the `bytesList`, `markerSize`, and `maxCorrectionBits` that ship with OpenCV |
+| Marker image generation | Drawing a printable, evaluation-ready image including the black border, from a Dictionary and an ID |
+| Custom Dictionary generation | Searching for a new codeword set from a specified marker size and code count |
+| MIP Dictionary regeneration | Solving the MILP problem from the paper to obtain a codeword set equivalent or identical to the predefined MIP Dictionary |
 
-## 採用方針
+## Approach adopted
 
-初期実装では、OpenCV 4.x の定義済み Dictionary を互換性の正本とします。最初の必須対象は `DICT_ARUCO_MIP_36h12` とし、他の `DICT_4X4_*`、`DICT_5X5_*`、`DICT_6X6_*`、`DICT_7X7_*` は同じ loader と lookup 形式で段階的に追加します。
+For the initial implementation, the predefined Dictionaries of OpenCV 4.x are the authoritative source for compatibility. The first mandatory target is `DICT_ARUCO_MIP_36h12`; the others — `DICT_4X4_*`, `DICT_5X5_*`, `DICT_6X6_*`, `DICT_7X7_*` — will be added incrementally using the same loader and lookup format.
 
-定義済み Dictionary の取得元は、tag または commit を固定した OpenCV 4.x の `modules/objdetect/src/aruco/predefined_dictionaries.hpp` とします。公式 ArUco GPLv3 配布物から codeword、table、marker image を抽出しません。
+The source for the predefined Dictionaries is `modules/objdetect/src/aruco/predefined_dictionaries.hpp` from OpenCV 4.x at a pinned tag or commit. We do not extract codewords, tables, or marker images from the official ArUco GPLv3 distribution.
 
-CUDA 側では、正本の codeword から build 時に次を生成します。
+On the CUDA side, the following are generated at build time from the authoritative codewords.
 
-- 各 ID の canonical bits
-- 4 回転分の packed codeword
-- Hamming distance 計算用の配置
-- `markerSize` と `maxCorrectionBits` の metadata
-- 取得元 OpenCV version、commit、入力 hash、生成物 hash
+- The canonical bits for each ID
+- The packed codewords for all 4 rotations
+- The layout used to compute Hamming distance
+- The `markerSize` and `maxCorrectionBits` metadata
+- The source OpenCV version, commit, input hash, and output hash
 
-生成物を source tree へ格納する場合は、Apache-2.0 の attribution と生成手順を同じ変更に含めます。
+When the generated artifacts are stored in the source tree, the Apache-2.0 attribution and the generation procedure are included in the same change.
 
-## 検証
+## Verification
 
-Dictionary ごとに、次の自動 test を必須とします。
+The following automated tests are mandatory for each Dictionary.
 
-検証 1 から 5 は `test/reference/test_dictionary_conformance.cpp` として実装済みです。検証 6 は CUDA 実装の追加時に対応します。
+Verifications 1 through 5 are implemented as `test/reference/test_dictionary_conformance.cpp`. Verification 6 will be addressed when the CUDA implementation is added.
 
-1. ID 数、marker size、最大訂正 bit 数が OpenCV 基準と一致する。
-2. 全 ID、全 4 回転の packed codeword が OpenCV の `bytesList` と一致する。
-3. 全 ID の marker image を decode し、元の ID と回転を得られる。
-4. 1 bit から訂正上限付近までの反転について、OpenCV と accept / reject が一致する。
-5. Dictionary 内の最小 Hamming 距離を再計算し、公称値と一致する。
-6. CPU と CUDA の lookup が、同じ入力に対して同じ ID、回転、距離を返す。
+1. The ID count, marker size, and maximum correction bit count match the OpenCV baseline.
+2. The packed codewords for all IDs and all 4 rotations match OpenCV's `bytesList`.
+3. Decoding the marker image of every ID yields the original ID and rotation.
+4. For bit flips from 1 up to around the correction limit, accept / reject matches OpenCV.
+5. Recomputing the minimum Hamming distance within the Dictionary matches the nominal value.
+6. The CPU and CUDA lookups return the same ID, rotation, and distance for the same input.
 
-## 目標
+## Goals
 
-- `DICT_ARUCO_MIP_36h12` を含む対象 Dictionary を OpenCV 4.x と byte 単位で互換にする。
-- Dictionary data と生成 code の由来を Apache-2.0 の範囲で説明できるようにする。
-- CUDA の memory 配置を変更しても、正本との一致を自動 test で保証する。
-- 将来 custom Dictionary を追加しても、定義済み Dictionary と混同しない API にする。
+- Make the target Dictionaries, including `DICT_ARUCO_MIP_36h12`, byte-for-byte compatible with OpenCV 4.x.
+- Be able to explain the provenance of the Dictionary data and the generating code within the bounds of Apache-2.0.
+- Guarantee by automated test that changes to the CUDA memory layout still match the authoritative source.
+- Keep the API such that adding custom Dictionaries in the future will not be confused with the predefined ones.
 
-## 未確定事項
+## Open questions
 
-- 最初の release で `DICT_ARUCO_MIP_36h12` 以外に必須とする Dictionary。
-- OpenCV から取得した codeword は repository へ commit する方針としました。build 時に生成すると core の build に OpenCV が必要になり、[アーキテクチャ](architecture.md) の「core は OpenCV 型への依存を最小化する」方針と矛盾するためです。生成物と OpenCV の一致は `aruco3cuda_dictgen --check` と自動テストで継続的に検証します。
-- 生成物の整形は行いません。整形すると生成器の出力と byte 単位で一致しなくなり、再生成の検証が成立しないためです。
-- CUDA constant memory と global memory の切替条件。
-- MILP solver による独自 Dictionary 生成を将来 scope に含めるか。
+- Which Dictionaries besides `DICT_ARUCO_MIP_36h12` are mandatory for the first release.
+- We decided to commit the codewords retrieved from OpenCV into the repository. Generating them at build time would make OpenCV a requirement for building the core, which would contradict the [architecture](architecture.md) policy that "the core minimizes its dependence on OpenCV types." The agreement between the generated artifacts and OpenCV is verified continuously with `aruco3cuda_dictgen --check` and automated tests.
+- We do not reformat the generated artifacts. Reformatting would break byte-for-byte agreement with the generator's output, which would invalidate regeneration checks.
+- The conditions for switching between CUDA constant memory and global memory.
+- Whether to bring independent Dictionary generation with a MILP solver into future scope.
 
-## 関連
+## See also
 
-- [知的財産・ライセンス方針](ip-and-licensing.md)
-- [実装計画](implementation-plan.md)
-- [Docker 環境設計](design/docker-environment.md)
+- [Intellectual property and licensing policy](ip-and-licensing.md)
+- [Implementation plan](implementation-plan.md)
+- [Docker environment design](design/docker-environment.md)
 - [OpenCV Dictionary API](https://docs.opencv.org/4.x/d5/d0b/classcv_1_1aruco_1_1Dictionary.html)
 - [OpenCV predefined dictionaries](https://github.com/opencv/opencv/blob/4.x/modules/objdetect/src/aruco/predefined_dictionaries.hpp)
 - [Generation of fiducial marker dictionaries using Mixed Integer Linear Programming](https://doi.org/10.1016/j.patcog.2015.09.023)

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// CPU 基準 runner の正常系、異常系、境界値を検証する。
+// Verifies the nominal, failure, and boundary behavior of the CPU reference runner.
 //
-// 合成画像は test 内で生成する。既知の配置へマーカーを描画するため、
-// 四隅の ground truth を持った状態で検出結果を評価できる。
+// The synthetic images are generated inside the test. Markers are drawn at known
+// positions, so the detection results can be judged against ground-truth corners.
 #include "reference_runner.hpp"
 
 #include <gtest/gtest.h>
@@ -31,7 +31,7 @@ constexpr int kMarkerOriginX = 400;
 constexpr int kMarkerOriginY = 260;
 constexpr int kMarkerSidePx = 160;
 
-/// 既知の位置へ 1 個のマーカーを描いた画像を作り、path へ保存する。
+/// Builds an image with one marker drawn at a known position and saves it to a path.
 std::string write_synthetic_image(const std::string& name, int width_px, int height_px) {
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
@@ -41,7 +41,7 @@ std::string write_synthetic_image(const std::string& name, int width_px, int hei
     cv::Mat scene(height_px, width_px, CV_8UC1, cv::Scalar(255));
     marker.copyTo(scene(cv::Rect(kMarkerOriginX, kMarkerOriginY, kMarkerSidePx, kMarkerSidePx)));
 
-    // 同じ binary を並行実行しても衝突しないよう process ごとに分ける。
+    // Keep the path per process so that concurrent runs of the same binary do not collide.
     const std::string path = "/tmp/" + std::to_string(::getpid()) + "_" + name;
     EXPECT_TRUE(cv::imwrite(path, scene));
     return path;
@@ -64,7 +64,7 @@ private:
     std::vector<std::string> created_files_;
 };
 
-// 正常系: 既知のマーカーを検出し、四隅が描画位置と一致する。
+// Nominal: the known marker is detected and its corners match where it was drawn.
 TEST_F(ReferenceRunnerTest, detects_known_marker_at_expected_corners) {
     const std::string path = this->make_image("aruco3cuda_ref_basic.png");
     ReferenceConfig config;
@@ -75,7 +75,8 @@ TEST_F(ReferenceRunnerTest, detects_known_marker_at_expected_corners) {
     ASSERT_EQ(result.detections_.size(), 1U);
     EXPECT_EQ(result.detections_[0].id_, kMarkerId);
 
-    // 描画位置に対する許容誤差。subpixel 補正を含むため 1 pixel 程度を許す。
+    // Tolerance against the drawn position. Subpixel refinement is included, so about
+    // one pixel is allowed.
     constexpr double kTolerancePx = 1.0;
     EXPECT_NEAR(result.detections_[0].corners_[0], kMarkerOriginX, kTolerancePx);
     EXPECT_NEAR(result.detections_[0].corners_[1], kMarkerOriginY, kTolerancePx);
@@ -83,7 +84,7 @@ TEST_F(ReferenceRunnerTest, detects_known_marker_at_expected_corners) {
     EXPECT_NEAR(result.detections_[0].corners_[5], kMarkerOriginY + kMarkerSidePx, kTolerancePx);
 }
 
-// 正常系: 同じ入力からは同じ結果が得られる。
+// Nominal: the same input yields the same result.
 TEST_F(ReferenceRunnerTest, results_are_deterministic) {
     const std::string path = this->make_image("aruco3cuda_ref_determinism.png");
     ReferenceConfig config;
@@ -101,8 +102,8 @@ TEST_F(ReferenceRunnerTest, results_are_deterministic) {
     EXPECT_EQ(first.image_sha256_, second.image_sha256_);
 }
 
-// 正常系: ArUco3 の実効縮小率が観測仕様と一致する。
-// docs/design/detector-pipeline.md に記録した式と同じ結果になることを固定する。
+// Nominal: the effective ArUco3 downscale factor matches the observed specification.
+// This pins the result to the formula recorded in docs/design/detector-pipeline.md.
 TEST_F(ReferenceRunnerTest, reports_expected_aruco3_downscale) {
     const std::string path = this->make_image("aruco3cuda_ref_scale.png");
     ReferenceConfig config;
@@ -120,7 +121,7 @@ TEST_F(ReferenceRunnerTest, reports_expected_aruco3_downscale) {
     EXPECT_EQ(result.segmentation_height_px_, 240);
 }
 
-// 境界値: minMarkerLengthRatioOriginalImg が 0 だと縮小が発生しない。
+// Boundary: with minMarkerLengthRatioOriginalImg at 0 no downscaling happens.
 TEST_F(ReferenceRunnerTest, no_downscale_when_length_ratio_is_zero) {
     const std::string path = this->make_image("aruco3cuda_ref_noscale.png");
     ReferenceConfig config;
@@ -134,7 +135,7 @@ TEST_F(ReferenceRunnerTest, no_downscale_when_length_ratio_is_zero) {
     EXPECT_EQ(result.segmentation_width_px_, result.width_px_);
 }
 
-// 境界値: ArUco3 を無効にすると縮小率は 1 になる。
+// Boundary: with ArUco3 disabled the scale factor is 1.
 TEST_F(ReferenceRunnerTest, no_downscale_when_aruco3_disabled) {
     const std::string path = this->make_image("aruco3cuda_ref_disabled.png");
     ReferenceConfig config;
@@ -145,7 +146,7 @@ TEST_F(ReferenceRunnerTest, no_downscale_when_aruco3_disabled) {
     EXPECT_DOUBLE_EQ(result.fxfy_effective_, 1.0);
 }
 
-// 異常系: 存在しない画像では失敗し理由を返す。
+// Failure: a missing image fails and reports the reason.
 TEST_F(ReferenceRunnerTest, fails_for_missing_image) {
     ReferenceConfig config;
     ReferenceResult result;
@@ -155,7 +156,7 @@ TEST_F(ReferenceRunnerTest, fails_for_missing_image) {
     EXPECT_FALSE(error.empty());
 }
 
-// 異常系: 未対応の Dictionary では失敗する。
+// Failure: an unsupported dictionary fails.
 TEST_F(ReferenceRunnerTest, fails_for_unknown_dictionary) {
     const std::string path = this->make_image("aruco3cuda_ref_dict.png");
     ReferenceConfig config;
@@ -166,7 +167,7 @@ TEST_F(ReferenceRunnerTest, fails_for_unknown_dictionary) {
     EXPECT_FALSE(error.empty());
 }
 
-// 異常系: 出力先が nullptr でも安全に失敗する。
+// Failure: a null output pointer fails safely.
 TEST_F(ReferenceRunnerTest, rejects_null_outputs) {
     ReferenceConfig config;
     ReferenceResult result;
@@ -175,19 +176,21 @@ TEST_F(ReferenceRunnerTest, rejects_null_outputs) {
     EXPECT_FALSE(aruco3cuda::reference::detect_image("/tmp/x.png", config, &result, nullptr));
 }
 
-// 正常系: 環境情報を収集でき、記録すべき項目が埋まる。
-// 空や誤値のまま結果へ記録されると、測定条件を後から再現できない。
+// Nominal: the environment is collected and the fields that must be recorded are filled in.
+// If empty or wrong values were recorded with the results, the measurement conditions
+// could not be reproduced afterwards.
 TEST(ReferenceEnvironmentTest, collects_opencv_version_and_thread_count) {
     aruco3cuda::reference::ReferenceConfig config;
     config.num_threads_ = 1;
     const aruco3cuda::reference::ReferenceEnvironment environment =
             aruco3cuda::reference::collect_environment(config);
     EXPECT_FALSE(environment.opencv_version_.empty());
-    // 再現性のため thread 数を固定する。指定した値が実際に反映される必要がある。
+    // The thread count is pinned for reproducibility, so the value given must actually
+    // take effect.
     EXPECT_EQ(environment.opencv_threads_, 1);
 }
 
-// 正常系: thread 数に 0 を指定すると OpenCV の既定に従う。
+// Nominal: a thread count of 0 follows the OpenCV default.
 TEST(ReferenceEnvironmentTest, thread_count_zero_uses_opencv_default) {
     aruco3cuda::reference::ReferenceConfig config;
     config.num_threads_ = 0;
@@ -196,8 +199,8 @@ TEST(ReferenceEnvironmentTest, thread_count_zero_uses_opencv_default) {
     EXPECT_GT(environment.opencv_threads_, 0);
 }
 
-// 異常系: 設定値が範囲外なら検出前に false を返す。
-// 範囲外の値を OpenCV へ渡すと cv::Exception が契約を破って抜ける。
+// Failure: an out-of-range setting returns false before detection runs.
+// Passing an out-of-range value to OpenCV lets a cv::Exception escape and break the contract.
 TEST(ReferenceConfigTest, rejects_out_of_range_values) {
     std::string error;
     aruco3cuda::reference::ReferenceConfig valid;
@@ -218,7 +221,7 @@ TEST(ReferenceConfigTest, rejects_out_of_range_values) {
     EXPECT_FALSE(aruco3cuda::reference::validate_config(bad_rate, &error));
     EXPECT_NE(error.find("error_correction_rate"), std::string::npos) << error;
 
-    // NaN は比較が全て false になるため、範囲検査で弾けている必要がある。
+    // Every comparison against NaN is false, so the range check has to reject it explicitly.
     aruco3cuda::reference::ReferenceConfig nan_rate = valid;
     nan_rate.min_otsu_std_dev_ = std::nan("");
     EXPECT_FALSE(aruco3cuda::reference::validate_config(nan_rate, &error));
@@ -232,7 +235,8 @@ TEST(ReferenceConfigTest, rejects_out_of_range_values) {
     EXPECT_FALSE(aruco3cuda::reference::validate_config(valid, nullptr));
 }
 
-// 異常系: 設定値が範囲外の場合、detect_image は例外ではなく false で失敗する。
+// Failure: with an out-of-range setting, detect_image fails by returning false rather
+// than by throwing.
 TEST_F(ReferenceRunnerTest, detect_rejects_invalid_config_without_exception) {
     const std::string path = this->make_image("aruco3cuda_ref_badcfg.png");
     ReferenceConfig config;
@@ -243,7 +247,7 @@ TEST_F(ReferenceRunnerTest, detect_rejects_invalid_config_without_exception) {
     EXPECT_NE(error.find("marker_border_bits"), std::string::npos) << error;
 }
 
-// 正常系: Dictionary 名の解決。
+// Nominal: dictionary names resolve.
 TEST(ReferenceDictionaryTest, resolves_known_names_only) {
     EXPECT_TRUE(aruco3cuda::reference::is_known_dictionary("DICT_ARUCO_MIP_36h12"));
     EXPECT_TRUE(aruco3cuda::reference::is_known_dictionary("DICT_6X6_250"));
@@ -251,7 +255,7 @@ TEST(ReferenceDictionaryTest, resolves_known_names_only) {
     EXPECT_FALSE(aruco3cuda::reference::known_dictionary_names().empty());
 }
 
-// 正常系: JSON 出力が有効な構造を持ち、検出内容を含む。
+// Nominal: the JSON output is well formed and carries the detections.
 TEST_F(ReferenceRunnerTest, writes_json_containing_detections) {
     const std::string path = this->make_image("aruco3cuda_ref_json.png");
     ReferenceConfig config;
@@ -272,7 +276,7 @@ TEST_F(ReferenceRunnerTest, writes_json_containing_detections) {
     EXPECT_NE(json.find(result.image_sha256_), std::string::npos);
 }
 
-// 正常系: --omit-timing 相当の設定では出力が byte 単位で決定的になる。
+// Nominal: with the equivalent of --omit-timing set, the output is deterministic byte for byte.
 TEST_F(ReferenceRunnerTest, json_is_byte_identical_when_timing_omitted) {
     const std::string path = this->make_image("aruco3cuda_ref_golden.png");
     ReferenceConfig config;
@@ -293,10 +297,10 @@ TEST_F(ReferenceRunnerTest, json_is_byte_identical_when_timing_omitted) {
     EXPECT_EQ(first.find("detect_ms"), std::string::npos);
 }
 
-// 正常系: 読み込みを分けても detect_image と同じ結果になる。
+// Nominal: splitting the load off still gives the same result as detect_image.
 //
-// 測定では読み込みを初期化側へ寄せる。結果が変わってしまえば、測定して
-// いる対象が別物になる。
+// Measurements move the load into the initialization step. If that changed the
+// result, what is being measured would no longer be the same thing.
 TEST_F(ReferenceRunnerTest, detector_matches_detect_image) {
     const std::string path = this->make_image("aruco3cuda_ref_detector.png");
     ReferenceConfig config;
@@ -311,10 +315,10 @@ TEST_F(ReferenceRunnerTest, detector_matches_detect_image) {
     EXPECT_EQ(detector.metadata().width_px_, expected.width_px_);
     EXPECT_EQ(detector.metadata().height_px_, expected.height_px_);
     EXPECT_EQ(detector.metadata().fxfy_effective_, expected.fxfy_effective_);
-    // metadata は検出結果を含まない。
+    // The metadata carries no detections.
     EXPECT_TRUE(detector.metadata().detections_.empty());
 
-    // 繰り返し呼んでも同じ結果になる。
+    // Repeated calls give the same result.
     for (int i = 0; i < 3; ++i) {
         ReferenceResult actual;
         ASSERT_TRUE(detector.detect(&actual, &error)) << error;
@@ -328,7 +332,7 @@ TEST_F(ReferenceRunnerTest, detector_matches_detect_image) {
     }
 }
 
-// 正常系: move してもそのまま使える。
+// Nominal: the detector remains usable after being moved.
 TEST_F(ReferenceRunnerTest, detector_can_be_moved) {
     const std::string path = this->make_image("aruco3cuda_ref_detector_move.png");
     const ReferenceConfig config;
@@ -349,7 +353,7 @@ TEST_F(ReferenceRunnerTest, detector_can_be_moved) {
     EXPECT_EQ(second.detections_.size(), first.detections_.size());
 }
 
-// 異常系: 初期化前の検出と、不正な引数を拒否する。
+// Failure: detection before initialization, and invalid arguments, are rejected.
 TEST_F(ReferenceRunnerTest, detector_rejects_invalid_use) {
     aruco3cuda::reference::ReferenceDetector detector;
     ReferenceResult result;
@@ -361,21 +365,21 @@ TEST_F(ReferenceRunnerTest, detector_rejects_invalid_use) {
     EXPECT_FALSE(detector.detect(&result, nullptr));
     EXPECT_FALSE(detector.initialize("/nonexistent/image.png", ReferenceConfig(), nullptr));
 
-    // 読み込めない画像。
+    // An image that cannot be loaded.
     EXPECT_FALSE(detector.initialize("/nonexistent/image.png", ReferenceConfig(), &error));
-    EXPECT_NE(error.find("読み込めない"), std::string::npos);
+    EXPECT_NE(error.find("cannot load image"), std::string::npos);
 
-    // 未対応の Dictionary。
+    // An unsupported dictionary.
     ReferenceConfig bad_dictionary;
     bad_dictionary.dictionary_name_ = "DICT_NOPE";
     EXPECT_FALSE(detector.initialize("/nonexistent/image.png", bad_dictionary, &error));
     EXPECT_NE(error.find("Dictionary"), std::string::npos);
 
-    // 設定が矛盾している場合。
+    // A configuration that contradicts itself.
     ReferenceConfig bad_range;
     bad_range.max_marker_perimeter_rate_ = bad_range.min_marker_perimeter_rate_;
     EXPECT_FALSE(detector.initialize("/nonexistent/image.png", bad_range, &error));
-    EXPECT_NE(error.find("矛盾"), std::string::npos);
+    EXPECT_NE(error.find("inconsistent config"), std::string::npos);
 }
 
 }  // namespace

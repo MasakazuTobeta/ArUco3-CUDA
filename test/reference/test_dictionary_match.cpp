@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// GPU の Dictionary 照合を CPU 基準および OpenCV と突き合わせる。
+// Cross-checks the GPU dictionary matching against the CPU reference and
+// OpenCV.
 //
-// 完了条件は「全 ID と 4 回転で CPU と同じ ID・rotation・距離を返す」である。
-// 加えて、比が閾値の近くにあり黒とも白とも決まらない場合を含める。この場合が
-// 一致しなければ、bit 列へ潰した実装との違いが出ない。
+// The completion criterion is that every ID at all four rotations returns the
+// same ID, rotation, and distance as the CPU. On top of that we include the
+// case where a ratio sits near the threshold and is decided neither black nor
+// white. Without agreement in that case there is nothing to distinguish this
+// implementation from one that collapses everything into a bit pattern.
 #include "dictionary_match.hpp"
 
 #include <gtest/gtest.h>
@@ -52,12 +55,14 @@ cv::aruco::Dictionary opencv_dictionary() {
     return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
 }
 
-/// 1 候補分のセル比。border を含む 1 辺 cells の行列を持つ。
+/// Cell ratios for a single candidate; a cells-by-cells matrix including the
+/// border.
 struct RatioGrid {
     std::vector<float> values_;
     int cells_ = 0;
 
-    /// 内側のセルを行優先で並べたものを返す。CPU 基準へ渡す形である。
+    /// Returns the inner cells in row-major order, the form the CPU reference
+    /// expects.
     std::vector<float> inner(int border, int marker_size) const {
         std::vector<float> flat(static_cast<std::size_t>(marker_size) *
                                 static_cast<std::size_t>(marker_size));
@@ -74,7 +79,7 @@ struct RatioGrid {
     }
 };
 
-/// codeword から比の行列を作る。外周は黒 (比 0) とする。
+/// Builds a ratio matrix from a codeword. The outer border is black (ratio 0).
 RatioGrid grid_from_bits(const cv::Mat& bits, int border) {
     RatioGrid grid;
     grid.cells_ = bits.rows + (2 * border);
@@ -91,7 +96,7 @@ RatioGrid grid_from_bits(const cv::Mat& bits, int border) {
     return grid;
 }
 
-/// 比の行列を device へ渡して照合し、結果を持ち帰る。
+/// Hands the ratio matrix to the device, matches, and brings the result back.
 class MatchRun {
 public:
     MatchRun() = default;
@@ -184,10 +189,11 @@ private:
     std::vector<std::int32_t> distances_;
 };
 
-// 正常系: 全 ID の 4 回転で CPU 基準および OpenCV と一致する。
+// Happy path: every ID at all four rotations agrees with the CPU reference and
+// with OpenCV.
 TEST(DictionaryMatchTest, matches_all_ids_and_rotations) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
@@ -224,7 +230,7 @@ TEST(DictionaryMatchTest, matches_all_ids_and_rotations) {
         }
         EXPECT_EQ(run.distances()[i], 0) << i;
 
-        // OpenCV へ同じ比を渡した結果とも突き合わせる。
+        // Also cross-check against what OpenCV returns for the same ratios.
         cv::Mat ratio(dictionary.markerSize, dictionary.markerSize, CV_32FC1);
         const std::vector<float> flat = grids[i].inner(border, dictionary.markerSize);
         std::memcpy(ratio.ptr<float>(0), flat.data(), flat.size() * sizeof(float));
@@ -238,24 +244,28 @@ TEST(DictionaryMatchTest, matches_all_ids_and_rotations) {
             ++opencv_mismatch;
         }
     }
-    std::printf("[match] %zu 件: ID 不一致 %zu、回転 不一致 %zu、OpenCV との不一致 %zu\n",
-                grids.size(), id_mismatch, rotation_mismatch, opencv_mismatch);
+    std::printf(
+            "[match] %zu cases: ID mismatches %zu, rotation mismatches %zu, "
+            "mismatches vs OpenCV %zu\n",
+            grids.size(), id_mismatch, rotation_mismatch, opencv_mismatch);
     EXPECT_EQ(id_mismatch, 0U);
     EXPECT_EQ(rotation_mismatch, 0U);
     EXPECT_EQ(opencv_mismatch, 0U);
 }
 
-// 境界値: 比が閾値の近くにある場合も CPU 基準と一致する。
+// Boundary: ratios sitting near the threshold also agree with the CPU
+// reference.
 TEST(DictionaryMatchTest, matches_ambiguous_ratios) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     const DetectorConfig config;
     const int border = config.marker_border_bits_;
 
-    // 閾値 0.49 と上限 0.51 の両側および境界そのものを含める。
+    // Cover both sides of the 0.49 threshold and its 0.51 upper counterpart, as
+    // well as the boundaries themselves.
     const std::vector<float> ratio_values = {0.0F,  0.25F, 0.48F, 0.49F, 0.50F,
                                              0.51F, 0.52F, 0.75F, 1.0F};
     std::mt19937_64 rng(20260828U);
@@ -312,24 +322,27 @@ TEST(DictionaryMatchTest, matches_ambiguous_ratios) {
             ++mismatch;
         }
     }
-    std::printf("[match] %zu 件: 不一致 %zu、曖昧なセルを含む %zu、不採用 %zu\n", grids.size(),
-                mismatch, ambiguous, rejected);
+    std::printf(
+            "[match] %zu cases: mismatches %zu, containing an ambiguous cell %zu, "
+            "rejected %zu\n",
+            grids.size(), mismatch, ambiguous, rejected);
     EXPECT_EQ(mismatch, 0U);
-    // 曖昧な場合と不採用の場合を実際に通ったことを確かめる。
+    // Confirm that the ambiguous case and the rejection case were actually
+    // exercised.
     EXPECT_GT(ambiguous, 0U);
     EXPECT_GT(rejected, 0U);
 }
 
-// 境界値: 誤り訂正の許容数の前後で採否が変わる。
+// Boundary: acceptance flips around the error-correction limit.
 TEST(DictionaryMatchTest, correction_limit_boundary) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     const DetectorConfig config;
     const int border = config.marker_border_bits_;
-    // 既定では int(5 * 0.6) = 3 まで許す。
+    // By default up to int(5 * 0.6) = 3 errors are tolerated.
     const int allowed = static_cast<int>(static_cast<double>(table.max_correction_bits_) *
                                          config.error_correction_rate_);
     ASSERT_EQ(allowed, 3);
@@ -356,18 +369,18 @@ TEST(DictionaryMatchTest, correction_limit_boundary) {
     for (std::size_t i = 0; i < grids.size(); ++i) {
         const auto flips = static_cast<int>(i);
         if (flips <= allowed) {
-            EXPECT_EQ(run.ids()[i], 42) << "反転 " << flips;
-            EXPECT_EQ(run.distances()[i], flips) << "反転 " << flips;
+            EXPECT_EQ(run.ids()[i], 42) << "flips " << flips;
+            EXPECT_EQ(run.distances()[i], flips) << "flips " << flips;
         } else {
-            EXPECT_EQ(run.ids()[i], -1) << "反転 " << flips;
+            EXPECT_EQ(run.ids()[i], -1) << "flips " << flips;
         }
     }
 }
 
-// 正常系: border 検証を通らなかった候補は照合しない。
+// Happy path: a candidate that failed border verification is not matched.
 TEST(DictionaryMatchTest, skips_candidates_rejected_by_border) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
@@ -380,7 +393,7 @@ TEST(DictionaryMatchTest, skips_candidates_rejected_by_border) {
                 dictionary.bytesList.rowRange(id, id + 1), dictionary.markerSize, 0);
         grids.push_back(grid_from_bits(bits, border));
     }
-    // 真ん中だけ border 検証で落ちたことにする。
+    // Pretend that only the middle candidate failed border verification.
     const std::vector<std::uint8_t> accepted = {1U, 0U, 1U};
 
     MatchRun run;
@@ -390,7 +403,7 @@ TEST(DictionaryMatchTest, skips_candidates_rejected_by_border) {
     EXPECT_EQ(run.ids()[2], 7);
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: invalid arguments perform no work.
 TEST(DictionaryMatchTest, rejects_invalid_arguments) {
     Workspace workspace;
     const DetectorConfig config;
@@ -399,7 +412,7 @@ TEST(DictionaryMatchTest, rejects_invalid_arguments) {
     aruco3cuda::detail::DeviceDictionary dictionary;
     EXPECT_EQ(aruco3cuda::detail::upload_dictionary(table, workspace, nullptr, nullptr),
               Status::kInvalidArgument);
-    // 容量を確保していない workspace では確保に失敗する。
+    // A workspace with no reserved capacity fails to allocate.
     EXPECT_NE(aruco3cuda::detail::upload_dictionary(table, workspace, &dictionary, nullptr),
               Status::kOk);
 

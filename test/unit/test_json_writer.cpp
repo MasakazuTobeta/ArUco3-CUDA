@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// JSON writer の出力が決定的で、escape と非有限値を正しく扱うことを検証する。
+// Verifies that the JSON writer produces deterministic output and handles escaping
+// and non-finite values correctly.
 #include "aruco3cuda/util/json_writer.hpp"
 
 #include <gtest/gtest.h>
@@ -14,7 +15,7 @@ namespace {
 
 using aruco3cuda::util::JsonWriter;
 
-// 正常系: 入れ子構造を区切りと共に正しく出力する。
+// Nominal: nested structures are written with the correct separators.
 TEST(JsonWriterTest, writes_nested_structure_compactly) {
     std::ostringstream out;
     JsonWriter writer(out, 0);
@@ -30,7 +31,7 @@ TEST(JsonWriterTest, writes_nested_structure_compactly) {
     EXPECT_EQ(out.str(), "{\"a\":1,\"b\":[2,3],\"c\":true}");
 }
 
-// 境界値: 空の object と array を出力できる。
+// Boundary: empty objects and arrays can be written.
 TEST(JsonWriterTest, writes_empty_containers) {
     std::ostringstream out;
     JsonWriter writer(out, 0);
@@ -45,16 +46,18 @@ TEST(JsonWriterTest, writes_empty_containers) {
     EXPECT_EQ(out.str(), "{\"empty_object\":{},\"empty_array\":[]}");
 }
 
-// 正常系: 制御文字と記号を escape する。
+// Nominal: control characters and reserved symbols are escaped.
 TEST(JsonWriterTest, escapes_special_characters) {
     EXPECT_EQ(aruco3cuda::util::escape_json_string("a\"b\\c"), "a\\\"b\\\\c");
     EXPECT_EQ(aruco3cuda::util::escape_json_string("line\ntab\t"), "line\\ntab\\t");
     EXPECT_EQ(aruco3cuda::util::escape_json_string(std::string(1, '\x01')), "\\u0001");
-    // UTF-8 の多 byte 文字はそのまま通す。
+    // Multi-byte UTF-8 characters pass through unchanged. The literal below stays
+    // non-ASCII on purpose: it is the input under test, and replacing it with ASCII
+    // would remove the very property this line checks.
     EXPECT_EQ(aruco3cuda::util::escape_json_string("四隅"), "四隅");
 }
 
-// 正常系: 指定した桁数で安定して出力する。
+// Nominal: doubles are written stably at the requested precision.
 TEST(JsonWriterTest, formats_doubles_with_requested_precision) {
     std::ostringstream out;
     JsonWriter writer(out, 0);
@@ -65,7 +68,7 @@ TEST(JsonWriterTest, formats_doubles_with_requested_precision) {
     EXPECT_EQ(out.str(), "[0.3333,-0.50]");
 }
 
-// 異常系: JSON で表現できない値は null にする。値を捏造しない。
+// Error case: values JSON cannot represent become null. No value is invented.
 TEST(JsonWriterTest, writes_null_for_non_finite_values) {
     std::ostringstream out;
     JsonWriter writer(out, 0);
@@ -76,7 +79,9 @@ TEST(JsonWriterTest, writes_null_for_non_finite_values) {
     EXPECT_EQ(out.str(), "[null,null]");
 }
 
-// 正常系: 同じ呼び出し列からは同じ byte 列が得られる。
+// Nominal: the same sequence of calls yields the same byte sequence.
+// The member value stays non-ASCII on purpose, so that the multi-byte path through
+// member_string is covered as well.
 TEST(JsonWriterTest, output_is_deterministic) {
     auto build = []() {
         std::ostringstream out;
@@ -90,7 +95,10 @@ TEST(JsonWriterTest, output_is_deterministic) {
     EXPECT_EQ(build(), build());
 }
 
-// 正常系: 各 value_* を直接呼び出せる。member_* 経由でしか通らない経路を残さない。
+// Nominal: each value_* function can be called directly, so that no path is only
+// ever reached through the member_* wrappers.
+// The string value is deliberately non-ASCII: it checks that value_string passes
+// multi-byte UTF-8 through to the output byte for byte.
 TEST(JsonWriterTest, value_functions_can_be_called_directly) {
     std::ostringstream out;
     JsonWriter writer(out, 0);
@@ -105,8 +113,9 @@ TEST(JsonWriterTest, value_functions_can_be_called_directly) {
     EXPECT_EQ(out.str(), "[\"文字列\",-7,true,false,null,0.50]");
 }
 
-// 境界値: 桁数が buffer へ収まらない場合は値を切り詰めず null にする。
-// 切り詰めた数値を書くと、実際と異なる値を記録することになる。
+// Boundary: when the requested precision does not fit the buffer, the value is
+// written as null rather than truncated. Writing a truncated number would record
+// a value different from the actual one.
 TEST(JsonWriterTest, writes_null_when_precision_does_not_fit) {
     std::ostringstream out;
     JsonWriter writer(out, 0);

@@ -10,82 +10,87 @@
 
 namespace aruco3cuda {
 
-/// 入力 buffer が存在する memory 空間。
+/// The memory space an input buffer lives in.
 ///
-/// DGX Spark GB10 と Jetson Orin はいずれも統合 GPU であり、host と device が
-/// 同一物理 memory を共有する。それでも明示的な copy、page lock、managed の
-/// 移送費用は異なるため、経路とは独立した測定軸として型で区別する。
+/// The DGX Spark GB10 and the Jetson Orin are both integrated GPUs, where host and
+/// device share the same physical memory. Even so, the cost of an explicit copy, of
+/// page locking, and of managed migration all differ, so the space is a distinct
+/// measurement axis captured in the type rather than in the code path.
 enum class MemorySpace : int {
-    kHostPageable = 0,  ///< 通常の host memory。転送に page lock が発生する
-    kHostPinned,        ///< page-locked host memory
-    kManaged,           ///< managed memory。明示的な copy なし
-    kDevice,            ///< device 常駐
+    kHostPageable = 0,  ///< Ordinary host memory; a transfer incurs page locking
+    kHostPinned,        ///< Page-locked host memory
+    kManaged,           ///< Managed memory; no explicit copy
+    kDevice,            ///< Device resident
 };
 
-/// MemorySpace を評価計画の表記へ変換する。
+/// Converts a MemorySpace into the notation used by the evaluation plan.
 ///
-/// @param space 変換対象。列挙に無い値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。
+/// @param space Value to convert. Never returns nullptr, even for a value outside the
+///              enumeration.
+/// @return A string with static storage duration.
 ///
-/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the return value points into static storage. The caller neither frees
+///            nor modifies it.
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: MemorySpace::kHostPinned
-/// 出力例: "M-Pinned"
+/// Example input: MemorySpace::kHostPinned
+/// Example output: "M-Pinned"
 const char* to_string(MemorySpace space);
 
-/// 8-bit grayscale 画像の非所有 view。
+/// A non-owning view of an 8-bit grayscale image.
 ///
-/// 目的:
-///   呼出側が確保した画像を、所有権を移さずに検出器へ渡す。ROI と
-///   非連続な行配置を最初から扱えるよう、幅とは独立に行間隔を持たせる。
+/// Purpose:
+///   Hands an image allocated by the caller to the detector without transferring
+///   ownership. The row stride is kept separate from the width so that ROIs and
+///   non-contiguous row layouts are supported from the start.
 ///
-/// 所有権:
-///   data_ が指す領域の所有権は呼出側にある。この構造体は複製も解放も行わない。
-///   検出の間、領域は有効であり続ける必要がある。
+/// Ownership:
+///   The caller owns the memory behind data_. This struct neither copies nor frees it.
+///   The memory must stay valid for the duration of the detection.
 struct ImageViewU8 {
-    /// 画像先頭の pointer。space_ が示す memory 空間に属する必要がある。
+    /// Pointer to the start of the image. It must live in the memory space named by space_.
     const std::uint8_t* data_ = nullptr;
     int width_px_ = 0;
     int height_px_ = 0;
-    /// 行間隔。単位は byte。width_px_ と等しいとは限らない。
+    /// Row stride in bytes. It is not necessarily equal to width_px_.
     std::size_t pitch_bytes_ = 0;
     MemorySpace space_ = MemorySpace::kDevice;
 };
 
-/// 扱える画像寸法の上限。
+/// Upper bounds on the image dimensions that can be handled.
 ///
-/// 外部入力を信頼しないための上限であり、性能上の制約ではない。
-/// 評価計画の最大解像度 3840x2160 に対して十分な余裕を取る。
+/// These bounds exist because external input is not trusted, not because of a
+/// performance constraint. They leave ample headroom above the 3840x2160 maximum
+/// resolution of the evaluation plan.
 inline constexpr int kMaxImageWidthPx = 65536;
 inline constexpr int kMaxImageHeightPx = 65536;
 
-/// 画像 view を境界で検証する。
+/// Validates an image view at the boundary.
 ///
-/// 検出器の公開 API は最初にこの検証を行う。不正な view をそのまま
-/// CUDA へ渡すと、範囲外 access が非同期の失敗として離れた場所で現れ、
-/// 原因の特定が難しくなる。
+/// The public detector API runs this validation first. Passing an invalid view
+/// straight to CUDA turns an out-of-range access into an asynchronous failure that
+/// surfaces somewhere else entirely, making the cause hard to pin down.
 ///
-/// 検証項目:
-///   - data_ が nullptr でない
-///   - width_px_ と height_px_ が 1 以上で上限以下
-///   - pitch_bytes_ が 1 行分の byte 数以上
-///   - pitch_bytes_ と height_px_ の積が size_t で表現できる
-///   - space_ が列挙のいずれかである
+/// Checks:
+///   - data_ is not nullptr
+///   - width_px_ and height_px_ are at least 1 and within the upper bounds
+///   - pitch_bytes_ is at least the byte count of one row
+///   - the product of pitch_bytes_ and height_px_ is representable in size_t
+///   - space_ is one of the enumerators
 ///
-/// @param image 検証対象。
-/// @param out_message 失敗時に「項目名=値」を含む理由を格納する。nullptr を渡してよい。
-///                    成功時は変更しない。領域の所有権は呼出側にある。
-/// @return 全て有効なら kOk、そうでなければ kInvalidImage。
+/// @param image The view to validate.
+/// @param out_message On failure, receives a reason containing "field=value". May be
+///                    nullptr. Left unchanged on success. The caller owns the storage.
+/// @return kOk if everything is valid, otherwise kInvalidImage.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばないため、
-///           device pointer の実在は検証しない。
+/// Ownership: does not retain the memory behind the arguments.
+/// Synchronization: host only, with no synchronization point. It calls no CUDA API, so
+///                  it does not verify that the device pointer actually exists.
 ///
-/// 入力例: data_ = 有効な device pointer、1920x1080、pitch_bytes_ = 1920
-/// 出力例: Status::kOk
-/// 入力例: pitch_bytes_ = 1000 の 1920x1080
-/// 出力例: Status::kInvalidImage。out_message に "pitch_bytes=1000" を含む
+/// Example input: data_ = a valid device pointer, 1920x1080, pitch_bytes_ = 1920
+/// Example output: Status::kOk
+/// Example input: 1920x1080 with pitch_bytes_ = 1000
+/// Example output: Status::kInvalidImage, with out_message containing "pitch_bytes=1000"
 Status validate_image_view(const ImageViewU8& image, std::string* out_message = nullptr);
 
 }  // namespace aruco3cuda

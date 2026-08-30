@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 画像 view の境界検証を確認する。
+// Verifies boundary validation of the image view.
 //
-// 不正な view をそのまま CUDA へ渡すと、範囲外 access が非同期の失敗として
-// 離れた場所で現れる。境界で弾めることが検出器の前提になる。
+// Passing an invalid view straight to CUDA turns an out-of-bounds access into an
+// asynchronous failure that surfaces far from its cause. Rejecting such views at
+// the boundary is a precondition the detector relies on.
 #include "aruco3cuda/types.hpp"
 
 #include <gtest/gtest.h>
@@ -17,8 +18,9 @@
 
 namespace {
 
-/// 検証だけを行うため、実体のない pointer を使う。
-/// validate_image_view は CUDA API を呼ばず、pointer の実在を確認しない。
+/// Only validation is exercised here, so a pointer to no real image is enough.
+/// validate_image_view calls no CUDA API and does not confirm that the pointer
+/// refers to real storage.
 std::uint8_t* dummy_pointer() {
     static std::uint8_t storage = 0;
     return &storage;
@@ -34,15 +36,15 @@ aruco3cuda::ImageViewU8 valid_view() {
     return view;
 }
 
-// 正常系: 妥当な view を受理する。
+// Nominal: a well-formed view is accepted.
 TEST(ImageViewTest, accepts_valid_view) {
     std::string message = "unchanged";
     EXPECT_EQ(aruco3cuda::validate_image_view(valid_view(), &message), aruco3cuda::Status::kOk);
-    // 成功時は message を変更しない。
+    // On success the message is left untouched.
     EXPECT_EQ(message, "unchanged");
 }
 
-// 正常系: out_message に nullptr を渡してもよい。
+// Nominal: passing nullptr for out_message is allowed.
 TEST(ImageViewTest, accepts_null_message) {
     EXPECT_EQ(aruco3cuda::validate_image_view(valid_view(), nullptr), aruco3cuda::Status::kOk);
     aruco3cuda::ImageViewU8 invalid = valid_view();
@@ -50,7 +52,7 @@ TEST(ImageViewTest, accepts_null_message) {
     EXPECT_EQ(aruco3cuda::validate_image_view(invalid, nullptr), aruco3cuda::Status::kInvalidImage);
 }
 
-// 異常系: data が nullptr の view を拒否する。
+// Error case: a view whose data pointer is null is rejected.
 TEST(ImageViewTest, rejects_null_data) {
     aruco3cuda::ImageViewU8 view = valid_view();
     view.data_ = nullptr;
@@ -59,7 +61,7 @@ TEST(ImageViewTest, rejects_null_data) {
     EXPECT_NE(message.find("data"), std::string::npos) << message;
 }
 
-// 境界値: 幅と高さの下限と上限。
+// Boundary: the lower and upper limits on width and height.
 TEST(ImageViewTest, checks_dimension_bounds) {
     std::string message;
     for (const int width : {0, -1, aruco3cuda::kMaxImageWidthPx + 1}) {
@@ -79,7 +81,7 @@ TEST(ImageViewTest, checks_dimension_bounds) {
                 << "height=" << height;
         EXPECT_NE(message.find("height_px"), std::string::npos) << message;
     }
-    // 下限と上限そのものは受理する。
+    // The limits themselves are accepted.
     aruco3cuda::ImageViewU8 smallest = valid_view();
     smallest.width_px_ = 1;
     smallest.height_px_ = 1;
@@ -87,7 +89,7 @@ TEST(ImageViewTest, checks_dimension_bounds) {
     EXPECT_EQ(aruco3cuda::validate_image_view(smallest, &message), aruco3cuda::Status::kOk);
 }
 
-// 境界値: pitch は 1 行分以上である必要がある。
+// Boundary: the pitch must cover at least one full row.
 TEST(ImageViewTest, checks_pitch_lower_bound) {
     aruco3cuda::ImageViewU8 view = valid_view();
     std::string message;
@@ -96,21 +98,22 @@ TEST(ImageViewTest, checks_pitch_lower_bound) {
     EXPECT_EQ(aruco3cuda::validate_image_view(view, &message), aruco3cuda::Status::kInvalidImage);
     EXPECT_NE(message.find("pitch_bytes"), std::string::npos) << message;
 
-    // 幅と等しい pitch は連続配置であり有効。
+    // A pitch equal to the width means a contiguous layout, which is valid.
     view.pitch_bytes_ = static_cast<std::size_t>(view.width_px_);
     EXPECT_EQ(aruco3cuda::validate_image_view(view, &message), aruco3cuda::Status::kOk);
 
-    // 幅より大きい pitch は ROI や padding であり有効。
+    // A pitch larger than the width means an ROI or padding, which is valid.
     view.pitch_bytes_ = static_cast<std::size_t>(view.width_px_) + 128U;
     EXPECT_EQ(aruco3cuda::validate_image_view(view, &message), aruco3cuda::Status::kOk);
 
-    // pitch が 0 は 1 行分を満たさない。
+    // A pitch of 0 does not cover a single row.
     view.pitch_bytes_ = 0U;
     EXPECT_EQ(aruco3cuda::validate_image_view(view, &message), aruco3cuda::Status::kInvalidImage);
 }
 
-// 異常系: pitch と高さの積が size_t を超える view を拒否する。
-// 通り抜けると範囲計算が wrap し、検証を通過したまま範囲外 access になる。
+// Error case: a view whose pitch times height exceeds size_t is rejected.
+// If it slipped through, the range computation would wrap and the view would pass
+// validation while still producing out-of-bounds accesses.
 TEST(ImageViewTest, rejects_pitch_height_overflow) {
     aruco3cuda::ImageViewU8 view = valid_view();
     view.width_px_ = 1;
@@ -121,7 +124,7 @@ TEST(ImageViewTest, rejects_pitch_height_overflow) {
     EXPECT_NE(message.find("size_t"), std::string::npos) << message;
 }
 
-// 異常系: 列挙に無い memory 空間を拒否する。
+// Error case: a memory space outside the enumeration is rejected.
 TEST(ImageViewTest, rejects_unknown_memory_space) {
     aruco3cuda::ImageViewU8 view = valid_view();
     view.space_ = static_cast<aruco3cuda::MemorySpace>(999);
@@ -130,7 +133,7 @@ TEST(ImageViewTest, rejects_unknown_memory_space) {
     EXPECT_NE(message.find("space"), std::string::npos) << message;
 }
 
-// 正常系: 全ての memory 空間を受理する。
+// Nominal: every defined memory space is accepted.
 TEST(ImageViewTest, accepts_all_memory_spaces) {
     const aruco3cuda::MemorySpace spaces[] = {
             aruco3cuda::MemorySpace::kHostPageable, aruco3cuda::MemorySpace::kHostPinned,
@@ -143,7 +146,7 @@ TEST(ImageViewTest, accepts_all_memory_spaces) {
     }
 }
 
-// 正常系: memory 空間の識別子が評価計画の表記と一致する。
+// Nominal: the memory space identifiers match the notation used in the evaluation plan.
 TEST(MemorySpaceTest, identifiers_match_evaluation_plan) {
     EXPECT_STREQ(aruco3cuda::to_string(aruco3cuda::MemorySpace::kHostPageable), "M-Pageable");
     EXPECT_STREQ(aruco3cuda::to_string(aruco3cuda::MemorySpace::kHostPinned), "M-Pinned");

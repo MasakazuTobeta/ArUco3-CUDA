@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   project 全体の option、言語標準、警告設定を 1 箇所へ集約する。
-#   しきい値や対象 architecture を source の固定値にせず、設定から上書きできるようにする。
+# Purpose:
+#   Collect the project-wide options, language standards, and warning settings in
+#   one place. Thresholds and target architectures stay out of the source as hard
+#   coded values so that they can be overridden from the configuration.
 include_guard(GLOBAL)
 
-option(ARUCO3CUDA_BUILD_TESTS "自動テストを build する" ON)
-option(ARUCO3CUDA_BUILD_REFERENCE "OpenCV を用いた CPU 基準 runner を build する" ON)
-option(ARUCO3CUDA_WARNINGS_AS_ERRORS "警告を error として扱う" ON)
-option(ARUCO3CUDA_ENABLE_CLANG_TIDY "C++ source へ clang-tidy を適用する" OFF)
-option(ARUCO3CUDA_ENABLE_COVERAGE "C++ code の C0 / C1 カバレッジを測定する" OFF)
+option(ARUCO3CUDA_BUILD_TESTS "Build the automated tests" ON)
+option(ARUCO3CUDA_BUILD_REFERENCE "Build the OpenCV based CPU baseline runner" ON)
+option(ARUCO3CUDA_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
+option(ARUCO3CUDA_ENABLE_CLANG_TIDY "Apply clang-tidy to the C++ sources" OFF)
+option(ARUCO3CUDA_ENABLE_COVERAGE "Measure C0 / C1 coverage of the C++ code" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,8 +26,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "build type" FORCE)
 endif()
 
-# 警告設定。CUDA には host compiler へ転送する形で適用し、
-# nvcc が生成する code に起因する警告を避けるため C++ より範囲を狭める。
+# Warning settings. For CUDA they are applied by forwarding them to the host
+# compiler, and the set is narrower than for C++ so that warnings caused by the
+# code nvcc generates are avoided.
 add_library(aruco3cuda_warnings INTERFACE)
 add_library(aruco3cuda::warnings ALIAS aruco3cuda_warnings)
 
@@ -48,44 +50,48 @@ target_compile_options(aruco3cuda_warnings INTERFACE
   "$<$<COMPILE_LANGUAGE:CXX>:${kCxxWarnings}>"
   "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${kCudaHostWarningsJoined}>")
 
-# カバレッジ計測。CONTRIBUTING.md は C0 と C1 の 100% を目標と定める。
+# Coverage measurement. CONTRIBUTING.md sets 100% C0 and C1 as the goal.
 #
-# 計測対象は host compiler が compile する C++ に限る。gcov は CUDA device code の
-# 実行経路を計測できないため、device code は規約の定めどおり入力分割と境界値の
-# test で経路を確認する。
+# Measurement is limited to the C++ compiled by the host compiler. gcov cannot
+# measure the execution paths of CUDA device code, so for device code the paths
+# are confirmed, as the conventions require, by tests over input partitions and
+# boundary values.
 if(ARUCO3CUDA_ENABLE_COVERAGE)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    message(FATAL_ERROR "カバレッジ計測は GCC または Clang でのみ対応する")
+    message(FATAL_ERROR "Coverage measurement is supported only with GCC or Clang")
   endif()
   add_library(aruco3cuda_coverage INTERFACE)
   add_library(aruco3cuda::coverage ALIAS aruco3cuda_coverage)
-  # 最適化を無効にしないと分岐が消え、C1 が実態と合わなくなる。
+  # Without disabling optimization, branches disappear and C1 no longer matches
+  # reality.
   target_compile_options(aruco3cuda_coverage INTERFACE
     "$<$<COMPILE_LANGUAGE:CXX>:--coverage;-O0;-g;-fno-inline>")
   target_link_options(aruco3cuda_coverage INTERFACE --coverage)
 else()
-  # option が無効でも target 名を解決できるようにし、各 target の記述を分岐させない。
+  # Keep the target name resolvable even when the option is off, so that the
+  # description of each target does not need a conditional branch.
   add_library(aruco3cuda_coverage INTERFACE)
   add_library(aruco3cuda::coverage ALIAS aruco3cuda_coverage)
 endif()
 
 if(ARUCO3CUDA_ENABLE_CLANG_TIDY)
   find_program(kClangTidy NAMES clang-tidy REQUIRED)
-  # clang-tidy は .cu を解釈できないため C++ にのみ適用する。
+  # clang-tidy cannot parse .cu files, so apply it to C++ only.
   set(CMAKE_CXX_CLANG_TIDY "${kClangTidy}")
 endif()
 
-# カバレッジ報告の target。計測が無効な場合は作らない。
+# Target for the coverage report. It is not created when measurement is off.
 function(aruco3cuda_add_coverage_target)
   if(NOT ARUCO3CUDA_ENABLE_COVERAGE)
     return()
   endif()
   find_program(kGcovr NAMES gcovr)
   if(NOT kGcovr)
-    message(WARNING "gcovr が見つからないため coverage-report target を作らない")
+    message(WARNING "gcovr was not found, so the coverage-report target is not created")
     return()
   endif()
-  # 生成物と test 自身は計測対象から外す。test の網羅率は指標にならない。
+  # Exclude generated files and the tests themselves from measurement. The
+  # coverage of the tests is not a meaningful metric.
   add_custom_target(coverage-report
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/coverage"
     COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
@@ -103,23 +109,24 @@ function(aruco3cuda_add_coverage_target)
             --html-details "${CMAKE_BINARY_DIR}/coverage/index.html"
             --json-summary "${CMAKE_BINARY_DIR}/coverage/summary.json"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-    COMMENT "ctest 実行後に C0 / C1 カバレッジを集計する")
+    COMMENT "Aggregate C0 / C1 coverage after running ctest")
 endfunction()
 
-# format 用の target。判定は tools/check-format.sh へ集約し、CI と手元で
-# 同じ file 一覧・同じ引数を使う。ここで glob を二重に持つと必ず drift する。
+# Targets for formatting. The decision is concentrated in tools/check-format.sh
+# so that CI and local runs use the same file list and the same arguments.
+# Duplicating the glob here would inevitably drift.
 function(aruco3cuda_add_format_targets)
   find_program(kClangFormat NAMES clang-format)
   if(NOT kClangFormat)
-    message(STATUS "  clang-format       : 見つからないため format target を作らない")
+    message(STATUS "  clang-format       : not found, format targets are not created")
     return()
   endif()
   add_custom_target(format-check
     COMMAND "${CMAKE_COMMAND}" -E env "CLANG_FORMAT=${kClangFormat}"
             "${PROJECT_SOURCE_DIR}/tools/check-format.sh"
-    COMMENT "clang-format による整形差分の確認")
+    COMMENT "Check formatting differences with clang-format")
   add_custom_target(format-fix
     COMMAND "${CMAKE_COMMAND}" -E env "CLANG_FORMAT=${kClangFormat}"
             "${PROJECT_SOURCE_DIR}/tools/check-format.sh" --fix
-    COMMENT "clang-format による整形の適用")
+    COMMENT "Apply formatting with clang-format")
 endfunction()

@@ -15,22 +15,23 @@
 namespace aruco3cuda::report {
 namespace {
 
-/// 四隅の重心。
+/// Centroid of the four corners.
 std::pair<double, double> centroid(const Detection& detection) {
     return quad_centroid(detection.corners_);
 }
 
-/// 四隅を結んだ四角形の平均辺長。対応付けの半径を決めるために使う。
+/// Mean side length of the quadrilateral formed by the four corners. Used to
+/// derive the matching radius.
 double average_side(const Detection& detection) {
     return quad_average_side(detection.corners_);
 }
 
-/// 対象の四隅を steps 段巡回させたときの、四隅の最大距離。
+/// Largest corner-to-corner distance after rotating the target corners by steps positions.
 double corner_error(const Detection& baseline, const Detection& target, int steps) {
     return quad_corner_error(baseline.corners_, target.corners_, steps);
 }
 
-/// 対応付けの候補 1 件。
+/// One candidate pairing.
 struct Pair {
     std::size_t baseline_index_ = 0;
     std::size_t target_index_ = 0;
@@ -42,18 +43,18 @@ struct Pair {
 const char* diff_kind_name(DiffKind kind) {
     switch (kind) {
         case DiffKind::kMissed:
-            return "未検出";
+            return "missed";
         case DiffKind::kExtra:
-            return "過検出";
+            return "extra";
         case DiffKind::kIdMismatch:
-            return "ID 不一致";
+            return "id mismatch";
         case DiffKind::kRotationMismatch:
-            return "rotation 不一致";
+            return "rotation mismatch";
         case DiffKind::kCornerShift:
-            return "四隅ずれ";
+            return "corner shift";
     }
-    // 列挙に無い値。将来 kind を増やしたときに気付けるようにする。
-    return "不明";
+    // A value outside the enumeration. Keeps a future added kind visible instead of silent.
+    return "unknown";
 }
 
 ImageComparison compare_detections(const std::string& image_path,
@@ -65,8 +66,9 @@ ImageComparison compare_detections(const std::string& image_path,
     comparison.baseline_count_ = baseline.size();
     comparison.target_count_ = target.size();
 
-    // 重心が近い組を距離の小さい順に確定させる。ID ではなく位置で対応を
-    // 取るため、ID を読み違えた場合も 1 件の差異として扱える。
+    // Commit the pairs with nearby centroids in order of increasing distance. Because
+    // the pairing is by position rather than by ID, a misread ID still counts as a
+    // single difference.
     std::vector<Pair> pairs;
     for (std::size_t i = 0; i < baseline.size(); ++i) {
         const auto base_center = centroid(baseline[i]);
@@ -81,7 +83,7 @@ ImageComparison compare_detections(const std::string& image_path,
             }
         }
     }
-    // 距離が同じ組の順序を入力順で決める。結果を実行ごとに変えないため。
+    // Break ties on distance by input order, so the result does not change from run to run.
     std::sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) {
         if (a.distance_ != b.distance_) {
             return a.distance_ < b.distance_;
@@ -126,7 +128,8 @@ ImageComparison compare_detections(const std::string& image_path,
             continue;
         }
 
-        // 巡回してから一致するなら、位置ではなく四隅の並びの問題である。
+        // If the corners agree after rotating, the problem is the corner ordering rather
+        // than the position.
         int best_steps = 0;
         double best_error = aligned_error;
         for (int steps = 1; steps < 4; ++steps) {
@@ -195,54 +198,55 @@ Summary summarize(const std::vector<ImageComparison>& comparisons) {
 
 void write_text_report(std::ostream& out, const std::vector<ImageComparison>& comparisons,
                        const Summary& summary) {
-    out << "=== 差分レポート ===\n";
-    out << "画像 " << summary.image_count_ << " 枚 (一致 " << summary.agreed_image_count_
-        << " 枚)\n";
-    out << "検出 基準 " << summary.baseline_detection_count_ << " 件 / 対象 "
-        << summary.target_detection_count_ << " 件 / 一致 " << summary.agreed_detection_count_
-        << " 件\n";
-    out << "四隅の最大差 " << summary.worst_corner_error_px_ << " px\n";
-    out << "\n種類ごとの件数\n";
+    out << "=== Difference report ===\n";
+    out << "images " << summary.image_count_ << " (agreeing " << summary.agreed_image_count_
+        << ")\n";
+    out << "detections baseline " << summary.baseline_detection_count_ << " / target "
+        << summary.target_detection_count_ << " / agreed " << summary.agreed_detection_count_
+        << "\n";
+    out << "worst corner difference " << summary.worst_corner_error_px_ << " px\n";
+    out << "\nCounts by kind\n";
     const DiffKind kinds[] = {DiffKind::kMissed, DiffKind::kExtra, DiffKind::kIdMismatch,
                               DiffKind::kRotationMismatch, DiffKind::kCornerShift};
     for (const DiffKind kind : kinds) {
         out << "  " << diff_kind_name(kind) << " "
-            << summary.kind_counts_[static_cast<std::size_t>(kind)] << " 件\n";
+            << summary.kind_counts_[static_cast<std::size_t>(kind)] << "\n";
     }
 
-    // 差異のある画像を全て挙げる。件数の少ない結果だけを示すと、
-    // 全体の傾向を読み違える。
+    // List every image that has a difference. Showing only the results with few
+    // differences would misrepresent the overall trend.
     bool any = false;
     for (const ImageComparison& comparison : comparisons) {
         if (comparison.agrees()) {
             continue;
         }
         if (!any) {
-            out << "\n差異のある画像\n";
+            out << "\nImages with differences\n";
             any = true;
         }
-        out << "  " << comparison.image_path_ << " (基準 " << comparison.baseline_count_ << " 対象 "
-            << comparison.target_count_ << ")\n";
+        out << "  " << comparison.image_path_ << " (baseline " << comparison.baseline_count_
+            << " target " << comparison.target_count_ << ")\n";
         for (const Diff& diff : comparison.diffs_) {
-            out << "    " << diff_kind_name(diff.kind_) << " 位置 (" << diff.center_x_px_ << ", "
+            out << "    " << diff_kind_name(diff.kind_) << " at (" << diff.center_x_px_ << ", "
                 << diff.center_y_px_ << ")";
             if (diff.kind_ == DiffKind::kIdMismatch) {
-                out << " 基準 id=" << diff.baseline_id_ << " 対象 id=" << diff.target_id_;
+                out << " baseline id=" << diff.baseline_id_ << " target id=" << diff.target_id_;
             } else if (diff.kind_ == DiffKind::kMissed) {
                 out << " id=" << diff.baseline_id_;
             } else if (diff.kind_ == DiffKind::kExtra) {
                 out << " id=" << diff.target_id_;
             } else {
-                out << " id=" << diff.baseline_id_ << " 差 " << diff.corner_error_px_ << " px";
+                out << " id=" << diff.baseline_id_ << " difference " << diff.corner_error_px_
+                    << " px";
                 if (diff.kind_ == DiffKind::kRotationMismatch) {
-                    out << " (" << diff.rotation_steps_ << " 段巡回)";
+                    out << " (rotated " << diff.rotation_steps_ << " steps)";
                 }
             }
             out << '\n';
         }
     }
     if (!any) {
-        out << "\n差異は無い。\n";
+        out << "\nNo differences.\n";
     }
 }
 

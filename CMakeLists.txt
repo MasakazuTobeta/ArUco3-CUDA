@@ -1,28 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   ArUco3-CUDA の build 基盤。対象 architecture、言語標準、警告、テストを定義する。
+# Purpose:
+#   Build foundation for ArUco3-CUDA. Defines the target architectures, language
+#   standards, warnings, and tests.
 #
-# 対象環境:
-#   ADR-0002 に従い、Jetson Orin (sm_87) と DGX Spark GB10 (sm_121) を対象とする。
-#   CUDA Toolkit は開発 container へ host から mount される。
+# Target environment:
+#   Following ADR-0002, the targets are Jetson Orin (sm_87) and DGX Spark GB10
+#   (sm_121). The CUDA Toolkit is mounted into the development container from the
+#   host.
 cmake_minimum_required(VERSION 3.24)
 
-# ADR-0002 の決定に従う既定値。project() より前に設定する必要がある。
-# 単一機で開発する場合は CMakePresets.json の preset で絞り込む。
+# Default that follows the ADR-0002 decision. It must be set before project().
+# When developing on a single machine, narrow it down with a preset in
+# CMakePresets.json.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES "87;121" CACHE STRING "対象 CUDA architecture")
+  set(CMAKE_CUDA_ARCHITECTURES "87;121" CACHE STRING "Target CUDA architectures")
 endif()
 
 project(aruco3cuda
   VERSION 0.1.0
-  DESCRIPTION "ArUco3 検出戦略の CUDA 実装"
+  DESCRIPTION "CUDA implementation of the ArUco3 detection strategy"
   LANGUAGES CXX CUDA)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
-# host compiler で compile する翻訳単位からも CUDA runtime を参照するため、
-# include path と library を CUDA::cudart 経由で取得する。
+# Translation units compiled by the host compiler also reference the CUDA
+# runtime, so obtain the include path and libraries through CUDA::cudart.
 find_package(CUDAToolkit REQUIRED)
 
 include(Aruco3CudaOptions)
@@ -32,7 +35,8 @@ include(Aruco3CudaInstall)
 add_subdirectory(src)
 
 if(ARUCO3CUDA_BUILD_REFERENCE)
-  # CPU 基準実装の OpenCV。test 側からも同じ設定を参照するため top level で解決する。
+  # OpenCV for the CPU baseline implementation. Resolve it at the top level so
+  # the tests refer to the same configuration.
   find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs objdetect)
   message(STATUS "  OpenCV             : ${OpenCV_VERSION} (${OpenCV_DIR})")
   add_subdirectory(reference)

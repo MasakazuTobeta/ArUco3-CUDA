@@ -11,18 +11,18 @@
 namespace aruco3cuda {
 namespace {
 
-// block size の倍数にしない。倍数にすると kernel の範囲外判定
-// `index < count` が常に真になり、境界条件の分岐が一度も実行されない。
+// Deliberately not a multiple of the block size. With a multiple, the kernel's bounds check
+// `index < count` would always be true and the boundary branch would never be exercised.
 constexpr int kSelfTestElementCount = 250;
 constexpr int kSelfTestBlockSize = 128;
 
-/// 自己診断用の最小 kernel。
+/// Minimal kernel used for the self test.
 ///
-/// thread とデータの対応:
-///   thread i が out[i] を 1 要素だけ書き込む。thread 間で書き込み先が
-///   重複しないため競合は発生しない。
-/// 境界条件:
-///   count が block size の倍数でない場合に備え、範囲外を書き込まない。
+/// Thread-to-data mapping:
+///   Thread i writes exactly one element, out[i]. No two threads write the same location, so
+///   there is no race.
+/// Boundary condition:
+///   count may not be a multiple of the block size, so nothing outside the range is written.
 __global__ void fill_squares_kernel(std::int32_t* out, int count) {
     const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (index < count) {
@@ -67,7 +67,7 @@ Status probe_device(int device_index, DeviceProbeResult* out) {
         return prop_status;
     }
 
-    // 失敗時に out を変更しないため、全て取得できてから書き込む。
+    // Write to out only once everything has been read, so a failure leaves out untouched.
     out->device_index_ = device_index;
     out->name_ = prop.name;
     out->compute_capability_major_ = prop.major;
@@ -92,8 +92,9 @@ Status run_device_self_test(int device_index) {
         return Status::kInvalidArgument;
     }
 
-    // 呼出 thread の current device を変更するため、終了時に元へ戻す。
-    // 戻さないと、この関数を呼んだだけで以降の CUDA 呼び出しの対象 device が変わる。
+    // This changes the calling thread's current device, so restore it on the way out. Without
+    // the restore, merely calling this function would redirect every later CUDA call to another
+    // device.
     int previous_device = 0;
     const Status get_status = detail::check_cuda(cudaGetDevice(&previous_device), "cudaGetDevice",
                                                  "run_device_self_test", device_index);
@@ -126,7 +127,8 @@ Status run_device_self_test(int device_index) {
                 cudaMemcpy(host_buffer, device_buffer, kBytes, cudaMemcpyDeviceToHost),
                 "cudaMemcpy", "run_device_self_test", device_index);
         if (result == Status::kOk) {
-            // 計算結果が期待どおりかを確認する。転送だけが成功しても意味がない。
+            // Check that the computed values are as expected. A successful transfer alone
+            // proves nothing.
             for (int i = 0; i < kSelfTestElementCount; ++i) {
                 if (host_buffer[i] != static_cast<std::int32_t>(i) * static_cast<std::int32_t>(i)) {
                     result = Status::kCudaError;
@@ -136,14 +138,16 @@ Status run_device_self_test(int device_index) {
         }
     }
 
-    // 失敗経路でも必ず解放する。free の失敗は元のエラーを上書きしない。
+    // Always release, including on the failure path. A failing free does not overwrite the
+    // original error.
     const Status free_status = detail::check_cuda(cudaFree(device_buffer), "cudaFree",
                                                   "run_device_self_test", device_index);
     if (result == Status::kOk) {
         result = free_status;
     }
 
-    // current device を呼出前の値へ戻す。復元の失敗も元のエラーを上書きしない。
+    // Restore the current device to what it was before the call. A failing restore does not
+    // overwrite the original error either.
     const Status restore_status =
             detail::check_cuda(cudaSetDevice(previous_device), "cudaSetDevice",
                                "run_device_self_test.restore", previous_device);

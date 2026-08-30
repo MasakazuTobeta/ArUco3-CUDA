@@ -2,98 +2,98 @@
 
 [![CI](https://github.com/MasakazuTobeta/ArUco3-CUDA/actions/workflows/ci.yml/badge.svg)](https://github.com/MasakazuTobeta/ArUco3-CUDA/actions/workflows/ci.yml)
 
-ArUco3-CUDA は、OpenCV の `cv::aruco::ArucoDetector` が持つ ArUco3 検出戦略を CUDA で独立に実装した library です。入力画像から marker の ID と四隅までを GPU 上で処理し、結果を device に置いたまま返します。公式 ArUco の GPLv3 code は複製も翻案もしていません ([知的財産・ライセンス方針](docs/ip-and-licensing.md))。
+ArUco3-CUDA is a library that independently implements, in CUDA, the ArUco3 detection strategy found in OpenCV's `cv::aruco::ArucoDetector`. It processes an input image on the GPU all the way to marker IDs and corners, and returns the results while they remain on the device. No GPLv3 code from the official ArUco is copied or adapted ([Intellectual property and licensing policy](docs/ip-and-licensing.md)).
 
 > [!IMPORTANT]
-> 評価は合成 corpus のみで行っています。実画像 corpus での正確性と速度は測っていません。以下の数値はすべて合成 corpus に対するものです。
+> Evaluation was performed on a synthetic corpus only. Accuracy and speed on a real-image corpus have not been measured. All the numbers below are for the synthetic corpus.
 
-## できること
+## What it does
 
-- 検出は前処理から四隅の subpixel 補正まで GPU 常駐で完結します。`Detector` は host 同期なしに device 上の結果を返し、host へ取り出す `download()` だけが同期します。
-- 1 frame 分の kernel 発行列を CUDA Graph へ畳みます。明示的な stream を渡すと、2 回目以降の検出が 1 回の起動で済みます。
-- workspace は `initialize()` で最悪値を確保し、frame ごとに確保し直しません。最大使用量は ArUco3 有効で 17.51 MB、無効で 414.51 MB です。検出を 91 回繰り返しても確保回数は増えません。
-- 検出結果は OpenCV CPU 実装と突き合わせています。同じ corpus で precision は 100%、四隅は Hybrid 経路で 91 枚中 91 枚が CPU 基準と一致します ([正確性評価の結果](docs/accuracy-report.md))。
-- DGX Spark GB10、Jetson AGX Orin、GeForce RTX 5070 Ti の 3 機で、自動 test と Compute Sanitizer の 4 tool (memcheck、racecheck、initcheck、synccheck) が通ります。
+- Detection runs entirely on the GPU, from preprocessing through subpixel corner refinement. `Detector` returns results on the device without host synchronization; only `download()`, which retrieves them to the host, synchronizes.
+- The kernel launch sequence for one frame is folded into a CUDA Graph. If you pass an explicit stream, every detection after the first takes a single launch.
+- The workspace is allocated at its worst-case size in `initialize()` and is not reallocated per frame. Peak usage is 17.51 MB with ArUco3 enabled and 414.51 MB with it disabled. Repeating detection 91 times does not increase the allocation count.
+- Detection results are cross-checked against the OpenCV CPU implementation. On the same corpus, precision is 100%, and on the Hybrid route the corners match the CPU baseline on 91 of 91 images ([Accuracy evaluation results](docs/accuracy-report.md)).
+- On three machines — DGX Spark GB10, Jetson AGX Orin, and GeForce RTX 5070 Ti — the automated tests and all four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass.
 
-## 検出の流れ
+## Detection flow
 
-入力画像から ID・四隅までを GPU 上で処理します。各段の設計は [検出パイプライン設計](docs/design/detector-pipeline.md) にあります。
+The input image is processed on the GPU through to IDs and corners. The design of each stage is in [Detection pipeline design](docs/design/detector-pipeline.md).
 
 ```mermaid
 flowchart TD
-    A["入力画像 (device 上の 8-bit grayscale)"] --> B["縮小と適応的二値化"]
-    B --> C["連結成分と四角形候補の抽出"]
-    C --> D["近接候補の grouping と包含木"]
-    D --> E["射影変換とセルの bit 読取り"]
-    E --> F["Dictionary 照合と回転の打ち消し"]
-    F --> G["四隅の subpixel 補正と原寸への復元"]
-    G --> H["ID・四隅・回転 (device 常駐)"]
+    A["Input image (8-bit grayscale on the device)"] --> B["Downscaling and adaptive thresholding"]
+    B --> C["Connected components and quadrilateral candidate extraction"]
+    C --> D["Grouping of nearby candidates and containment tree"]
+    D --> E["Perspective transform and cell bit readout"]
+    E --> F["Dictionary matching and rotation cancellation"]
+    F --> G["Subpixel corner refinement and restoration to full scale"]
+    G --> H["IDs, corners, rotation (device-resident)"]
 ```
 
-姿勢推定は対象外です。出力の四隅は入力画像の原寸座標であり、OpenCV の `solvePnP` などへそのまま渡せます。
+Pose estimation is out of scope. The output corners are in the full-scale coordinates of the input image, so they can be passed directly to OpenCV's `solvePnP` and similar functions.
 
-## 速度
+## Speed
 
-検出のみを測った end-to-end 時間です。画像の読み込みと checksum は測定区間に含みません。28 場面 x 3 経路 x 3 機を、独立した 3 process の中央値で比較しています ([Benchmark 報告](docs/benchmark-report.md))。
+These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 3 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
 
-`CUDA-Resident` は device 常駐入力で全段を GPU で処理する経路で、これが本 library が提供する経路です。
+`CUDA-Resident` is the route that takes device-resident input and processes every stage on the GPU; this is the route the library provides.
 
-`Hybrid` は候補抽出まで GPU、以降を host で行う**比較用の経路**です。**公開 API には含まれません。** `hybrid/` にあり OpenCV を必要とします。GPU 実装の正しさを CPU 基準と突き合わせるために置いてあり、install もしません。表に載せているのは、GPU 化のどこが効いているかを示すためです。
+`Hybrid` is a **comparison route** that runs candidate extraction on the GPU and everything after it on the host. **It is not part of the public API.** It lives in `hybrid/` and requires OpenCV. It exists to cross-check the correctness of the GPU implementation against the CPU baseline, and it is not installed. It appears in the table to show where the move to the GPU pays off.
 
-| 機体 | CPU | Hybrid | CUDA-Resident | CUDA-Resident / CPU (1280x720、マーカー 4 枚) | 同 (3840x2160) |
+| Machine | CPU | Hybrid | CUDA-Resident | CUDA-Resident / CPU (1280x720, 4 markers) | Same (3840x2160) |
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | 0.699 ms | 0.301 ms | 0.696 ms | 0.98 | 0.45 |
 | Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.66 | 0.30 |
 | GeForce RTX 5070 Ti | 0.614 ms | 0.295 ms | 0.421 ms | 0.68 | 0.28 |
 
-左 3 列は 1280x720 にマーカー 4 枚を置いた場面の定常 p50 で、起動費用を測る 1 process 1 枚の測定 (200 反復) を独立した 3 process で行った中央値です。同じ場面を 28 場面 sweep で測ると多少違う値になります (例: DGX Spark の CUDA-Resident は 0.626 ms)。**GPU 経路は実行間のばらつきが大きく、この程度の差は測定間で生じます。** 詳細は [Benchmark 報告](docs/benchmark-report.md) にあります。比は 1 未満が GPU 有利を意味します。
+The left three columns are the steady-state p50 for a scene with 4 markers placed in a 1280x720 image, taken as the median over three independent processes of the one-process, one-image measurement (200 iterations) used to measure startup cost. Measuring the same scene in the 28-scene sweep gives somewhat different values (for example, CUDA-Resident on DGX Spark comes out at 0.626 ms). **The GPU routes have large run-to-run variance, and differences of this magnitude arise between measurements.** Details are in the [Benchmark report](docs/benchmark-report.md). A ratio below 1 means the GPU is faster.
 
-**CPU が勝つ条件があります。** **CPU が CUDA-Resident を上回るのは、輪郭点数が少ない小さな場面です。** 28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。**解像度だけでは決まりません。** 同じ 640x480 でも `noise_640x480` は輪郭点が多く、DGX Spark で CPU 1.406 ms に対し CUDA-Resident 0.612 ms と GPU が 2.3 倍速くなります。逆に DGX Spark の 5 場面には 1280x720 の場面が 1 つ含まれます。
+**There are conditions under which the CPU wins.** **The CPU beats CUDA-Resident on small scenes with a low contour point count.** That is 5 of the 28 scenes on DGX Spark, 4 on GeForce RTX 5070 Ti, and 1 on Jetson AGX Orin. **Resolution alone does not decide it.** At the same 640x480, `noise_640x480` has many contour points, and on DGX Spark the GPU is 2.3x faster — 0.612 ms for CUDA-Resident against 1.406 ms for the CPU. Conversely, the 5 scenes on DGX Spark include one 1280x720 scene.
 
-ただしこれは経路を `CUDA-Resident` に固定した場合です。**DGX Spark と GeForce RTX 5070 Ti では、CPU が `Hybrid` を上回る場面は 28 場面中 1 つもありません。** 場面ごとに速い方を選べるなら、この 2 機で CPU が勝つ場面は無くなります。Jetson AGX Orin だけは CPU が両経路を同時に上回る場面が 1 つあります。実画像では輪郭点が合成 corpus より多くなる可能性があり、この境界は動きます。まだ確かめていません。
+That said, this applies when the route is fixed to `CUDA-Resident`. **On DGX Spark and GeForce RTX 5070 Ti, there is not a single scene out of 28 where the CPU beats `Hybrid`.** If the faster of the two can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on Jetson AGX Orin is there one scene where the CPU beats both routes at once. On real images the contour point count may be higher than in the synthetic corpus, which would move this boundary. This has not been confirmed yet.
 
-境界を決めるのは解像度でも候補数でもなく、二値化後の輪郭点数です。輪郭点 1e5 あたりの係数は CPU 2.48-5.35 ms、Hybrid 2.54-5.48 ms、CUDA-Resident 0.041-0.278 ms で、**Hybrid は CPU とほぼ同じです**。輪郭抽出から先を host で行うためです。Hybrid と CUDA-Resident の切替点は輪郭点 約 20,000 点 (DGX Spark と GeForce RTX 5070 Ti) で、Jetson AGX Orin では全 28 場面で CUDA-Resident が勝ちます。
+What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. The coefficient per 1e5 contour points is 2.48-5.35 ms for CPU, 2.54-5.48 ms for Hybrid, and 0.041-0.278 ms for CUDA-Resident — **Hybrid is nearly the same as CPU**, because everything from contour extraction onward runs on the host. The crossover between Hybrid and CUDA-Resident is at about 20,000 contour points (DGX Spark and GeForce RTX 5070 Ti); on Jetson AGX Orin, CUDA-Resident wins on all 28 scenes.
 
-短い動画や 1 枚だけの処理では起動費用が支配します。1 process で 1 枚 (1280x720、マーカー 4 枚) だけ処理した場合、1 枚目の結果が出るまでに DGX Spark で CPU 3.3 ms に対し Hybrid 171.0 ms、CUDA-Resident 174.0 ms を要します。Jetson AGX Orin は 6.1 / 57.6 / 69.8 ms、GeForce RTX 5070 Ti は 2.2 / 66.1 / 70.0 ms です。また GPU 経路は実行間のばらつきが CPU 経路より 1 桁大きくなります (DGX Spark で CPU 0.6% に対し Hybrid 17.7%、CUDA-Resident 14.1%)。
+For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, and GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms. The GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (on DGX Spark, 0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident).
 
-## 正確性
+## Accuracy
 
-合成 corpus 91 場面、真値 480 個、3 経路 x 3 機の 18 組合せで測りました ([正確性評価の結果](docs/accuracy-report.md))。
+Measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 18 combinations of 3 routes x 3 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
 
-| 指標 | 結果 |
+| Metric | Result |
 | --- | --- |
-| precision | 全 18 組合せで 100%。false positive 0 件、ID 誤り 0 件 |
-| recall (corpus 全体) | 18.33% (真値 480 個中 88 個) |
-| recall (検出下限以上) | 94.44% (真値 90 個中 85 個) |
-| 回転 | 検出した 85 件すべてで真値と一致 |
-| 四隅 RMSE | CPU 0.5184 px (aarch64) / 0.5042 px (x86_64)、CUDA 0.4806 px / 0.4653 px |
+| precision | 100% across all 18 combinations. 0 false positives, 0 ID errors |
+| recall (whole corpus) | 18.33% (88 of 480 ground truth items) |
+| recall (at or above the detection lower bound) | 94.44% (85 of 90 ground truth items) |
+| rotation | Matches ground truth for all 85 detections |
+| corner RMSE | CPU 0.5184 px (aarch64) / 0.5042 px (x86_64), CUDA 0.4806 px / 0.4653 px |
 
-ArUco3 は縮小後の 1 辺が下限を下回るマーカーを原理上検出しません。corpus はこの下限を下回る大きさを意図的に含むため、全体の recall 18.33% は戦略上の下限に支配された値です。解像度ごとの下限は [正確性評価の結果](docs/accuracy-report.md) にあります。取りこぼした 5 件の内訳は複合劣化 3、遮蔽 1、境界はみ出し 1 で、回転・射影・ぼけ・noise・照度差は単独では 0 件です。
+By design, ArUco3 does not detect markers whose side length after downscaling falls below a lower bound. The corpus deliberately includes sizes below this bound, so the overall recall of 18.33% is a figure dominated by that strategic lower bound. The lower bound for each resolution is in [Accuracy evaluation results](docs/accuracy-report.md). The 5 misses break down as 3 combined degradation, 1 occlusion, and 1 border clipping; rotation, projection, blur, noise, and illumination differences each account for 0 on their own.
 
-OpenCV CPU 実装との差は次のとおりです。Hybrid 経路は 91 枚中 91 枚が一致します (最大差 0.000 px)。CUDA 経路は 91 枚中 90 枚が一致し、唯一の差異は遮蔽ありの 640x480 で 3.804 px です。この 1 枚については、真値に対しては CUDA の方が近くなります (CPU 3.6351 px、CUDA 1.0936 px)。差の由来は四隅の推定方法で、CUDA は極点探索、OpenCV は輪郭の多角形近似を使います。
+The differences from the OpenCV CPU implementation are as follows. The Hybrid route matches on 91 of 91 images (maximum difference 0.000 px). The CUDA route matches on 90 of 91 images; the single difference is 3.804 px on a 640x480 image with occlusion. For that one image, CUDA is in fact closer to the ground truth (CPU 3.6351 px, CUDA 1.0936 px). The difference originates in how the corners are estimated: CUDA uses extreme point search, while OpenCV uses polygonal approximation of the contour.
 
-## 対象環境
+## Target environments
 
-| 機体 | host architecture | GPU の種別 | Compute Capability | CUDA |
+| Machine | Host architecture | GPU type | Compute Capability | CUDA |
 | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | aarch64 | 統合 | 12.1 | 13.0 |
-| Jetson AGX Orin | aarch64 | 統合 | 8.7 | 11.4 |
-| GeForce RTX 5070 Ti | x86_64 | 単体 | 12.0 | 13.0 |
+| DGX Spark GB10 | aarch64 | Integrated | 12.1 | 13.0 |
+| Jetson AGX Orin | aarch64 | Integrated | 8.7 | 11.4 |
+| GeForce RTX 5070 Ti | x86_64 | Discrete | 12.0 | 13.0 |
 
-統合 GPU の 2 機は host と device が同一物理 memory を共有するため、転送費用が単体 GPU と異なります。単体 GPU を 1 機加えることで、統合 GPU 固有の結果と一般に成り立つ結果を分けています。Jetson は Orin 系を対象とします。Nano、Xavier、Thor の対応は未確定です。
+On the two machines with integrated GPUs, the host and device share the same physical memory, so transfer costs differ from those of a discrete GPU. Adding one machine with a discrete GPU separates results specific to integrated GPUs from results that hold generally. Jetson support targets the Orin family. Support for Nano, Xavier, and Thor is undetermined.
 
-## build と実行
+## Building and running
 
-3 機で同じ手順を使うため、build と測定は container 上で行います。profile 名は `dgx-spark`、`jetson-orin`、`rtx-blackwell` のいずれかを選びます。
+Because the same procedure is used on all three machines, builds and measurements are performed in a container. Choose one of the profile names `dgx-spark`, `jetson-orin`, or `rtx-blackwell`.
 
-| 機体 | docker profile | CMake preset | GPU architecture |
+| Machine | docker profile | CMake preset | GPU architecture |
 | --- | --- | --- | --- |
 | DGX Spark GB10 | `dgx-spark` | `dgx-spark` | `sm_121` |
 | Jetson AGX Orin | `jetson-orin` | `jetson-orin` | `sm_87` |
 | GeForce RTX 5070 Ti | `rtx-blackwell` | `rtx-blackwell` | `sm_120` |
 
 ```bash
-PROFILE=dgx-spark   # jetson-orin または rtx-blackwell
+PROFILE=dgx-spark   # or jetson-orin, rtx-blackwell
 cp docker/.env.example docker/.env
 docker compose -f docker/compose.yaml build "$PROFILE"
 docker compose -f docker/compose.yaml run --rm "$PROFILE" verify-environment.sh
@@ -101,11 +101,11 @@ docker compose -f docker/compose.yaml run --rm "$PROFILE" bash -c '
   cmake --preset native && cmake --build --preset native && ctest --preset native'
 ```
 
-`native` preset は実行機の architecture を自動判定します。3 機すべてを 1 つの binary で賄う場合は `portability` preset を使います。`sm_87`、`sm_120`、`sm_121` の 3 つを生成します。Compute Sanitizer は `sanitizer` preset を構成したうえで `ctest -L sanitizer` で走らせます。詳細は [Docker 環境設計](docs/design/docker-environment.md) を参照してください。
+The `native` preset detects the architecture of the machine it runs on automatically. To cover all three machines with a single binary, use the `portability` preset, which generates all three of `sm_87`, `sm_120`, and `sm_121`. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
 
-## 使い方
+## Usage
 
-### 導入
+### Installation
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
@@ -114,18 +114,18 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j && cmake --install build
 ```
 
-`ARUCO3CUDA_BUILD_REFERENCE=OFF` は OpenCV への依存を外します。library 本体は OpenCV を必要としません。
+`ARUCO3CUDA_BUILD_REFERENCE=OFF` removes the dependency on OpenCV. The library itself does not require OpenCV.
 
-利用側からは `find_package` で参照します。
+Consumers reference it via `find_package`.
 
 ```cmake
 find_package(aruco3cuda REQUIRED)
 target_link_libraries(your_target PRIVATE aruco3cuda::core aruco3cuda::dictionary)
 ```
 
-### 使用例
+### Example
 
-公開 API は `include/aruco3cuda/` にあります。入力は device または managed 空間の 8-bit grayscale で、所有権は呼出側に残ります。
+The public API is in `include/aruco3cuda/`. The input is 8-bit grayscale in device or managed space, and ownership stays with the caller.
 
 ```cpp
 #include <cuda_runtime_api.h>
@@ -138,70 +138,70 @@ using namespace aruco3cuda;
 
 const DictionaryTable* dictionary = find_builtin_dictionary("DICT_ARUCO_MIP_36h12");
 
-DetectorConfig config;         // 既定は ArUco3 有効、四隅の subpixel 補正あり
-config.max_width_px_ = 1280;   // workspace はこの上限から最悪値で確保する
+DetectorConfig config;         // defaults: ArUco3 enabled, subpixel corner refinement on
+config.max_width_px_ = 1280;   // the workspace is sized for the worst case from these limits
 config.max_height_px_ = 720;
 
 Detector detector;
 std::string message;
 if (detector.initialize(*dictionary, config, &message) != Status::kOk) {
-    // message に理由が入る
+    // message carries the reason
 }
 
 ImageViewU8 image;
-image.data_ = device_gray;     // cudaMalloc / cudaMallocPitch で確保した領域
+image.data_ = device_gray;     // memory obtained from cudaMalloc / cudaMallocPitch
 image.width_px_ = 1280;
 image.height_px_ = 720;
 image.pitch_bytes_ = pitch_bytes;
 image.space_ = MemorySpace::kDevice;
 
 cudaStream_t stream = nullptr;
-cudaStreamCreate(&stream);     // 明示的な stream を渡すと発行列を CUDA Graph へ畳む
+cudaStreamCreate(&stream);     // passing an explicit stream folds the launch sequence into a CUDA Graph
 
 detector.detect_async(image, stream, &message);
 
-// 後段が同じ device 上にあるなら、host へ戻さずに参照する。
+// If the next stage is on the same device, read the results without going back to the host.
 DeviceDetections on_device;
 detector.device_detections(&on_device);
 
-// host で受け取る。同期が起きるのはここだけである。
+// Receive on the host. This is the only point that synchronizes.
 HostDetections result;
 detector.download(&result, stream, &message);
-// result.ids_[i] と result.corners_[i * 8 .. i * 8 + 7] (x0, y0, ... x3, y3)
+// result.ids_[i] and result.corners_[i * 8 .. i * 8 + 7] (x0, y0, ... x3, y3)
 ```
 
-設定の組み合わせは 2 つだけを受け付けます。ArUco3 有効かつ四隅の subpixel 補正あり、または ArUco3 無効かつ補正なしです。他の 2 組は `initialize()` が拒否します。既定値の一覧と各項目の意味は `include/aruco3cuda/config.hpp` と [公開 API](docs/design/public-api.md) にあります。
+Only two configuration combinations are accepted: ArUco3 enabled with subpixel corner refinement, or ArUco3 disabled without refinement. `initialize()` rejects the other two. The list of defaults and the meaning of each field are in `include/aruco3cuda/config.hpp` and [Public API](docs/design/public-api.md).
 
-## 制約
+## Limitations
 
-- 評価は合成 corpus のみです。実画像 corpus は整備しておらず、実画像での正確性と crossover point は測っていません。
-- 対応 Dictionary は `DICT_ARUCO_MIP_36h12` です。他の Dictionary は同じ loader と lookup 形式で追加する方針です ([Dictionary 方針](docs/dictionaries.md))。
-- 姿勢推定は対象外です。
-- 段ごとの時間は host 同期を含む wall-clock です。CUDA event による段別計測は行っていません。
-- 1 つの `Detector` instance を複数の thread から同時に使えません。
-- 合成 corpus の画像は同じ seed でも aarch64 と x86_64 で 91 場面中 54 場面が一致しません (差は画素の 0.1% 未満、最大 4 階調)。architecture をまたぐ比較にのみ影響します。
+- Evaluation covers the synthetic corpus only. A real-image corpus has not been prepared, and accuracy and the crossover point on real images have not been measured.
+- The supported dictionary is `DICT_ARUCO_MIP_36h12`. The plan is to add other dictionaries using the same loader and lookup format ([Dictionary policy](docs/dictionaries.md)).
+- Pose estimation is out of scope.
+- Per-stage times are wall-clock and include host synchronization. Per-stage measurement using CUDA events has not been done.
+- A single `Detector` instance cannot be used from multiple threads at the same time.
+- Even with the same seed, images in the synthetic corpus differ between aarch64 and x86_64 on 54 of 91 scenes (the differences are under 0.1% of pixels, at most 4 gray levels). This affects only comparisons across architectures.
 
-## 文書
+## Documentation
 
-- [プロジェクト概要](docs/project-overview.md) / [アーキテクチャ](docs/architecture.md) / [ロードマップ](docs/roadmap.md)
-- [検出パイプライン設計](docs/design/detector-pipeline.md) / [公開 API](docs/design/public-api.md) / [host と device の間の memory 受け渡し](docs/design/memory-transfer.md) / [Docker 環境設計](docs/design/docker-environment.md)
-- [評価計画](docs/evaluation-plan.md) / [Benchmark 報告](docs/benchmark-report.md) / [正確性評価の結果](docs/accuracy-report.md)
-- [Dictionary 方針](docs/dictionaries.md) / [実装計画](docs/implementation-plan.md) / [日本語用語辞書](docs/terminology.md)
-- [ADR-0001: 独立リポジトリで先行実装する](docs/adr/0001-independent-implementation.md) / [ADR-0002: build 基盤と対象環境の baseline を固定する](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: 四角形候補抽出は案 A を主案とする](docs/adr/0003-candidate-extraction-approach.md)
-- [知的財産・ライセンス方針](docs/ip-and-licensing.md) / [Code Provenance 記録](docs/code-provenance.md) / [コントリビューション規約](CONTRIBUTING.md)
+- [Project overview](docs/project-overview.md) / [Architecture](docs/architecture.md) / [Roadmap](docs/roadmap.md)
+- [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
+- [Evaluation plan](docs/evaluation-plan.md) / [Benchmark report](docs/benchmark-report.md) / [Accuracy evaluation results](docs/accuracy-report.md)
+- [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Japanese terminology glossary](docs/terminology.md)
+- [ADR-0001: Implement first in an independent repository](docs/adr/0001-independent-implementation.md) / [ADR-0002: Fix the build infrastructure and target environment baseline](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: Adopt approach A as the primary plan for quadrilateral candidate extraction](docs/adr/0003-candidate-extraction-approach.md)
+- [Intellectual property and licensing policy](docs/ip-and-licensing.md) / [Code provenance record](docs/code-provenance.md) / [Contribution guidelines](CONTRIBUTING.md)
 
-有効性を確認できた場合は、OpenCV への提案を検討します (参照: OpenCV Issue #27118)。
+If the approach is confirmed to be effective, a proposal to OpenCV will be considered (see: OpenCV Issue #27118).
 
-## ライセンス
+## License
 
-本プロジェクトは [Apache License 2.0](LICENSE) で提供します。公式 ArUco の GPLv3 code はコピーまたは翻案しません。詳細は [知的財産・ライセンス方針](docs/ip-and-licensing.md) を参照してください。
+This project is provided under the [Apache License 2.0](LICENSE). No GPLv3 code from the official ArUco is copied or adapted. See [Intellectual property and licensing policy](docs/ip-and-licensing.md) for details.
 
-第三者の著作権表示は [NOTICE](NOTICE) にあります。OpenCV 4.x は file ごとに license header が違い、本 project が振る舞いを写した `imgproc` の file は 3 条項 BSD です。
+Third-party copyright notices are in [NOTICE](NOTICE). OpenCV 4.x has different license headers per file, and the `imgproc` files whose behavior this project mirrors are 3-clause BSD.
 
-実装根拠は ArUco3 論文と Apache-2.0 の OpenCV 4.x に限定します。定義済み Dictionary は GPLv3 の公式 ArUco 配布物から抽出せず、version と commit を固定した OpenCV 4.x のデータを正本として扱います。
+The implementation is based solely on the ArUco3 paper and Apache-2.0 OpenCV 4.x. The predefined dictionaries are not extracted from the GPLv3 official ArUco distribution; the authoritative source is OpenCV 4.x data at a pinned version and commit.
 
-## 商標について
+## Trademarks
 
-`ArUco` は Universidad de Córdoba の研究グループが発表した marker 方式の名称です。本プロジェクトは互換対象と技術方式を示す目的でのみこの名称を使用しており、**Universidad de Córdoba、公式 ArUco library、OpenCV のいずれとも提携しておらず、これらによる承認・推奨を受けていません。**
+`ArUco` is the name of a marker scheme published by a research group at the Universidad de Córdoba. This project uses the name solely to indicate the compatibility target and the technical scheme, and is **not affiliated with, endorsed by, or recommended by the Universidad de Córdoba, the official ArUco library, or OpenCV.**
 
-その他の商標は各権利者に帰属します。詳細は [知的財産・ライセンス方針](docs/ip-and-licensing.md) を参照してください。
+All other trademarks belong to their respective owners. See [Intellectual property and licensing policy](docs/ip-and-licensing.md) for details.

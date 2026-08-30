@@ -42,17 +42,18 @@ void set_message(std::string* out_message, const std::string& text) {
     }
 }
 
-/// 確保する segmentation の上限を求める。
+/// Computes the upper bound of the segmentation image that has to be allocated.
 ///
-/// 縮小率は fxfy = S / (S + max(W, H) * tau) であり、分母に長辺が入る。
-/// そのため上限の寸法で計算した segmentation は上界にならない。長辺が
-/// 短い入力ほど縮小が緩く、segmentation が大きくなるためである。
+/// The downscaling factor is fxfy = S / (S + max(W, H) * tau), so the longer side appears in the
+/// denominator. A segmentation computed from the maximum dimensions is therefore not an upper
+/// bound: the shorter the longer side of the input, the gentler the downscaling and the larger
+/// the segmentation image.
 ///
-/// 例: 上限 1000x4000 の設定で 1000x1000 を入れると、上限で計算した
-/// 138x552 より大きい 390x390 になる。
+/// Example: with a configuration capped at 1000x4000, an input of 1000x1000 yields 390x390, which
+/// is larger than the 138x552 computed from the caps.
 ///
-/// fxfy * W は W について単調増加であるため、正方形として計算した幅と
-/// 高さがそれぞれの上界になる。
+/// fxfy * W increases monotonically in W, so the width and height computed as if the input were
+/// square are each an upper bound.
 Status sizing_segmentation(const DetectorConfig& config, int* out_width, int* out_height) {
     detail::ScalePlan by_width;
     detail::ScalePlan by_height;
@@ -72,7 +73,7 @@ Status sizing_segmentation(const DetectorConfig& config, int* out_width, int* ou
 
 }  // namespace
 
-/// Detector の実体。
+/// The implementation behind Detector.
 class Detector::Impl {
 public:
     Impl() = default;
@@ -99,24 +100,26 @@ private:
     bool has_result_ = false;
     DetectorConfig config_;
     int marker_size_ = 0;
-    /// 補正で起こす block 数。device の SM 数から initialize 時に決める。
+    /// Number of blocks the refinement launches. Decided from the SM count of the device during
+    /// initialize.
     int refine_blocks_ = 0;
-    /// 捕らえた発行列。以降は 1 回の起動で済む。
+    /// The captured launch sequence. From then on a single launch is enough.
     ///
-    /// graph は kernel の引数を焼き込む。workspace の切り出しや設定が変わった
-    /// のに使い回すと、**静かに古い pointer と古い値で走る**。破棄の契機を
-    /// 取りこぼさないよう、捕らえたときの stream と配置を併せて持つ。
+    /// A graph bakes in the kernel arguments. Reusing one after the workspace layout or the
+    /// configuration has changed makes it **silently run with stale pointers and stale values**.
+    /// The stream and the layout it was captured with are kept alongside it so that no reason to
+    /// destroy it is missed.
     cudaGraphExec_t graph_ = nullptr;
     cudaStream_t graph_stream_ = nullptr;
-    /// 前回の入力。配置を組み直す必要があるかの判定に使う。
+    /// The previous input, used to decide whether the layout has to be rebuilt.
     const std::uint8_t* last_data_ = nullptr;
     int last_width_px_ = 0;
     int last_height_px_ = 0;
     std::size_t last_pitch_bytes_ = 0;
 
-    /// Dictionary 専用。frame をまたいで生きるため reset しない。
+    /// Reserved for the dictionary. It lives across frames and is therefore never reset.
     Workspace persistent_;
-    /// frame ごとに reset して切り出し直す。
+    /// Reset and re-carved every frame.
     Workspace frame_;
 
     detail::DeviceDictionary dictionary_;
@@ -143,27 +146,28 @@ Status Detector::Impl::initialize(const DictionaryTable& dictionary, const Detec
                                   std::string* out_message) {
     if (dictionary.codes_ == nullptr || dictionary.code_count_ <= 0 ||
         dictionary.marker_size_ < 1) {
-        set_message(out_message, "Dictionary が不正");
+        set_message(out_message, "invalid dictionary");
         return Status::kUnsupportedDictionary;
     }
     Status status = config.validate(out_message);
     if (status != Status::kOk) {
         return status;
     }
-    // 支持しない組み合わせを拒否する。ArUco3 有効で補正を切ると四隅が縮小後の
-    // 座標のまま残り、ArUco3 無効で補正を入れても段が 1 つしかないため補正が
-    // 1 度も走らない。どちらも黙って通すと座標系が食い違う。
+    // Reject the combinations that are not supported. With ArUco3 enabled and refinement off,
+    // the corners stay in downscaled coordinates; with ArUco3 disabled and refinement on, the
+    // pyramid has a single level and the refinement never runs. Letting either through silently
+    // would leave the coordinate systems inconsistent.
     if (config.use_aruco3_detection_ && config.corner_refine_method_ == CornerRefineMethod::kNone) {
         set_message(out_message,
-                    "use_aruco3_detection が有効な場合、corner_refine_method に kNone は "
-                    "使えない。四隅が縮小後の座標のまま残る");
+                    "corner_refine_method must not be kNone while use_aruco3_detection is "
+                    "enabled: the corners would stay in downscaled coordinates");
         return Status::kInvalidConfig;
     }
     if (!config.use_aruco3_detection_ &&
         config.corner_refine_method_ == CornerRefineMethod::kSubpix) {
         set_message(out_message,
-                    "use_aruco3_detection が無効な場合、corner_refine_method に kSubpix は "
-                    "使えない。pyramid の段が 1 つしかなく補正が走らない");
+                    "corner_refine_method must not be kSubpix while use_aruco3_detection is "
+                    "disabled: the pyramid has a single level and the refinement never runs");
         return Status::kInvalidConfig;
     }
 
@@ -171,7 +175,7 @@ Status Detector::Impl::initialize(const DictionaryTable& dictionary, const Detec
     int sizing_height = 0;
     status = sizing_segmentation(config, &sizing_width, &sizing_height);
     if (status != Status::kOk) {
-        set_message(out_message, "縮小率を決められない");
+        set_message(out_message, "cannot determine the downscaling factor");
         return status;
     }
     detail::ScalePlan sizing_plan;
@@ -179,7 +183,8 @@ Status Detector::Impl::initialize(const DictionaryTable& dictionary, const Detec
     if (status != Status::kOk) {
         return status;
     }
-    // 段数は長辺が大きいほど増える。上限の寸法で数えたものが上界になる。
+    // The level count grows with the longer side, so counting it from the maximum dimensions
+    // gives an upper bound.
     sizing_plan.segmentation_width_px_ = sizing_width;
     sizing_plan.segmentation_height_px_ = sizing_height;
 
@@ -203,14 +208,15 @@ Status Detector::Impl::initialize(const DictionaryTable& dictionary, const Detec
     std::size_t frame_bytes = 0;
     for (const std::size_t value : sizes) {
         if (value == 0U) {
-            set_message(out_message, "設定から workspace の必要量を決められない");
+            set_message(out_message,
+                        "cannot determine the required workspace size from the configuration");
             return Status::kInvalidConfig;
         }
         frame_bytes += value;
     }
     const std::size_t persistent_bytes = detail::device_dictionary_workspace_bytes(dictionary);
     if (persistent_bytes == 0U) {
-        set_message(out_message, "Dictionary の必要量を決められない");
+        set_message(out_message, "cannot determine the size required by the dictionary");
         return Status::kUnsupportedDictionary;
     }
 
@@ -225,27 +231,26 @@ Status Detector::Impl::initialize(const DictionaryTable& dictionary, const Detec
     this->persistent_.reset();
     status = detail::upload_dictionary(dictionary, this->persistent_, &this->dictionary_, nullptr);
     if (status != Status::kOk) {
-        set_message(out_message, "Dictionary を device へ転送できない");
+        set_message(out_message, "cannot transfer the dictionary to the device");
         return status;
     }
-    // 転送元は host の静的記憶域であり pageable である。ここで同期しておかないと、
-    // detect_async が別の stream を使ったときに転送との順序が保証されない。
+    // The transfer source is host static storage and therefore pageable. Without synchronizing
+    // here, nothing orders the transfer against a detect_async that runs on a different stream.
     status = detail::check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize",
                                 "detector.initialize", -1, nullptr);
     if (status != Status::kOk) {
-        set_message(out_message, "Dictionary の転送を待てない");
+        set_message(out_message, "cannot wait for the dictionary transfer");
         return status;
     }
 
-    // 設定と Dictionary が変わった。焼き込んだ値は無効になった。
+    // The configuration and the dictionary changed, so the baked-in values are stale.
     //
-    // これは冗長な防御である。has_result_ を false にするため、次の
-    // detect_async が必ず reserve_all を通り、そこで破棄される。実際に
-    // この行を落としても test は落ちない (変異で確認済み)。取り違えを
-    // 防ぐため残す。
+    // This is redundant defense. has_result_ is set to false, so the next detect_async always
+    // goes through reserve_all and the graph is destroyed there. Dropping this line does not
+    // make any test fail (confirmed by mutation). It is kept to guard against a mix-up.
     this->release_graph();
-    // device の SM 数から補正の block 数を決める。取得できない場合は
-    // 下限が使われる。frame ごとに問い合わせない。
+    // Decide the refinement block count from the SM count of the device. When it cannot be
+    // read, the lower bound is used. This is not queried per frame.
     DeviceProbeResult probe;
     this->refine_blocks_ = detail::refine_block_count(
             (probe_device(0, &probe) == Status::kOk) ? probe.multi_processor_count_ : 0);
@@ -290,8 +295,8 @@ Status Detector::Impl::reserve_all(const ImageViewU8& image, std::string* out_me
     for (const Status status : steps) {
         if (status != Status::kOk) {
             set_message(out_message,
-                        "workspace を切り出せない。max_width_px か max_height_px を "
-                        "入力に合わせて上げること");
+                        "cannot carve the workspace: raise max_width_px or max_height_px to "
+                        "match the input");
             return status;
         }
     }
@@ -322,8 +327,9 @@ Status Detector::Impl::dispatch(const ImageViewU8& image, cudaStream_t stream) {
         return status;
     }
 
-    // window ごとの走査は同じ stream で直列に行う。labels_、stats_、quads_ を
-    // window 間で共有しており、別 stream へ散らすと互いに上書きする。
+    // The per-window sweeps run serially on the same stream. labels_, stats_ and quads_ are
+    // shared across windows, so spreading the sweeps over separate streams would make them
+    // overwrite each other.
     for (int window = 0; window < this->threshold_.window_count_; ++window) {
         status = detail::build_labels_async(this->threshold_.binary_[window], &this->labels_,
                                             stream);
@@ -394,8 +400,8 @@ Status Detector::Impl::dispatch(const ImageViewU8& image, cudaStream_t stream) {
 
 void Detector::Impl::release_graph() {
     if (this->graph_ != nullptr) {
-        // 破棄の失敗は報告しない。ここで返せる先が無く、次の capture が
-        // 新しい実体を作るため状態は矛盾しない。
+        // A failed destruction is not reported: there is nowhere to return it to here, and the
+        // next capture creates a new instance, so the state stays consistent.
         static_cast<void>(cudaGraphExecDestroy(this->graph_));
         this->graph_ = nullptr;
         this->graph_stream_ = nullptr;
@@ -405,33 +411,33 @@ void Detector::Impl::release_graph() {
 Status Detector::Impl::capture_graph(const ImageViewU8& image, cudaStream_t stream,
                                      std::string* out_message) {
     this->release_graph();
-    // 捕らえる間は発行だけが記録され、kernel は動かない。
+    // While capturing, only the launches are recorded and no kernel actually runs.
     Status status =
             detail::check_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal),
                                "cudaStreamBeginCapture", "detector.capture_graph", -1, stream);
     if (status != Status::kOk) {
-        set_message(out_message, "発行列を捕らえられない");
+        set_message(out_message, "cannot begin capturing the launch sequence");
         return status;
     }
     const Status dispatched = this->dispatch(image, stream);
     cudaGraph_t graph = nullptr;
     const cudaError_t ended = cudaStreamEndCapture(stream, &graph);
     if (dispatched != Status::kOk) {
-        // 捕らえるのを止めてから返す。止めないと stream が捕獲状態に残る。
+        // End the capture before returning; otherwise the stream stays in capture mode.
         if (graph != nullptr) {
             static_cast<void>(cudaGraphDestroy(graph));
         }
-        set_message(out_message, "発行列の記録中に失敗した");
+        set_message(out_message, "failed while recording the launch sequence");
         return dispatched;
     }
     status =
             detail::check_cuda(ended, "cudaStreamEndCapture", "detector.capture_graph", -1, stream);
     if (status != Status::kOk) {
-        set_message(out_message, "発行列を閉じられない");
+        set_message(out_message, "cannot end the capture of the launch sequence");
         return status;
     }
-    // cudaGraphInstantiate の署名は CUDA 12 で変わった。11.x (Jetson の L4T
-    // R35 が載せる 11.4) は error node と log buffer を取る 5 引数版である。
+    // The signature of cudaGraphInstantiate changed in CUDA 12. On 11.x (11.4, which the Jetson
+    // L4T R35 ships) it is the five-argument form taking an error node and a log buffer.
 #if CUDART_VERSION >= 12000
     const cudaError_t instantiated = cudaGraphInstantiate(&this->graph_, graph, 0);
 #else
@@ -443,7 +449,7 @@ Status Detector::Impl::capture_graph(const ImageViewU8& image, cudaStream_t stre
     static_cast<void>(cudaGraphDestroy(graph));
     if (status != Status::kOk) {
         this->graph_ = nullptr;
-        set_message(out_message, "発行列を実体化できない");
+        set_message(out_message, "cannot instantiate the launch sequence");
         return status;
     }
     this->graph_stream_ = stream;
@@ -453,21 +459,21 @@ Status Detector::Impl::capture_graph(const ImageViewU8& image, cudaStream_t stre
 Status Detector::Impl::detect_async(const ImageViewU8& image, cudaStream_t stream,
                                     std::string* out_message) {
     if (!this->initialized_) {
-        set_message(out_message, "initialize が済んでいない");
+        set_message(out_message, "initialize has not been called");
         return Status::kNotInitialized;
     }
     Status status = validate_image_view(image, out_message);
     if (status != Status::kOk) {
         return status;
     }
-    // kernel が直接読むため host 側の memory は受け取れない。
+    // The kernels read the image directly, so host memory cannot be accepted.
     if (image.space_ != MemorySpace::kDevice && image.space_ != MemorySpace::kManaged) {
-        set_message(out_message, "入力画像は device か managed の空間である必要がある");
+        set_message(out_message, "the input image must live in device or managed space");
         return Status::kInvalidImage;
     }
     if (image.width_px_ > this->config_.max_width_px_ ||
         image.height_px_ > this->config_.max_height_px_) {
-        set_message(out_message, "入力が max_width_px または max_height_px を超えている");
+        set_message(out_message, "the input exceeds max_width_px or max_height_px");
         return Status::kInvalidArgument;
     }
 
@@ -476,8 +482,9 @@ Status Detector::Impl::detect_async(const ImageViewU8& image, cudaStream_t strea
                                 image.height_px_ != this->last_height_px_ ||
                                 image.pitch_bytes_ != this->last_pitch_bytes_;
     if (layout_changed && this->has_result_) {
-        // 配置を組み直すため、前 frame の kernel が同じ領域を触り終えるのを待つ。
-        // 同じ入力を流し続ける定常状態では 1 度も通らない。
+        // The layout is about to be rebuilt, so wait until the kernels of the previous frame
+        // are done touching the same regions. In the steady state of feeding the same input this
+        // is never reached.
         status = detail::check_cuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize",
                                     "detector.detect_async", -1, stream);
         if (status != Status::kOk) {
@@ -494,29 +501,29 @@ Status Detector::Impl::detect_async(const ImageViewU8& image, cudaStream_t strea
         if (status != Status::kOk) {
             return status;
         }
-        // 切り出しが変わったので、焼き込んだ pointer は無効になった。
-        // **この破棄は落とせない。** 落とすと古い pointer を静かに叩き、
-        // graph_is_rebuilt_when_layout_changes が落ちる (変異で確認済み)。
+        // The carving changed, so the baked-in pointers are stale.
+        // **This destruction cannot be dropped.** Dropping it silently dereferences the old
+        // pointers and makes graph_is_rebuilt_when_layout_changes fail (confirmed by mutation).
         this->release_graph();
     }
-    // stream が変わったら捕らえ直す。
+    // Re-capture when the stream changed.
     //
-    // これも冗長な防御である。graph は捕らえた stream 以外へ起動しても内部の
-    // 順序を保つため、落としても test は落ちない (変異で確認済み)。ただし
-    // 前の stream に同じ領域を触る仕事が残っている場合、2 本の stream の間に
-    // 順序の保証は無い。呼出側が stream を渡し替える使い方を安全にするため
-    // 捕らえ直す。
+    // This too is redundant defense. A graph preserves its internal ordering even when launched
+    // on a stream other than the one it was captured on, so dropping this does not make any test
+    // fail (confirmed by mutation). However, if work touching the same regions is still queued on
+    // the previous stream, nothing orders the two streams against each other. Re-capturing makes
+    // it safe for a caller to hand in a different stream.
     if (this->graph_ != nullptr && this->graph_stream_ != stream) {
         this->release_graph();
     }
-    // **既定 stream は捕らえられない。** CUDA は legacy default stream の
-    // 捕獲を許さないため、nullptr を渡された場合は従来どおり 1 段ずつ発行する。
-    // 明示的な stream を渡せば発行列を 1 回の起動へ畳める。
+    // **The default stream cannot be captured.** CUDA does not allow capturing the legacy
+    // default stream, so when nullptr is passed the work is issued step by step as before.
+    // Passing an explicit stream folds the launch sequence into a single launch.
     if (stream == nullptr) {
         this->release_graph();
         status = this->dispatch(image, stream);
         if (status != Status::kOk) {
-            set_message(out_message, "kernel の発行に失敗した");
+            set_message(out_message, "failed to issue the kernels");
             return status;
         }
     } else {
@@ -529,7 +536,7 @@ Status Detector::Impl::detect_async(const ImageViewU8& image, cudaStream_t strea
         status = detail::check_cuda(cudaGraphLaunch(this->graph_, stream), "cudaGraphLaunch",
                                     "detector.detect_async", -1, stream);
         if (status != Status::kOk) {
-            set_message(out_message, "発行列を起動できない");
+            set_message(out_message, "cannot launch the launch sequence");
             return status;
         }
     }
@@ -559,14 +566,14 @@ Status Detector::Impl::download(HostDetections* out, cudaStream_t stream,
         return Status::kInvalidArgument;
     }
     if (!this->has_result_) {
-        set_message(out_message, "detect_async が済んでいない");
+        set_message(out_message, "detect_async has not been called");
         return Status::kNotInitialized;
     }
 
     int count = 0;
     const Status count_status = detail::read_detection_count(this->detections_, &count, stream);
     if (count_status != Status::kOk && count_status != Status::kMarkerOverflow) {
-        set_message(out_message, "検出数を読めない");
+        set_message(out_message, "cannot read the detection count");
         return count_status;
     }
 
@@ -619,7 +626,7 @@ Status Detector::Impl::download(HostDetections* out, cudaStream_t stream,
         if (status != Status::kOk) {
             return status;
         }
-        // device の面ごとの並びから、検出ごとに 8 要素へ詰め替える。
+        // Repack from the per-plane device layout into 8 elements per detection.
         for (std::size_t index = 0; index < total; ++index) {
             for (int corner = 0; corner < kQuadCornerCount; ++corner) {
                 const std::size_t source = (static_cast<std::size_t>(corner) * total) + index;

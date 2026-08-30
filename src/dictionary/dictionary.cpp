@@ -12,7 +12,7 @@ namespace {
 constexpr int kMaxMarkerSize = 7;
 constexpr int kMaxBitCount = kMaxMarkerSize * kMaxMarkerSize;
 
-/// 立っている bit 数を数える。CUDA 側では __popcll に置き換わる。
+/// Counts the set bits. On the CUDA side this is replaced by __popcll.
 inline int popcount64(std::uint64_t value) {
     int count = 0;
     while (value != 0U) {
@@ -64,8 +64,8 @@ Status rotate_marker_code(MarkerCode code, int marker_size, MarkerCode* out) {
     if (unpack_status != Status::kOk) {
         return unpack_status;
     }
-    // 反時計回りに 90 度回転する。
-    // 元の (row, col) は回転後の (marker_size - 1 - col, row) へ移る。
+    // Rotate by 90 degrees counterclockwise.
+    // The original (row, col) moves to (marker_size - 1 - col, row) after the rotation.
     for (int row = 0; row < marker_size; ++row) {
         for (int col = 0; col < marker_size; ++col) {
             const int destination_row = marker_size - 1 - col;
@@ -82,8 +82,8 @@ Status build_cell_masks(const float* ratios, int marker_size, float valid_bit_th
     if (ratios == nullptr || out == nullptr || !is_valid_marker_size(marker_size)) {
         return Status::kInvalidArgument;
     }
-    // 上限は float で求める。OpenCV は `1 - validBitIdThreshold` を float で
-    // 評価する。倍精度で求めると閾値そのものが 1 ULP 動く。
+    // The upper bound is computed in float because OpenCV evaluates `1 - validBitIdThreshold`
+    // in float. Computing it in double precision would shift the threshold itself by 1 ULP.
     const float upper = 1.0F - valid_bit_threshold;
     const int bit_count = marker_size * marker_size;
     CellMasks masks;
@@ -107,12 +107,12 @@ Status identify_marker(const DictionaryTable& table, const CellMasks& masks,
         !(error_correction_rate <= 1.0)) {
         return Status::kInvalidArgument;
     }
-    // 0 方向への切り捨て。OpenCV の maxCorrectionRecalculed と同じ。
+    // Truncation toward zero, the same as OpenCV's maxCorrectionRecalculed.
     const int max_errors = static_cast<int>(static_cast<double>(table.max_correction_bits_) *
                                             error_correction_rate);
-    // 「bit が 0 なら黒でないことが誤り、1 なら白でないことが誤り」を
-    // 分岐なしに書く。not_black_ ^ ((not_black_ ^ not_white_) & code) が
-    // その式であり、OpenCV が hal の and と xor で計算しているものと等しい。
+    // "a 0 bit makes not-being-black an error, a 1 bit makes not-being-white an error", written
+    // without a branch. That expression is not_black_ ^ ((not_black_ ^ not_white_) & code), which
+    // equals what OpenCV computes with the hal and/xor operations.
     const MarkerCode selector = masks.not_black_ ^ masks.not_white_;
 
     int smallest = table.bit_count() + 1;
@@ -128,7 +128,7 @@ Status identify_marker(const DictionaryTable& table, const CellMasks& masks,
             if (distance < id_distance) {
                 id_distance = distance;
                 id_rotation = rotation;
-                // 0 は最小であり、これ以上見ても回転は更新されない。
+                // 0 is the minimum, so no further rotation can update the result.
                 if (distance == 0) {
                     break;
                 }
@@ -137,8 +137,8 @@ Status identify_marker(const DictionaryTable& table, const CellMasks& masks,
         if (id_distance < smallest) {
             smallest = id_distance;
         }
-        // 最小の ID ではなく、条件を満たした最初の ID を採る。OpenCV の
-        // identify がここで break するため、同じ位置で打ち切る。
+        // Take the first ID that satisfies the condition, not the one with the smallest
+        // distance. OpenCV's identify breaks here, so this bails out at the same point.
         if (id_distance <= max_errors) {
             out->id_ = id;
             out->rotation_ = id_rotation;
@@ -193,8 +193,9 @@ Status minimum_hamming_distance(const DictionaryTable& table, int* out_distance)
     }
     int minimum = table.bit_count() + 1;
     for (int a = 0; a < table.code_count_; ++a) {
-        // 回転 0 を代表とし、相手側は 4 回転すべてと比較する。
-        // 自分自身の回転同士は Dictionary の定義上比較対象にしない。
+        // Rotation 0 acts as the representative and is compared against all four rotations of
+        // the other code. By the definition of a dictionary, the rotations of one code are never
+        // compared against each other.
         const MarkerCode code_a = table.codes_[static_cast<std::size_t>(a) * 4U];
         for (int b = a + 1; b < table.code_count_; ++b) {
             for (int rotation = 0; rotation < 4; ++rotation) {

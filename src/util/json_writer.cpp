@@ -42,7 +42,8 @@ std::string escape_json_string(const std::string& value) {
                     std::snprintf(buffer, sizeof(buffer), "\\u%04x", c);
                     result += buffer;
                 } else {
-                    // 0x20 以上はそのまま通す。UTF-8 の多 byte 文字も維持する。
+                    // Anything from 0x20 up is passed through unchanged, which also preserves
+                    // multi-byte UTF-8 characters.
                     result += raw;
                 }
                 break;
@@ -148,12 +149,12 @@ void JsonWriter::value_null() {
 void JsonWriter::value_double(double value, int precision) {
     this->write_separator();
     if (!std::isfinite(value)) {
-        // JSON は NaN と無限大を表現できない。値を捏造せず null とする。
+        // JSON cannot represent NaN or infinity. Write null rather than inventing a value.
         this->out_ << "null";
         return;
     }
-    // 桁数が大きいと固定長 buffer へ収まらない。切り詰めた値を書くと
-    // 実際の値と異なる数値を出力することになるため、収まらない場合は null とする。
+    // A large number of digits does not fit the fixed-size buffer. Writing the truncated text
+    // would emit a number different from the actual value, so null is written instead.
     char buffer[64];
     const int written = std::snprintf(buffer, sizeof(buffer), "%.*f", precision, value);
     if (written < 0 || static_cast<std::size_t>(written) >= sizeof(buffer)) {

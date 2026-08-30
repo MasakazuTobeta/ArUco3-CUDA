@@ -15,82 +15,88 @@
 
 namespace aruco3cuda::detail {
 
-/// 近接候補の統合に使う作業領域。
+/// Scratch space used to merge nearby candidates.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: every region the pointers refer to is owned by the workspace.
+/// Synchronization: only a set of references; it holds no synchronization point.
 ///
-/// 入力例: 候補上限 4096 での reserve_candidate_groups
-/// 出力例: capacity_ = 4096 で各配列に pointer が入る
+/// Example input: reserve_candidate_groups with a candidate limit of 4096
+/// Example output: capacity_ = 4096 with a pointer in every array
 struct CandidateGroupBuffers {
-    /// 周長の降順における順位。添字は候補 index。
+    /// Rank in descending perimeter order. Indexed by candidate index.
     std::int32_t* rank_ = nullptr;
-    /// 順位から候補 index への写像。rank_ の逆。
+    /// Map from rank back to candidate index. The inverse of rank_.
     std::int32_t* order_ = nullptr;
-    /// 順位空間の union-find。根が group の代表になる。
+    /// Union-find over rank space. The root becomes the representative of the group.
     ///
-    /// 順位が小さいほど周長が大きい。根を最小の順位に取れば、そのまま
-    /// 「group 内で最大周長」を選んだことになる。
+    /// A smaller rank means a larger perimeter. Taking the root to be the
+    /// smallest rank therefore amounts to selecting the largest perimeter in
+    /// the group.
     std::int32_t* parent_ = nullptr;
-    /// 代表なら 1。
+    /// 1 for a representative.
     std::int32_t* selected_ = nullptr;
-    /// 代表を詰めるための排他 scan の入出力。
+    /// Input and output of the exclusive scan that packs the representatives.
     std::int32_t* offsets_ = nullptr;
     ScanBuffers scan_;
     int capacity_ = 0;
 };
 
-/// 統合に必要な workspace の容量を返す。
+/// Returns the workspace size needed for merging.
 ///
-/// @param config 検出設定。候補上限を使う。
-/// @return 必要な byte 数。引数が不正なら 0。
+/// @param config Detection settings. The candidate limit is used.
+/// @return Required byte count. 0 on invalid arguments.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: holds no resources.
+/// Synchronization: host only; it holds no synchronization point.
 ///
-/// 入力例: 候補上限 4096 の設定
-/// 出力例: 作業領域と統合後の候補 4096 個分を収める byte 数
+/// Example input: settings with a candidate limit of 4096
+/// Example output: the byte count holding the scratch space and 4096 merged candidates
 std::size_t candidate_group_workspace_bytes(const DetectorConfig& config);
 
-/// workspace から統合用の領域を切り出す。
+/// Carves the merging regions out of the workspace.
 ///
-/// @param config 検出設定。候補上限を使う。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out_buffers 成功時に作業領域を格納する。nullptr は不可。
-/// @param out_grouped 成功時に統合後の候補領域を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param config Detection settings. The candidate limit is used.
+/// @param workspace Source of the allocation. Owned by the caller.
+/// @param out_buffers Receives the scratch space on success. Must not be nullptr.
+/// @param out_grouped Receives the merged candidate region on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument on invalid arguments.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the carved regions stay owned by the workspace.
+/// Synchronization: host only; it holds no synchronization point.
 ///
-/// 入力例: 既定設定と十分な容量の workspace
-/// 出力例: capacity_ = 4096 で pointer が入る
+/// Example input: the default settings and a workspace with enough room
+/// Example output: capacity_ = 4096 with the pointers filled in
 Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspace,
                                 CandidateGroupBuffers* out_buffers, DeviceCandidates* out_grouped);
 
-/// 近接する候補を 1 つへまとめる。
+/// Merges nearby candidates into one.
 ///
-/// 二値化 window を変えると同じマーカーから少しずつ違う候補が得られる。
-/// 四隅の平均距離が周長に対する比より近いものを同じ group とし、group
-/// 内で最も周長が大きい候補を残す。小さい候補を残すと四隅が内側へ寄る。
+/// Changing the binarization window yields slightly different candidates from
+/// the same marker. Candidates whose mean corner distance is closer than a
+/// ratio of the perimeter form one group, and the candidate with the largest
+/// perimeter in the group is kept. Keeping a smaller one pulls the corners
+/// inward.
 ///
-/// CPU 基準との違いが 1 つある。OpenCV は近接する 2 つが既に別々の group
-/// へ属している場合、その 2 つを統合しない。本実装は近接関係の連結成分を
-/// そのまま group とするため、この場合も統合する。3 つ以上が数珠つなぎに
-/// 近接する配置でのみ差が出る。差の大きさは CPU 基準との比較で実測している。
+/// There is one difference from the CPU reference. When two nearby candidates
+/// already belong to separate groups, OpenCV does not merge those two. This
+/// implementation takes the connected components of the nearness relation as
+/// the groups, so it merges them in that case too. The two differ only for
+/// layouts where three or more candidates are near each other in a chain. The
+/// size of the difference is measured against the CPU reference.
 ///
-/// @param input build_candidates_async が埋めた候補一式。
-/// @param config 検出設定。
-/// @param buffers reserve_candidate_groups が返した作業領域。nullptr は不可。
-/// @param grouped reserve_candidate_groups が返した出力領域。nullptr は不可。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param input The candidate set filled in by build_candidates_async.
+/// @param config Detection settings.
+/// @param buffers The scratch space returned by reserve_candidate_groups. Must not be nullptr.
+/// @param grouped The output region returned by reserve_candidate_groups. Must not be nullptr.
+/// @param stream Stream to submit to. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: 引数が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
+/// Ownership: the regions the arguments point to stay owned by the workspace.
+/// Synchronization: only submits kernels to the stream; it performs no host synchronization.
 ///
-/// 入力例: 同じマーカーから得た周長違いの候補が 3 つ
-/// 出力例: count_ = 1、最も周長が大きい候補だけが残る
+/// Example input: three candidates from the same marker with differing perimeters
+/// Example output: count_ = 1, keeping only the candidate with the largest perimeter
 Status build_candidate_groups_async(const DeviceCandidates& input, const DetectorConfig& config,
                                     CandidateGroupBuffers* buffers, DeviceCandidates* grouped,
                                     cudaStream_t stream);

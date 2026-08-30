@@ -1,20 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   CUDA Toolkit を image へ含めず、host から read-only で bind mount する
-#   mode への切替。compose.yaml へ重ねて使用する。
+# Purpose:
+#   Switch to the mode that keeps the CUDA Toolkit out of the image and instead
+#   bind-mounts it read-only from the host. Overlay this on compose.yaml.
 #
-# 位置付け:
-#   手元での素早い試行を想定した mode。image が host 環境から独立しないため、
-#   benchmark 結果を伴う実行には使用しない。測定は pinned mode で行う。
+# Role:
+#   A mode intended for quick local experiments. The image is not independent of
+#   the host environment, so it must not be used for runs that produce benchmark
+#   results. Measurements are taken in pinned mode.
 #
-# 使用方法:
+# Usage:
 #   docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml build dgx-spark
 #   docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml run --rm dgx-spark verify-environment.sh
 #
-# 備考:
-#   /usr/local/cuda は多段 symlink であることがあるため、実体の directory を
-#   ARUCO3_CUDA_HOST_PATH_* で指定する。
+# Notes:
+#   /usr/local/cuda can be a chain of symlinks, so specify the real directory
+#   with ARUCO3_CUDA_HOST_PATH_*.
 services:
   dgx-spark:
     build:

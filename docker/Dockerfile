@@ -1,26 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   ArUco3-CUDA の build、test、評価を行う開発 image。
+# Purpose:
+#   Development image for building, testing, and evaluating ArUco3-CUDA.
 #
-# CUDA Toolkit の供給方式:
-#   ARUCO3_CUDA_MODE=pinned  (既定) image へ必要な CUDA package だけを install する。
-#   ARUCO3_CUDA_MODE=mounted        実行時に host から bind mount する。
+# How the CUDA Toolkit is supplied:
+#   ARUCO3_CUDA_MODE=pinned  (default) installs only the required CUDA packages
+#                                      into the image.
+#   ARUCO3_CUDA_MODE=mounted           bind-mounts it from the host at run time.
 #
-#   pinned を既定とするのは、測定に使用した compiler が image と一体になり、
-#   host の CUDA 更新によって benchmark 結果の比較可能性が失われないためである。
-#   Toolkit 全体は 4.7 GB あるが、その 3.2 GB は本 project が使用しない
-#   cuBLAS、cuFFT、cuSOLVER、cuSPARSE、cuRAND であり、必要な範囲は 300 MB 程度で済む。
+#   pinned is the default because it makes the compiler used for the measurements
+#   part of the image, so a CUDA update on the host cannot destroy the
+#   comparability of the benchmark results. The full Toolkit is 4.7 GB, but
+#   3.2 GB of that is cuBLAS, cuFFT, cuSOLVER, cuSPARSE, and cuRAND, none of which
+#   this project uses; what we need comes to about 300 MB.
 #
-#   mounted は手元での素早い試行のために残す。この mode では image が host 環境から
-#   独立しないため、測定結果を伴う実行には使用しない。
+#   mounted is kept for quick local experiments. In that mode the image is not
+#   independent of the host environment, so it must not be used for runs that
+#   produce measurement results.
 #
-#   いずれの mode でも NVIDIA driver library は NVIDIA Container Toolkit が注入する。
+#   In either mode the NVIDIA driver libraries are injected by the NVIDIA
+#   Container Toolkit.
 #
-# 制約 (mounted mode):
-#   host の CUDA Toolkit binary を container 内で実行するため、
-#   BASE_IMAGE の glibc は host CUDA Toolkit が要求する version 以上である必要がある。
-#   このため profile ごとに base image を host 環境へ合わせる。
+# Constraint (mounted mode):
+#   Since host CUDA Toolkit binaries run inside the container, the glibc in
+#   BASE_IMAGE must be at least the version the host CUDA Toolkit requires. The
+#   base image is therefore matched to the host environment per profile.
 #     DGX Spark  : CUDA 13.0 / Ubuntu 24.04 -> ubuntu:24.04
 #     Jetson Orin: CUDA 11.4 / Ubuntu 20.04 -> ubuntu:20.04
 ARG BASE_IMAGE=ubuntu:24.04
@@ -50,8 +54,9 @@ RUN ARUCO3_CUDA_MODE="${ARUCO3_CUDA_MODE}" \
 
 FROM cuda AS opencv
 
-# CPU 基準実装。ArUco 検出は OpenCV 4.x では objdetect module に含まれるため
-# opencv_contrib は不要。CUDA 対応は image build 時点で nvcc が無いため無効とする。
+# CPU baseline implementation. In OpenCV 4.x, ArUco detection lives in the
+# objdetect module, so opencv_contrib is not needed. CUDA support is disabled
+# because nvcc is not present while the image is being built.
 ARG OPENCV_VERSION=4.14.0
 ARG OPENCV_COMMIT=0654a42e19215ef25b1d367d822f3c630447e7c7
 
@@ -71,7 +76,7 @@ COPY scripts/ /opt/aruco3cuda/scripts/
 COPY smoke/ /opt/aruco3cuda/smoke/
 RUN chmod +x /opt/aruco3cuda/scripts/*.sh
 
-# script を PATH へ通し、docker compose run から名前だけで呼び出せるようにする。
+# Put the scripts on PATH so that docker compose run can call them by name.
 ENV PATH=/opt/aruco3cuda/scripts:${PATH} \
     ARUCO3_PROFILE=${ARUCO3_PROFILE} \
     ARUCO3_CUDA_ARCH=${ARUCO3_CUDA_ARCH} \

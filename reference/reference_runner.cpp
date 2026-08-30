@@ -28,7 +28,7 @@ namespace {
 
 using aruco3cuda::util::JsonWriter;
 
-/// 対応する定義済み Dictionary。OpenCV の enum への対応表を 1 箇所へ集約する。
+/// Supported predefined dictionaries. Keeps the mapping to the OpenCV enum in one place.
 const std::map<std::string, int>& dictionary_table() {
     static const std::map<std::string, int> kTable = {
             {"DICT_4X4_50", cv::aruco::DICT_4X4_50},
@@ -86,8 +86,9 @@ cv::aruco::DetectorParameters to_detector_parameters(const ReferenceConfig& conf
     return params;
 }
 
-/// ArUco3 の実効縮小率。OpenCV 4.x が内部で用いる式と同じものを再現する。
-/// 詳細は docs/design/detector-pipeline.md の観測仕様を参照。
+/// Effective ArUco3 downscale ratio. Reproduces the same formula OpenCV 4.x
+/// uses internally. See the observed specification in
+/// docs/design/detector-pipeline.md for the details.
 double effective_fxfy(const ReferenceConfig& config, int width_px, int height_px) {
     if (!config.use_aruco3_detection_) {
         return 1.0;
@@ -102,10 +103,11 @@ double effective_fxfy(const ReferenceConfig& config, int width_px, int height_px
     return side / denominator;
 }
 
-/// 小さな設定 file を読み込む。上限を超える file は読まない。
+/// Read a small configuration file. Files larger than the limit are not read.
 ///
-/// 外部 file を無制限に memory へ読み込まないため、上限を明示する。
-/// 対象は image が持つ provenance JSON であり、数 KB に収まる。
+/// The limit is explicit so that an external file is never read into memory
+/// without bound. The target is the provenance JSON carried by the image, which
+/// fits in a few KB.
 std::string read_file_text(const std::string& path) {
     constexpr std::streamsize kMaxFileBytes = 1 << 20;  // 1 MiB
     std::ifstream input(path, std::ios::binary);
@@ -131,8 +133,9 @@ bool validate_config(const ReferenceConfig& config, std::string* out_error) {
     if (out_error == nullptr) {
         return false;
     }
-    // OpenCV が assert する条件と、値として意味を成さない範囲を検査する。
-    // 検査項目と条件は cv::aruco::DetectorParameters の仕様に対応する。
+    // Check the conditions OpenCV asserts on, plus the ranges in which a value
+    // would be meaningless. The items and conditions correspond to the
+    // specification of cv::aruco::DetectorParameters.
     struct IntRange {
         const char* name;
         int value;
@@ -152,18 +155,18 @@ bool validate_config(const ReferenceConfig& config, std::string* out_error) {
     };
     for (const IntRange& range : int_ranges) {
         if (range.value < range.minimum || range.value > range.maximum) {
-            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
-                         std::to_string(range.value) + " (有効範囲 " +
-                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+            *out_error = std::string("config value out of range: ") + range.name + "=" +
+                         std::to_string(range.value) + " (valid range " +
+                         std::to_string(range.minimum) + " to " + std::to_string(range.maximum) +
                          ")";
             return false;
         }
     }
     if (config.adaptive_thresh_win_size_max_px_ < config.adaptive_thresh_win_size_min_px_) {
-        *out_error = "設定値が矛盾: adaptive_thresh_win_size_max=" +
+        *out_error = "inconsistent config: adaptive_thresh_win_size_max=" +
                      std::to_string(config.adaptive_thresh_win_size_max_px_) +
-                     " が adaptive_thresh_win_size_min=" +
-                     std::to_string(config.adaptive_thresh_win_size_min_px_) + " より小さい";
+                     " is smaller than adaptive_thresh_win_size_min=" +
+                     std::to_string(config.adaptive_thresh_win_size_min_px_);
         return false;
     }
 
@@ -191,24 +194,27 @@ bool validate_config(const ReferenceConfig& config, std::string* out_error) {
     };
     for (const DoubleRange& range : double_ranges) {
         if (!(range.value >= range.minimum) || !(range.value <= range.maximum)) {
-            // NaN は比較が全て false になるため、この書き方で同時に弾ける。
-            *out_error = std::string("設定値が範囲外: ") + range.name + "=" +
-                         std::to_string(range.value) + " (有効範囲 " +
-                         std::to_string(range.minimum) + " から " + std::to_string(range.maximum) +
+            // Every comparison against NaN is false, so writing the test this
+            // way rejects NaN at the same time.
+            *out_error = std::string("config value out of range: ") + range.name + "=" +
+                         std::to_string(range.value) + " (valid range " +
+                         std::to_string(range.minimum) + " to " + std::to_string(range.maximum) +
                          ")";
             return false;
         }
     }
     if (config.max_marker_perimeter_rate_ <= config.min_marker_perimeter_rate_) {
-        *out_error = "設定値が矛盾: max_marker_perimeter_rate が min_marker_perimeter_rate 以下";
+        *out_error =
+                "inconsistent config: max_marker_perimeter_rate is less than or equal to "
+                "min_marker_perimeter_rate";
         return false;
     }
-    // OpenCV は ArUco3 有効時にこの組み合わせを assert で拒否する。
+    // When ArUco3 is enabled OpenCV rejects this combination with an assert.
     if (config.use_aruco3_detection_ && config.min_side_length_canonical_img_px_ == 0 &&
         config.min_marker_length_ratio_original_img_ == 0.0F) {
         *out_error =
-                "設定値が矛盾: use_aruco3_detection が有効で "
-                "min_side_length_canonical_img と min_marker_length_ratio_original_img が共に 0";
+                "inconsistent config: use_aruco3_detection is enabled while "
+                "min_side_length_canonical_img and min_marker_length_ratio_original_img are both 0";
         return false;
     }
     return true;
@@ -229,9 +235,10 @@ std::vector<std::string> known_dictionary_names() {
 
 namespace {
 
-/// 読み込み済みの画像を検出し、結果を並べ替えて格納する。
+/// Detect markers in an already loaded image, then sort and store the results.
 ///
-/// 検出そのものだけを行う。file 読み込みと checksum は呼出側の責務とする。
+/// Performs the detection alone. Reading the file and computing the checksum
+/// remain the caller's responsibility.
 void run_detection(const cv::aruco::ArucoDetector& detector, const cv::Mat& image,
                    ReferenceResult* result) {
     std::vector<std::vector<cv::Point2f>> corners;
@@ -256,7 +263,8 @@ void run_detection(const cv::aruco::ArucoDetector& detector, const cv::Mat& imag
         result->detections_.push_back(detection);
     }
 
-    // OpenCV が返す順序は候補の抽出順に依存する。比較を容易にするため安定に並べ替える。
+    // The order OpenCV returns depends on the order in which candidates were
+    // extracted. Sort into a stable order to make comparison easy.
     std::sort(result->detections_.begin(), result->detections_.end(),
               [](const ReferenceDetection& a, const ReferenceDetection& b) {
                   if (a.id_ != b.id_) {
@@ -269,14 +277,14 @@ void run_detection(const cv::aruco::ArucoDetector& detector, const cv::Mat& imag
               });
 }
 
-/// 画像を読み込み、寸法と checksum と縮小率を求める。
+/// Load the image and compute its dimensions, checksum and downscale ratio.
 ///
-/// 成功時のみ out_image と out_result を書き換える。
+/// out_image and out_result are written only on success.
 bool load_image(const std::string& image_path, const ReferenceConfig& config, cv::Mat* out_image,
                 ReferenceResult* out_result, std::string* out_error) {
     cv::Mat image = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
     if (image.empty()) {
-        *out_error = "画像を読み込めない: " + image_path;
+        *out_error = "cannot load image: " + image_path;
         return false;
     }
     ReferenceResult result;
@@ -284,7 +292,7 @@ bool load_image(const std::string& image_path, const ReferenceConfig& config, cv
     result.width_px_ = image.cols;
     result.height_px_ = image.rows;
     if (!aruco3cuda::util::sha256_file(image_path, &result.image_sha256_)) {
-        *out_error = "checksum を計算できない: " + image_path;
+        *out_error = "cannot compute checksum: " + image_path;
         return false;
     }
     result.fxfy_effective_ = effective_fxfy(config, image.cols, image.rows);
@@ -296,17 +304,18 @@ bool load_image(const std::string& image_path, const ReferenceConfig& config, cv
     return true;
 }
 
-/// 設定と Dictionary 名を検証し、OpenCV の Dictionary を返す。
+/// Validate the settings and the dictionary name, then return the OpenCV dictionary.
 bool resolve_dictionary(const ReferenceConfig& config, cv::aruco::Dictionary* out_dictionary,
                         std::string* out_error) {
-    // 設定値を最初に検証する。範囲外の値を OpenCV へ渡すと cv::Exception が
-    // 送出され、bool と out_error で失敗を通知する契約を破る。
+    // Validate the settings first. Passing an out-of-range value to OpenCV
+    // raises a cv::Exception, which breaks the contract of reporting failure
+    // through the bool return value and out_error.
     if (!validate_config(config, out_error)) {
         return false;
     }
     const auto dictionary_entry = dictionary_table().find(config.dictionary_name_);
     if (dictionary_entry == dictionary_table().end()) {
-        *out_error = "未対応の Dictionary: " + config.dictionary_name_;
+        *out_error = "unsupported Dictionary: " + config.dictionary_name_;
         return false;
     }
     *out_dictionary = cv::aruco::getPredefinedDictionary(dictionary_entry->second);
@@ -335,7 +344,7 @@ bool detect_image(const std::string& image_path, const ReferenceConfig& config,
     return true;
 }
 
-/// ReferenceDetector の実装本体。公開 header が OpenCV へ依存しないよう pimpl とする。
+/// The body of ReferenceDetector. Uses pimpl so the public header does not depend on OpenCV.
 class ReferenceDetector::Impl {
 public:
     bool initialize(const std::string& image_path, const ReferenceConfig& config,
@@ -354,7 +363,7 @@ public:
 
     bool detect(ReferenceResult* out_result, std::string* out_error) {
         if (!this->initialized_) {
-            *out_error = "initialize() が呼ばれていない";
+            *out_error = "initialize() has not been called";
             return false;
         }
         ReferenceResult result = this->metadata_;
@@ -403,7 +412,8 @@ ReferenceEnvironment collect_environment(const ReferenceConfig& config) {
         cv::setNumThreads(config.num_threads_);
     }
     environment.opencv_threads_ = cv::getNumThreads();
-    // container image が持つ OpenCV の取得元情報。存在しない環境では空になる。
+    // Provenance of the OpenCV build carried by the container image. Empty in
+    // environments where the file does not exist.
     environment.opencv_provenance_json_ =
             read_file_text("/opt/opencv/share/aruco3cuda/opencv-provenance.json");
     return environment;

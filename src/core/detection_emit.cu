@@ -23,7 +23,7 @@ namespace {
 constexpr std::size_t kPlaneAlignment = 256U;
 constexpr int kEmitThreads = 256;
 
-/// 1 平面の byte 数を求める。桁溢れしたら 0 を返す。
+/// Returns the byte count of one plane. Returns 0 on overflow.
 std::size_t plane_bytes(std::size_t count, std::size_t element_bytes) {
     if (count != 0U && element_bytes > std::numeric_limits<std::size_t>::max() / count) {
         return 0U;
@@ -31,7 +31,8 @@ std::size_t plane_bytes(std::size_t count, std::size_t element_bytes) {
     return align_up(count * element_bytes, kPlaneAlignment);
 }
 
-/// 候補ごとの採否を書き出す。候補数は device 上にしかないため上限まで埋める。
+/// Writes the verdict for each candidate. The candidate count lives only on the
+/// device, so the whole capacity is filled.
 __global__ void predicate_kernel(const std::int32_t* ids, const std::int32_t* depth,
                                  const std::int32_t* stop_depth, const std::int32_t* count,
                                  std::int32_t* offsets, int capacity) {
@@ -39,7 +40,7 @@ __global__ void predicate_kernel(const std::int32_t* ids, const std::int32_t* de
     if (index >= capacity) {
         return;
     }
-    // 前の frame の値が残らないよう、範囲外も明示的に 0 を書く。
+    // Write an explicit 0 outside the range too, so values from the previous frame do not linger.
     if (index >= *count) {
         offsets[index] = 0;
         return;
@@ -49,7 +50,7 @@ __global__ void predicate_kernel(const std::int32_t* ids, const std::int32_t* de
     offsets[index] = (reached && identified) ? 1 : 0;
 }
 
-/// 採用した候補を詰めて書き出す。
+/// Packs the accepted candidates and writes them out.
 __global__ void emit_kernel(const DeviceCandidates grouped, const MatchBuffers matches,
                             const std::int32_t* depth, const std::int32_t* stop_depth,
                             const std::int32_t* offsets, const std::int32_t* count,
@@ -71,9 +72,9 @@ __global__ void emit_kernel(const DeviceCandidates grouped, const MatchBuffers m
     out.rotations_[destination] = rotation;
     out.source_[destination] = index;
     for (int corner = 0; corner < kQuadCornerCount; ++corner) {
-        // 照合で得た回転を打ち消す。OpenCV の correctCornerPosition は
-        // std::rotate(begin, begin + 4 - rot, end) であり、これは
-        // new[i] = old[(i + 4 - rot) % 4] と同じである。
+        // Undo the rotation found by matching. OpenCV's correctCornerPosition
+        // is std::rotate(begin, begin + 4 - rot, end), which is the same as
+        // new[i] = old[(i + 4 - rot) % 4].
         const int source = (corner + kQuadCornerCount - rotation) % kQuadCornerCount;
         out.corner_x_[(corner * out.capacity_) + destination] =
                 static_cast<float>(grouped.corner_x_[(source * grouped.capacity_) + index]);
@@ -82,7 +83,7 @@ __global__ void emit_kernel(const DeviceCandidates grouped, const MatchBuffers m
     }
 }
 
-/// 検出数を書き出す。
+/// Writes out the detection count.
 __global__ void store_detection_count_kernel(const std::int32_t* total, std::int32_t* count,
                                              std::int32_t* accepted_total, int capacity) {
     if (threadIdx.x != 0U || blockIdx.x != 0U) {
@@ -134,7 +135,8 @@ Status reserve_detections(const DetectorConfig& config, Workspace& workspace,
         return status;
     }
     buffers.offsets_ = static_cast<std::int32_t*>(pointer);
-    // scan は候補の空間で行う。検出の上限を渡すと述語の後半を走査できない。
+    // The scan runs in candidate space. Passing the detection limit would
+    // leave the tail of the predicate unscanned.
     status = reserve_scan(config.max_candidates_, workspace, &buffers.scan_);
     if (status != Status::kOk) {
         return status;
@@ -240,7 +242,8 @@ Status read_detection_count(const DeviceDetections& detections, int* out_count,
         return status;
     }
     *out_count = static_cast<int>(values[0]);
-    // 打ち切りを必ず呼出側へ伝える。無言で捨てると原因の切り分けができない。
+    // Always report truncation to the caller. Dropping it silently would make
+    // the cause impossible to isolate.
     return (values[1] > values[0]) ? Status::kMarkerOverflow : Status::kOk;
 }
 

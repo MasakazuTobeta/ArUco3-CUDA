@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 検出設定の境界検証を確認する。
+// Verifies boundary validation of the detector configuration.
 //
-// 範囲外の値をそのまま CUDA kernel の起動設定へ渡すと、無効な block 数や
-// 負の反復回数として現れ、原因が設定であることが分かりにくくなる。
+// An out-of-range value passed straight into a CUDA kernel launch configuration
+// surfaces as an invalid block count or a negative iteration count, which makes it
+// hard to see that the configuration was the cause.
 #include "aruco3cuda/config.hpp"
 
 #include <gtest/gtest.h>
@@ -19,16 +20,16 @@ namespace {
 using aruco3cuda::DetectorConfig;
 using aruco3cuda::Status;
 
-// 正常系: 既定値は有効である。
+// Nominal: the default configuration is valid.
 TEST(DetectorConfigTest, default_config_is_valid) {
     std::string message = "unchanged";
     EXPECT_EQ(DetectorConfig().validate(&message), Status::kOk) << message;
-    // 成功時は message を変更しない。
+    // On success the message is left untouched.
     EXPECT_EQ(message, "unchanged");
     EXPECT_EQ(DetectorConfig().validate(nullptr), Status::kOk);
 }
 
-// 正常系: OpenCV 互換の既定値も有効であり、ArUco3 の既定が異なる。
+// Nominal: the OpenCV-compatible defaults are valid too, and differ from the ArUco3 ones.
 TEST(DetectorConfigTest, opencv_defaults_are_valid_and_differ) {
     const DetectorConfig opencv = DetectorConfig::opencv_defaults();
     EXPECT_EQ(opencv.validate(nullptr), Status::kOk);
@@ -36,13 +37,14 @@ TEST(DetectorConfigTest, opencv_defaults_are_valid_and_differ) {
     EXPECT_FLOAT_EQ(opencv.min_marker_length_ratio_original_img_, 0.0F);
     EXPECT_EQ(opencv.corner_refine_method_, aruco3cuda::CornerRefineMethod::kNone);
 
-    // 本 project の既定は ArUco3 検出戦略を有効にする。
+    // This project's defaults enable the ArUco3 detection strategy.
     const DetectorConfig project;
     EXPECT_TRUE(project.use_aruco3_detection_);
     EXPECT_GT(project.min_marker_length_ratio_original_img_, 0.0F);
 }
 
-// 境界値: 適応的二値化の window は OpenCV の assert と同じ条件で弾く。
+// Boundary: adaptive threshold windows are rejected under the same conditions OpenCV
+// asserts on.
 TEST(DetectorConfigTest, rejects_invalid_threshold_windows) {
     std::string message;
 
@@ -51,7 +53,7 @@ TEST(DetectorConfigTest, rejects_invalid_threshold_windows) {
     EXPECT_EQ(too_small.validate(&message), Status::kInvalidConfig);
     EXPECT_NE(message.find("adaptive_thresh_win_size_min_px"), std::string::npos) << message;
 
-    // 下限そのものは受理する。
+    // The lower bound itself is accepted.
     DetectorConfig at_bound;
     at_bound.adaptive_thresh_win_size_min_px_ = 3;
     EXPECT_EQ(at_bound.validate(nullptr), Status::kOk);
@@ -65,16 +67,16 @@ TEST(DetectorConfigTest, rejects_invalid_threshold_windows) {
     inverted.adaptive_thresh_win_size_min_px_ = 21;
     inverted.adaptive_thresh_win_size_max_px_ = 5;
     EXPECT_EQ(inverted.validate(&message), Status::kInvalidConfig);
-    EXPECT_NE(message.find("矛盾"), std::string::npos) << message;
+    EXPECT_NE(message.find("conflict"), std::string::npos) << message;
 
-    // min と max が等しいのは window 1 種類であり有効。
+    // min equal to max means a single window size, which is valid.
     DetectorConfig single;
     single.adaptive_thresh_win_size_min_px_ = 11;
     single.adaptive_thresh_win_size_max_px_ = 11;
     EXPECT_EQ(single.validate(nullptr), Status::kOk);
 }
 
-// 境界値: OpenCV が assert する候補フィルタの条件。
+// Boundary: the candidate-filter conditions OpenCV asserts on.
 TEST(DetectorConfigTest, rejects_invalid_candidate_filters) {
     std::string message;
 
@@ -97,7 +99,7 @@ TEST(DetectorConfigTest, rejects_invalid_candidate_filters) {
     zero_border.marker_border_bits_ = 0;
     EXPECT_EQ(zero_border.validate(&message), Status::kInvalidConfig);
 
-    // OpenCV は cellMarginRate <= 0.5 を assert する。
+    // OpenCV asserts cellMarginRate <= 0.5.
     DetectorConfig wide_margin;
     wide_margin.perspective_remove_ignored_margin_per_cell_ = 0.6;
     EXPECT_EQ(wide_margin.validate(&message), Status::kInvalidConfig);
@@ -106,7 +108,8 @@ TEST(DetectorConfigTest, rejects_invalid_candidate_filters) {
     EXPECT_EQ(at_margin_bound.validate(nullptr), Status::kOk);
 }
 
-// 境界値: ArUco3 有効で縮小の指定が両方 0 は OpenCV が拒否する組み合わせ。
+// Boundary: with ArUco3 enabled, both downscaling parameters at 0 is the combination
+// OpenCV rejects.
 TEST(DetectorConfigTest, rejects_aruco3_with_both_zero) {
     DetectorConfig config;
     config.use_aruco3_detection_ = true;
@@ -116,12 +119,13 @@ TEST(DetectorConfigTest, rejects_aruco3_with_both_zero) {
     EXPECT_EQ(config.validate(&message), Status::kInvalidConfig);
     EXPECT_NE(message.find("use_aruco3_detection"), std::string::npos) << message;
 
-    // ArUco3 が無効なら同じ組み合わせでも問題ない。
+    // With ArUco3 disabled the same combination is fine.
     config.use_aruco3_detection_ = false;
     EXPECT_EQ(config.validate(nullptr), Status::kOk);
 }
 
-// 境界値: CUDA 固有の上限。検出数が候補数を超える設定は矛盾している。
+// Boundary: the CUDA-specific limits. A configuration whose detection count exceeds
+// the candidate count contradicts itself.
 TEST(DetectorConfigTest, rejects_invalid_cuda_limits) {
     std::string message;
 
@@ -136,7 +140,7 @@ TEST(DetectorConfigTest, rejects_invalid_cuda_limits) {
     EXPECT_EQ(inverted.validate(&message), Status::kInvalidConfig);
     EXPECT_NE(message.find("max_markers"), std::string::npos) << message;
 
-    // 等しい場合は全候補が検出になり得るという意味であり有効。
+    // Equal counts mean every candidate may become a detection, which is valid.
     DetectorConfig equal;
     equal.max_candidates_ = 100;
     equal.max_markers_ = 100;
@@ -147,7 +151,8 @@ TEST(DetectorConfigTest, rejects_invalid_cuda_limits) {
     EXPECT_EQ(zero_size.validate(&message), Status::kInvalidConfig);
 }
 
-// 異常系: NaN を弾く。比較が全て false になるため見落としやすい。
+// Error case: NaN is rejected. Every comparison against NaN is false, so it is easy
+// to let one slip through.
 TEST(DetectorConfigTest, rejects_nan_values) {
     std::string message;
     DetectorConfig nan_otsu;
@@ -160,14 +165,14 @@ TEST(DetectorConfigTest, rejects_nan_values) {
     EXPECT_EQ(nan_ratio.validate(&message), Status::kInvalidConfig);
 }
 
-// 異常系: 無限大も弾く。
+// Error case: infinities are rejected as well.
 TEST(DetectorConfigTest, rejects_infinite_values) {
     DetectorConfig config;
     config.error_correction_rate_ = std::numeric_limits<double>::infinity();
     EXPECT_EQ(config.validate(nullptr), Status::kInvalidConfig);
 }
 
-// 正常系: 四隅補正方式の識別子。
+// Nominal: the corner refinement method identifiers.
 TEST(CornerRefineMethodTest, identifiers_are_stable) {
     EXPECT_STREQ(aruco3cuda::to_string(aruco3cuda::CornerRefineMethod::kNone), "kNone");
     EXPECT_STREQ(aruco3cuda::to_string(aruco3cuda::CornerRefineMethod::kSubpix), "kSubpix");

@@ -18,35 +18,37 @@ namespace {
 constexpr std::size_t kPlaneAlignment = 256U;
 constexpr int kLinearThreads = 256;
 
-/// 距離と画素 index を 1 語へ詰める。
+/// Packs a distance and a pixel index into one word.
 ///
-/// atomicMax 1 回で最遠点とその位置を同時に決めるための表現である。
-/// 距離が等しい画素が複数ある場合は index の大きい方が残る。順序に
-/// 依存しない規則であり、実行ごとに同じ点が選ばれる。
+/// This representation is what lets a single atomicMax settle both the farthest
+/// point and its position at once. When several pixels tie on distance, the larger
+/// index survives. That rule does not depend on order, so the same point is chosen
+/// on every run.
 __device__ unsigned long long pack_best(std::uint32_t key, std::int32_t index) {
     return (static_cast<unsigned long long>(key) << 32) |
            static_cast<unsigned long long>(static_cast<std::uint32_t>(index));
 }
 
-/// 詰めた語から画素 index を取り出す。
+/// Extracts the pixel index from a packed word.
 __device__ std::int32_t unpack_index(unsigned long long packed) {
     return static_cast<std::int32_t>(static_cast<std::uint32_t>(packed & 0xFFFFFFFFULL));
 }
 
-/// 詰めた語から距離の key を取り出す。
+/// Extracts the distance key from a packed word.
 __device__ std::uint32_t unpack_key(unsigned long long packed) {
     return static_cast<std::uint32_t>(packed >> 32);
 }
 
-/// 非負の float を、順序を保ったまま 32 bit 整数へ写す。
+/// Maps a non-negative float to a 32-bit integer while preserving order.
 ///
-/// IEEE 754 の非負値は bit 列を符号なし整数として比べても大小関係が
-/// 変わらない。距離の比較に atomicMax をそのまま使えるようにする。
+/// For non-negative IEEE 754 values, comparing the bit patterns as unsigned
+/// integers preserves the ordering. This is what allows atomicMax to be used
+/// directly for the distance comparison.
 __device__ std::uint32_t float_order_key(float value) {
     return __float_as_uint(value);
 }
 
-/// 探索用の語を 0 で埋める。
+/// Fills the search words with 0.
 __global__ void reset_best_kernel(unsigned long long* best, unsigned long long* best_positive,
                                   unsigned long long* best_negative,
                                   const std::int32_t* label_count) {
@@ -59,7 +61,7 @@ __global__ void reset_best_kernel(unsigned long long* best, unsigned long long* 
     best_negative[index] = 0ULL;
 }
 
-/// 重心から最も遠い点を求める。
+/// Finds the point farthest from the centroid.
 __global__ void farthest_from_centroid_kernel(const std::int32_t* labels, const float* centroid_x,
                                               const float* centroid_y, unsigned long long* best,
                                               int width, int height) {
@@ -78,10 +80,11 @@ __global__ void farthest_from_centroid_kernel(const std::int32_t* labels, const 
     atomicMax(&best[label], pack_best(float_order_key((dx * dx) + (dy * dy)), index));
 }
 
-/// 指定した点から最も遠い点を求める。
+/// Finds the point farthest from a given point.
 ///
-/// 起点は画素であり座標が整数のため、二乗距離を整数のまま扱える。
-/// 画像の最大寸法でも 2^23 に収まり、32 bit の key へ入る。
+/// The origin is a pixel with integer coordinates, so the squared distance stays
+/// an integer. Even at the maximum image size it fits within 2^23 and therefore
+/// within the 32-bit key.
 __global__ void farthest_from_point_kernel(const std::int32_t* labels, const std::int32_t* origin_x,
                                            const std::int32_t* origin_y, unsigned long long* best,
                                            int width, int height) {
@@ -101,11 +104,12 @@ __global__ void farthest_from_point_kernel(const std::int32_t* labels, const std
     atomicMax(&best[label], pack_best(static_cast<std::uint32_t>(distance), index));
 }
 
-/// 直線 c0c2 の左右それぞれで最も離れた点を求める。
+/// Finds the point farthest from the line c0c2 on each of its two sides.
 ///
-/// 外積の絶対値は、直線からの距離に線分長を掛けたものである。線分長は
-/// label ごとに一定であるため、外積の絶対値を最大にする点が最も離れた
-/// 点になる。整数のまま扱えるため丸めが入らない。
+/// The magnitude of the cross product is the distance from the line times the
+/// length of the segment. The segment length is constant per label, so the point
+/// that maximizes the magnitude of the cross product is the farthest point. It all
+/// stays in integers, so no rounding enters.
 __global__ void farthest_from_line_kernel(const std::int32_t* labels, const std::int32_t* corner_x,
                                           const std::int32_t* corner_y, int capacity,
                                           unsigned long long* best_positive,
@@ -132,10 +136,10 @@ __global__ void farthest_from_line_kernel(const std::int32_t* labels, const std:
     } else if (cross < 0) {
         atomicMax(&best_negative[label], pack_best(static_cast<std::uint32_t>(-cross), index));
     }
-    // 直線上の点はどちらの側でもないため、どちらの探索にも寄与しない。
+    // A point on the line is on neither side, so it contributes to neither search.
 }
 
-/// 探索結果を四隅の座標として書き出す。
+/// Writes the search result out as a corner coordinate.
 __global__ void store_corner_kernel(const unsigned long long* best, std::int32_t* corner_x,
                                     std::int32_t* corner_y, int capacity, int corner, int width,
                                     const std::int32_t* label_count) {
@@ -148,10 +152,12 @@ __global__ void store_corner_kernel(const unsigned long long* best, std::int32_t
     corner_y[(corner * capacity) + label] = index / width;
 }
 
-/// 四隅が定まったかを判定し、並びを一定の向きへ揃える。
+/// Decides whether the corners are determined and brings their order into a fixed
+/// orientation.
 ///
-/// 直線の片側に点が無い成分は四隅が定まらない。1 画素の成分や、
-/// 幅 1 画素の直線状の成分がこれにあたる。
+/// A component with no point on one side of the line has no determined corners.
+/// Single-pixel components and one-pixel-wide line-shaped components fall into
+/// this case.
 __global__ void finalize_quad_kernel(const unsigned long long* best_positive,
                                      const unsigned long long* best_negative,
                                      std::int32_t* corner_x, std::int32_t* corner_y,
@@ -171,7 +177,8 @@ __global__ void finalize_quad_kernel(const unsigned long long* best_positive,
         xs[corner] = corner_x[(corner * capacity) + label];
         ys[corner] = corner_y[(corner * capacity) + label];
     }
-    // 4 点が相異なることを確かめる。潰れた四角形は候補にしない。
+    // Confirm that the 4 points are all distinct. A degenerate quadrilateral is not
+    // taken as a candidate.
     for (int a = 0; a < kQuadCornerCount; ++a) {
         for (int b = a + 1; b < kQuadCornerCount; ++b) {
             if (xs[a] == xs[b] && ys[a] == ys[b]) {
@@ -180,7 +187,7 @@ __global__ void finalize_quad_kernel(const unsigned long long* best_positive,
             }
         }
     }
-    // OpenCV の _reorderCandidatesCorners と同じ向きへ揃える。
+    // Bring the order into the same orientation as OpenCV _reorderCandidatesCorners.
     const long long cross =
             (static_cast<long long>(xs[1] - xs[0]) * static_cast<long long>(ys[2] - ys[0])) -
             (static_cast<long long>(ys[1] - ys[0]) * static_cast<long long>(xs[2] - xs[0]));
@@ -294,7 +301,7 @@ Status build_quads_async(const LabelBuffers& labels, const LabelStatisticsBuffer
         return status;
     }
 
-    // 第 1 段: 重心から最も遠い点を c0 とする。
+    // Stage 1: the point farthest from the centroid becomes c0.
     farthest_from_centroid_kernel<<<grid, block, 0, stream>>>(
             labels.labels_, stats.centroid_x_, stats.centroid_y_, quads->best_, width, height);
     status = check_kernel_launch("quad.farthest_from_centroid_kernel", -1, false, stream);
@@ -309,7 +316,7 @@ Status build_quads_async(const LabelBuffers& labels, const LabelStatisticsBuffer
         return status;
     }
 
-    // 第 2 段: c0 から最も遠い点を c2 とする。
+    // Stage 2: the point farthest from c0 becomes c2.
     reset_best_kernel<<<linear_grid, linear_block, 0, stream>>>(
             quads->best_, quads->best_positive_, quads->best_negative_, labels.label_count_);
     status = check_kernel_launch("quad.reset_best_kernel.c2", -1, false, stream);
@@ -330,7 +337,7 @@ Status build_quads_async(const LabelBuffers& labels, const LabelStatisticsBuffer
         return status;
     }
 
-    // 第 3 段: 直線 c0c2 の左右で最も離れた点を c1 と c3 とする。
+    // Stage 3: the points farthest from the line c0c2 on either side become c1 and c3.
     farthest_from_line_kernel<<<grid, block, 0, stream>>>(
             labels.labels_, quads->corner_x_, quads->corner_y_, capacity, quads->best_positive_,
             quads->best_negative_, width, height);

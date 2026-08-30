@@ -1,218 +1,218 @@
-# 知的財産・ライセンス方針
+# Intellectual Property and Licensing Policy
 
-## 目的
+## Purpose
 
-ArUco3 の CUDA 実装において、公式 ArUco、OpenCV、論文、外部実装の code と知的財産を適切に取り扱い、将来の商用利用と OpenCV へのコントリビュートを妨げないための方針を定義します。
+This document defines the policy for handling code and intellectual property from the official ArUco, OpenCV, the papers, and external implementations in this CUDA implementation of ArUco3, so that future commercial use and contributions to OpenCV are not obstructed.
 
 > [!CAUTION]
-> この文書は開発上のリスク管理方針であり、法律上の助言ではありません。商用公開、製品組込み、OpenCV への大規模な寄稿前には、対象国を定めて知的財産の専門家へ確認してください。
+> This document is a development risk-management policy, not legal advice. Before commercial release, product integration, or a large contribution to OpenCV, determine the countries involved and consult an intellectual property professional.
 
-## 対象範囲
+## Scope
 
-- 公式 ArUco library の GPLv3 code
-- ArUco3 論文に記載されたアルゴリズム
-- OpenCV の ArUco 実装
-- ArUco Dictionary と評価データ
-- 特許、商標、論文および図表
+- GPLv3 code of the official ArUco library
+- Algorithms described in the ArUco3 paper
+- OpenCV's ArUco implementation
+- The ArUco Dictionary and evaluation data
+- Patents, trademarks, papers, and figures
 
-## 現状
+## Current state
 
-- Universidad de Córdoba の公式 ArUco ページの表記を 2026-08-29 に確認しました。原文は次のとおりです (連絡先の個人 mail address は伏せています)。
+- The wording on the official ArUco page of the Universidad de Córdoba was checked on 2026-08-29. The original text is as follows (the rights holder's personal mail address is withheld).
 
-  > This software is licensed under GPLv3 license for personal, research and educational purposes. For a commercial license please contact [権利者の連絡先]
+  > This software is licensed under GPLv3 license for personal, research and educational purposes. For a commercial license please contact [rights holder's contact]
 
-- GPLv3 自体は商用利用を一律に禁止する license ではありません。上の表記が GPLv3 への追加条件を意図しているのか、単に商用向けの別 license を案内しているだけなのかは、この表記だけでは決まりません。**この点は未解決のままです。**
-- ただし**本 project はこの解釈に依存しません。** 公式 ArUco 配布物を取得も参照も利用もしていないためです。実装根拠は 2018 年論文と OpenCV 4.x に限定しており、Dictionary も OpenCV 由来です。上の表記が仮に厳しい側の意味であっても、本 project の成果物には及びません。
-- OpenCV は Apache-2.0 で配布され、OpenCV の ArUco3 対応は GPL 非互換 code に基づかないことを contribution checklist で確認して取り込まれています。
-- ただし **OpenCV 4.x は file ごとに license header が違います。** project 全体の LICENSE は Apache-2.0 ですが、`imgproc` の古い file は 3 条項 BSD の header を残し、Intel Corporation ほかを著作権者として挙げています。本 project が振る舞いを写した `cornersubpix.cpp`、`samplers.cpp`、`thresh.cpp`、`imgwarp.cpp`、`geometry.cpp` はいずれも 3 条項 BSD です。file ごとの内訳は [Code Provenance 記録](code-provenance.md) の PR-005 にあります。
-- 現在の OpenCV 4.x は従来方式だけではなく、`DetectorParameters::useAruco3Detection` によって 2018 年論文の高速検出戦略を有効化できます。
-- OpenCV 4.x は `DICT_ARUCO_MIP_36h12` を 6x6、250 code、最小 Hamming 距離 12 の定義済み Dictionary として収録しています。
-- 本リポジトリに、公式 ArUco または OpenCV の source code を貼り付けた file はありません。ただし `test/reference/test_corner_refine.cpp` の `oracle` namespace は、`cv::cornerSubPix` と `cv::getRectSubPix` の演算と評価順序を逐語で写しています。GPU 実装が写し間違えていないかを機の違いから切り離して測るためです。写し元は 3 条項 BSD であり、**保守的な扱いとして著作権表示と license 本文を repository root の `NOTICE` へ置きました。** 写しが法的に二次的著作物にあたるかの判断は専門家の確認を要します。
-- 本リポジトリの license は Apache License 2.0 とします。contribution も明示的な例外がない限り同 license で受け入れます。
+- GPLv3 itself is not a license that categorically prohibits commercial use. Whether the wording above is intended as an additional condition on GPLv3, or merely points to a separate commercial license, is not settled by that wording alone. **This point remains unresolved.**
+- However, **this project does not depend on that interpretation,** because it neither obtains, references, nor uses the official ArUco distribution. The implementation basis is limited to the 2018 paper and OpenCV 4.x, and the Dictionary also comes from OpenCV. Even if the wording above carries the stricter meaning, it does not reach the artifacts of this project.
+- OpenCV is distributed under Apache-2.0, and OpenCV's ArUco3 support was merged after confirming through the contribution checklist that it is not based on GPL-incompatible code.
+- However, **OpenCV 4.x uses different license headers on a per-file basis.** The project-wide LICENSE is Apache-2.0, but older files in `imgproc` retain 3-clause BSD headers and list Intel Corporation and others as copyright holders. The files whose behavior this project copied — `cornersubpix.cpp`, `samplers.cpp`, `thresh.cpp`, `imgwarp.cpp`, and `geometry.cpp` — are all 3-clause BSD. The per-file breakdown is in PR-005 of the [Code Provenance record](code-provenance.md).
+- Current OpenCV 4.x offers not only the conventional method: `DetectorParameters::useAruco3Detection` enables the fast detection strategy of the 2018 paper.
+- OpenCV 4.x includes `DICT_ARUCO_MIP_36h12` as a predefined Dictionary with 6x6 cells, 250 codes, and a minimum Hamming distance of 12.
+- No file in this repository contains pasted source code from the official ArUco or from OpenCV. However, the `oracle` namespace in `test/reference/test_corner_refine.cpp` copies the arithmetic and evaluation order of `cv::cornerSubPix` and `cv::getRectSubPix` verbatim. This is so that whether the GPU implementation copied them incorrectly can be measured separately from machine differences. The source of the copy is 3-clause BSD, and **as a conservative measure the copyright notice and license text were placed in the `NOTICE` at the repository root.** Judging whether the copy legally constitutes a derivative work requires confirmation by a professional.
+- The license of this repository is the Apache License 2.0. Contributions are also accepted under the same license unless there is an explicit exception.
 
-## 著作権とアルゴリズムの区別
+## Distinguishing copyright from algorithms
 
-一般に著作権が保護するのは、source code、object code、文書、図表等の具体的な表現です。アイデア、処理手順、operation method、数学的概念、アルゴリズムそのものは、通常は著作権による独占対象と区別されます。
+In general, copyright protects concrete expression such as source code, object code, documents, and figures. Ideas, procedures, operation methods, mathematical concepts, and algorithms themselves are normally distinguished from what copyright can monopolize.
 
-したがって、論文で公開されたアルゴリズムを理解し、GPL code の表現をコピーまたは翻案せず、独自の構造と code で実装した場合、その実装が GPL 派生物になるとは通常考えにくいです。ただし、次は避けます。
+Therefore, if an algorithm published in a paper is understood and implemented with its own structure and code, without copying or adapting the expression of GPL code, that implementation is not normally considered to become a GPL derivative work. However, the following are avoided.
 
-- GPL source code の逐語的または実質的なコピー。
-- 変数名だけを変えた移植。
-- 関数分割、制御構造、コメント、データ表現を高い類似性で維持した翻案。
-- GPL code を build または link して配布する構成。
-- GPL code から抽出した著作物性のある table、画像、test data の再配布。
+- Verbatim or substantial copying of GPL source code.
+- Porting that only renames variables.
+- Adaptation that preserves function decomposition, control structures, comments, and data representation with a high degree of similarity.
+- Build or link configurations that distribute GPL code.
+- Redistribution of copyrightable tables, images, or test data extracted from GPL code.
 
-## 特許
+## Patents
 
-特許は著作権および open-source license とは別です。アルゴリズムを独立実装しても、対象国で有効な patent claim に該当すれば問題になり得ます。
+Patents are separate from copyright and from open-source licenses. Even an independent implementation of an algorithm can be a problem if it falls within a patent claim that is in force in the country concerned.
 
-本 project は Apache License 2.0 で公開します。同 license 第 3 条により、寄稿者は自身が持つ必須特許について利用者へ license を許諾します。本 project は特許を保有していません。
+This project is published under the Apache License 2.0. Under Section 3 of that license, contributors grant users a license to their own essential patents. This project holds no patents.
 
-商用製品へ組み込む前には、販売予定国を定めたうえで、少なくとも次を実施します。
+Before integration into a commercial product, determine the countries of intended sale and carry out at least the following.
 
-1. 発明者名、大学名、論文名、優先日前後の patent family を検索する。
-2. 対象国で有効な claim を確認する。
-3. marker Dictionary の生成方法と検出方法を分けて確認する。
-4. 専門家による freedom-to-operate review の要否を判断する。
+1. Search patent families around the inventor names, university name, paper title, and priority date.
+2. Confirm which claims are in force in the countries concerned.
+3. Examine the marker Dictionary generation method and the detection method separately.
+4. Decide whether a freedom-to-operate review by a professional is required.
 
-**上記の調査結果および freedom-to-operate に関する検討は、本 repository では公開しません。** 特許に関する評価は法律専門家の領域であり、公開文書で扱う性質のものではないためです。
+**The results of the above investigation and any freedom-to-operate deliberation are not published in this repository.** Patent evaluation is the domain of legal professionals and is not the kind of thing to handle in a public document.
 
-利用者への注意として、**本 project を利用した製品の特許上の適法性は、利用者が自ら確認する必要があります。** Apache License 2.0 第 7 条・第 8 条のとおり、本 project は無保証で提供されます。
+As a note to users, **the patent-law legitimacy of a product that uses this project must be confirmed by the user.** As stated in Sections 7 and 8 of the Apache License 2.0, this project is provided without warranty.
 
-## OSS として公開してよいか
+## Is it acceptable to publish this as OSS?
 
-商用製品として実施できるか (freedom-to-operate) とは別の問いです。**source を Apache-2.0 で公開すること**に限って整理します。
+This is a separate question from whether it can be practiced as a commercial product (freedom-to-operate). The discussion here is limited to **publishing the source under Apache-2.0.**
 
-### 著作権と license: 障害は見当たりません
+### Copyright and licensing: no obstacles found
 
-| 確認事項 | 状態 | 根拠 |
+| Item checked | Status | Basis |
 | --- | --- | --- |
-| 公式 ArUco GPLv3 code の混入 | **無し** | 参照も取得もしていない。実装根拠は 2018 年論文と OpenCV 4.x。[Code Provenance 記録](code-provenance.md) に file と hash 単位で記録 |
-| 第三者 code の同梱 (vendoring) | **無し** | `third_party` / `vendor` 等の dir は存在しない。依存はすべて `find_package` で環境から解決する。**本 repository は第三者の code を 1 byte も配布しない** |
-| 依存の license | **すべて permissive** | OpenCV (Apache-2.0 と 3 条項 BSD の混在)、GoogleTest (3 条項 BSD)、CUDA Toolkit (NVIDIA EULA。**再配布せず**、利用者の環境で build する) |
-| copyleft 依存 | **無し** | 上記のとおり |
-| Dictionary data の出所 | **OpenCV** | Apache-2.0 の `getPredefinedDictionary()` 出力を変換。GPLv3 配布物からは抽出していない。OpenCV との byte 一致を test で継続検証 |
-| 写した code の attribution | **記載済み** | 3 条項 BSD の 5 file について著作権表示と license 本文を `NOTICE` へ保持 |
-| SPDX 表記 | **全 source file にあり** | 新規 file への付与を規約で定めている |
+| Contamination by official ArUco GPLv3 code | **None** | Neither referenced nor obtained. The implementation basis is the 2018 paper and OpenCV 4.x. Recorded per file and per hash in the [Code Provenance record](code-provenance.md) |
+| Bundled third-party code (vendoring) | **None** | No `third_party` / `vendor` or similar directory exists. All dependencies are resolved from the environment via `find_package`. **This repository distributes not one byte of third-party code** |
+| Licenses of dependencies | **All permissive** | OpenCV (a mix of Apache-2.0 and 3-clause BSD), GoogleTest (3-clause BSD), CUDA Toolkit (NVIDIA EULA. **Not redistributed**; built in the user's own environment) |
+| Copyleft dependencies | **None** | As above |
+| Origin of the Dictionary data | **OpenCV** | Converted from the output of the Apache-2.0 `getPredefinedDictionary()`. Not extracted from a GPLv3 distribution. Byte-level agreement with OpenCV is continuously verified by tests |
+| Attribution for copied code | **Recorded** | The copyright notices and license text for the 5 3-clause BSD files are kept in `NOTICE` |
+| SPDX markings | **Present in all source files** | Applying them to new files is required by the coding rules |
 
-**この範囲では、Apache-2.0 での source 公開を妨げるものは見つかりませんでした。**
+**Within this scope, nothing was found that prevents publishing the source under Apache-2.0.**
 
-### 特許
+### Patents
 
-**「OSS だから特許は関係ない」は成り立ちません。** 日本の特許法 2 条 3 項は program の譲渡・提供を実施に含み、米国でも頒布は 35 U.S.C. §271 の対象です。無償であることは実施か否かを左右しません。
+**"It's OSS, so patents don't apply" does not hold.** Article 2(3) of the Japanese Patent Act includes the transfer and provision of a program within "working" the invention, and in the United States distribution likewise falls under 35 U.S.C. §271. Being free of charge does not determine whether it is working the invention.
 
-本 project は特許を保有せず、Apache License 2.0 第 3 条により寄稿者からの特許 license が利用者へ及びます。第三者特許との関係については上の「特許」を参照してください。
+This project holds no patents, and under Section 3 of the Apache License 2.0 the patent license from contributors extends to users. For the relationship with third-party patents, see "Patents" above.
 
-### 商標: 調査しました。第 9 類に一般の computer program は指定されていません
+### Trademarks: investigated. Class 9 does not designate computer programs in general
 
-2026-08-29 に TMview (EUIPO/TMDN の全世界横断 database) と Toreru 商標検索を headless browser で開き、`aruco` の全世界 209 件を取得しました。
+On 2026-08-29, TMview (the worldwide cross-jurisdiction database of EUIPO/TMDN) and the Toreru trademark search were opened in a headless browser, and all 209 worldwide records for `aruco` were retrieved.
 
-**米国には `ARUCO` の商標がありません。** 米国の登録・出願は 6 件ありますが、いずれも `JARUCO`、`DARUCOT`、`HARUCO`、`DRARUCO`、`SUBARUCONNECT` という別の標章です。標章そのものが `ARUCO` と一致するものは 0 件でした。
+**There is no `ARUCO` trademark in the United States.** There are 6 US registrations and applications, but each of them is a different mark: `JARUCO`, `DARUCOT`, `HARUCO`, `DRARUCO`, or `SUBARUCONNECT`. Zero marks matched `ARUCO` itself.
 
-**日本には `ARUCO` / `aruco` と同一の商標が 8 件あります。** 本 project に関係しうるのは第 9 類を持つ次の 2 件です。
+**In Japan there are 8 trademarks identical to `ARUCO` / `aruco`.** The 2 below, which have Class 9, are the ones that could relate to this project.
 
-| 登録番号 | 標章 | 権利者 | 区分 | 存続期間満了日 |
+| Registration number | Mark | Rights holder | Classes | Expiration date |
 | --- | --- | --- | --- | --- |
-| 第5509717号 | ＡＲＵＣＯ | 株式会社学研ホールディングス | 09、16 | 2032-07-27 |
-| 第5711433号 | ａｒｕｃｏ | 株式会社学研ホールディングス | 09、16、39、41、43 | 2034-10-17 |
+| No. 5509717 | ＡＲＵＣＯ | Gakken Holdings Co., Ltd. | 09, 16 | 2032-07-27 |
+| No. 5711433 | ａｒｕｃｏ | Gakken Holdings Co., Ltd. | 09, 16, 39, 41, 43 | 2034-10-17 |
 
-いずれも旅行 guide「地球の歩き方」系列の商標で、株式会社ダイヤモンド・ビッグ社から学研ホールディングスへ移転済みです (第5711433号は 2020-12-10 に移転申請、2021-01-22 に移転登録)。2024-09-27 に更新申請済みで、**現に維持されています。**
+Both are trademarks in the "Chikyu no Arukikata" travel guide family, and have been transferred from Diamond-Big Co., Ltd. to Gakken Holdings (for No. 5711433, the transfer was applied for on 2020-12-10 and registered on 2021-01-22). A renewal was applied for on 2024-09-27, and **they are currently maintained.**
 
-**第 9 類の指定商品は次のとおりで、一般の computer program を含みません。**
+**The designated goods in Class 9 are as follows, and do not include computer programs in general.**
 
-- 第5509717号 第 9 類: 映写フィルム、スライドフィルム、スライドフィルム用マウント
-- 第5711433号 第 9 類: 家庭用テレビゲーム機用プログラム、携帯用液晶画面ゲーム機用のプログラムを記憶させた電子回路及び CD-ROM、レコード、インターネットを利用して受信し及び保存することができる音楽ファイル、同じく画像ファイル、録画済みビデオディスク及びビデオテープ、映写フィルム、スライドフィルム、スライドフィルム用マウント、ダウンロード可能な電子書籍、電子出版物
+- No. 5509717, Class 9: 映写フィルム、スライドフィルム、スライドフィルム用マウント (cinematographic films, slide films, slide film mounts)
+- No. 5711433, Class 9: 家庭用テレビゲーム機用プログラム、携帯用液晶画面ゲーム機用のプログラムを記憶させた電子回路及び CD-ROM、レコード、インターネットを利用して受信し及び保存することができる音楽ファイル、同じく画像ファイル、録画済みビデオディスク及びビデオテープ、映写フィルム、スライドフィルム、スライドフィルム用マウント、ダウンロード可能な電子書籍、電子出版物 (programs for home video game machines; electronic circuits and CD-ROMs storing programs for handheld games with liquid crystal displays; phonograph records; music files that can be received and stored via the Internet, and likewise image files; pre-recorded video discs and video tapes; cinematographic films, slide films, slide film mounts; downloadable electronic books and electronic publications)
 
-**「電子計算機用プログラム」は、どちらにも指定されていません。** 指定されている program は家庭用テレビゲーム機用と携帯ゲーム機用に限られます。
+**"電子計算機用プログラム" (computer programs) is designated in neither of them.** The programs that are designated are limited to those for home video game machines and handheld game machines.
 
-そのほかの日本の同一商標は、ロート製薬 (第6805531号、第 35 類、健康促進を目的とする景品交換用ポイントの発行・管理)、西垣靴下 (第6109871号、第 25 類、靴下)、学研ホールディングス (第5326799号、第 39・41・43 類) です。学研ホールディングスは 2026-04-17 に第 18・24・25 類で 3 件を新規出願し、審査中です。
+The other identical trademarks in Japan belong to Rohto Pharmaceutical (No. 6805531, Class 35, issuance and management of points exchangeable for prizes for the purpose of health promotion), Nishigaki Socks (No. 6109871, Class 25, socks), and Gakken Holdings (No. 5326799, Classes 39, 41, and 43). Gakken Holdings filed 3 new applications in Classes 18, 24, and 25 on 2026-04-17, which are under examination.
 
-**Universidad de Córdoba および ArUco の著者を権利者とする商標は、全世界 209 件のいずれにもありませんでした。**
+**No trademark held by the Universidad de Córdoba or by the authors of ArUco was found among any of the 209 worldwide records.**
 
-### 学研ホールディングスの登録についての判断
+### Conclusion on the Gakken Holdings registrations
 
-**2026-08-29 に、学研ホールディングスの登録は本 project の妨げにならないと判断しました。** 第 9 類の指定商品が家庭用・携帯用ゲーム機向け program と出版物・映像音楽 file に限られ、一般の computer program を含まないためです。**この判断は本 project の判断であり、専門家の意見ではありません。**
+**On 2026-08-29 it was judged that the Gakken Holdings registrations are not an obstacle to this project,** because the designated goods in Class 9 are limited to programs for home and handheld game machines and to publications and video/music files, and do not include computer programs in general. **This is this project's own judgment, not a professional opinion.**
 
-### 残る論点は考案者側の未登録商標です
+### The remaining issue is an unregistered trademark on the originators' side
 
-登録の面では妨げが無いため、残るのは**未登録の商標としての保護** (不正競争防止法 2 条 1 項 1 号・2 号) です。**問題になりうるのは学研ホールディングスではなく、`ArUco` の考案者側です。** 計算機視覚の分野で `ArUco` は marker 方式の名称として広く通用しており、登録が無くても周知表示として扱われる余地があります。
+Since registrations pose no obstacle, what remains is **protection as an unregistered trademark** (Article 2(1)(i) and (ii) of the Unfair Competition Prevention Act). **The party that could be at issue is not Gakken Holdings but the originators of `ArUco`.** In the field of computer vision, `ArUco` is widely understood as the name of a marker scheme, and there is room for it to be treated as a well-known indication even without registration.
 
-これに対する材料は次のとおりです。
+The material bearing on this is as follows.
 
-- **Universidad de Córdoba と著者 5 名は、全世界 209 件のいずれにも商標を持ちません。** 登録による権利主張の基盤がありません。
-- **OpenCV 自身が `aruco` を module 名として長く使っています。** Apache-2.0 の主要 library が同名の module を公開し続けている事実は、この分野で名称が技術方式の記述として通用していることを示します。
-- 本 project は方針 9 のとおり、名称を互換対象と技術方式の明示にのみ用い、提携・承認を示唆しません。README と `NOTICE` にその旨を記載しています。
+- **The Universidad de Córdoba and the 5 authors hold no trademark among any of the 209 worldwide records.** There is no registration-based foundation for asserting rights.
+- **OpenCV itself has long used `aruco` as a module name.** The fact that a major Apache-2.0 library continues to publish a module of that name shows that in this field the name functions as a description of a technical scheme.
+- As stated in policy 9, this project uses the name only to indicate the compatibility target and the technical scheme, and does not suggest affiliation or endorsement. The README and `NOTICE` state this.
 
-**それでも不正競争防止法上の評価は行っていません。** 上記は材料であって判断ではありません。
+**Even so, no evaluation under the Unfair Competition Prevention Act has been performed.** The above is material, not a conclusion.
 
-### 商標調査の限界
+### Limits of the trademark investigation
 
-- 209 件は TMview 収録分です。TMview に参加していない官庁の登録は含みません。
-- 本節の情報源は TMview と Toreru であり、**J-PlatPat での一次確認はしていません。** 調査時、J-PlatPat は保守停止と SPA の描画不能により操作できませんでした。
-- 指定商品の類否を類似群コードで対比してはいません。
+- The 209 records are those held by TMview. Registrations from offices that do not participate in TMview are not included.
+- The sources for this section are TMview and Toreru; **no primary confirmation was made on J-PlatPat.** At the time of the investigation, J-PlatPat could not be operated due to a maintenance outage and a failure of the SPA to render.
+- The similarity of designated goods was not compared using similar group codes.
 
-### 判断
+### Conclusions
 
-**著作権・license の面では公開できる状態です。商標も、名称の使用を妨げる登録は見つからず、見つかった登録 (学研ホールディングス) は本 project の妨げにならないと判断しました。**
+**In terms of copyright and licensing, the project is in a publishable state. As for trademarks, no registration was found that prevents use of the name, and the registrations that were found (Gakken Holdings) were judged not to be an obstacle to this project.**
 
-残るのは次の 2 つです。
+Two things remain.
 
-1. **特許のうち OSS 公開でも消えない部分。** 上の「特許」のとおり、第三者特許との関係は本 repository では扱いません。
-2. **考案者側の未登録商標。** 登録は存在しませんが、不正競争防止法上の評価は行っていません。
+1. **The part of the patent question that does not disappear even with OSS publication.** As stated in "Patents" above, the relationship with third-party patents is not handled in this repository.
+2. **An unregistered trademark on the originators' side.** No registration exists, but no evaluation under the Unfair Competition Prevention Act has been performed.
 
-## Dictionary の取扱い
+## Handling of the Dictionary
 
-`DICT_ARUCO_MIP_36h12` に関する「生成」は、次の処理を区別します。
+Regarding "generation" of `DICT_ARUCO_MIP_36h12`, the following operations are distinguished.
 
-| 処理 | OpenCV 4.x で可能か | 本 project の扱い |
+| Operation | Possible in OpenCV 4.x? | Handling in this project |
 | --- | --- | --- |
-| 既定の `DICT_ARUCO_MIP_36h12` を取得する | 可能。`getPredefinedDictionary()` を使用する | CPU 基準および互換データの正本とする |
-| 指定 ID の marker image を生成する | 可能。`Dictionary::generateImageMarker()` を使用する | test fixture の生成に使用できる |
-| 新しい custom Dictionary を生成する | 可能。`extendDictionary()` を使用できる | 既定 MIP Dictionary とは別物として扱う |
-| MILP を解いて既定 MIP Dictionary と同一集合を再生成する | 論文から原理的には実装可能だが、OpenCV API は同一集合の再現を保証しない | 初期 scope 外。solver、制約、seed、tie-break を固定しても byte 単位の一致を別途検証する |
+| Obtain the predefined `DICT_ARUCO_MIP_36h12` | Yes. Use `getPredefinedDictionary()` | Treated as the authoritative source for the CPU baseline and compatibility data |
+| Generate a marker image for a given ID | Yes. Use `Dictionary::generateImageMarker()` | Can be used to generate test fixtures |
+| Generate a new custom Dictionary | Yes. `extendDictionary()` can be used | Treated as distinct from the predefined MIP Dictionary |
+| Solve the MILP and regenerate the same set as the predefined MIP Dictionary | Implementable in principle from the paper, but the OpenCV API does not guarantee reproduction of the same set | Out of the initial scope. Even with the solver, constraints, seed, and tie-break fixed, byte-level agreement is verified separately |
 
-定義済み Dictionary を CUDA の constant memory 等へ変換する場合は、OpenCV の `bytesList` と全 4 回転について byte 単位で比較する test を必須とします。詳細は [Dictionary 方針](dictionaries.md) を参照してください。
+When converting a predefined Dictionary into CUDA constant memory or the like, a test that compares byte by byte against OpenCV's `bytesList` for all 4 rotations is mandatory. See the [Dictionary policy](dictionaries.md) for details.
 
-### 使用してよい情報源
+### Information sources that may be used
 
-- ArUco3 論文に記載されたアルゴリズム、数式、評価条件。
-- OpenCV の公開 API と観測可能な入出力。
-- Apache-2.0 の OpenCV source code。ただし、利用または改変箇所と notice を記録する。
-- permissive license の第三者実装。license と code provenance を記録する。
-- 一般的な画像処理アルゴリズムと CUDA programming technique。
+- Algorithms, formulas, and evaluation conditions described in the ArUco3 paper.
+- OpenCV's public API and observable inputs and outputs.
+- Apache-2.0 OpenCV source code, provided that the parts used or modified and the notices are recorded.
+- Third-party implementations under permissive licenses, with the license and code provenance recorded.
+- General image processing algorithms and CUDA programming techniques.
 
-### 使用しない情報源
+### Information sources that are not used
 
-- 公式 ArUco GPLv3 code の実装詳細を移植目的で参照すること。
-- license が不明な gist、forum attachment、生成 code。
-- commercial license の内容が不明な proprietary code。
+- Referring to implementation details of the official ArUco GPLv3 code for the purpose of porting.
+- Gists, forum attachments, and generated code whose license is unknown.
+- Proprietary code whose commercial license terms are unknown.
 
-### 互換性評価
+### Compatibility evaluation
 
-公式 ArUco または OpenCV を executable として実行し、同じ入力に対する出力を比較することは、source code のコピーとは分離して扱います。評価時は version、license、実行 command、設定を記録します。
+Running the official ArUco or OpenCV as an executable and comparing outputs for the same input is treated separately from copying source code. During evaluation, the version, license, execution command, and settings are recorded.
 
-## Code provenance 記録
+## Code provenance record
 
-実装単位または PR ごとに、次を記録します。
+For each implementation unit or PR, the following is recorded.
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
-| Implementation | 対象 module / file |
-| Basis | 論文、仕様、独自設計、参照実装 |
-| Source version | DOI、URL、repository commit |
-| License | Apache-2.0、MIT、BSD 等 |
-| Reused expression | コピーまたは改変した code / table の有無 |
-| Patent review | 未実施、簡易検索済み、専門家確認済み |
+| Implementation | Target module / file |
+| Basis | Paper, specification, original design, reference implementation |
+| Source version | DOI, URL, repository commit |
+| License | Apache-2.0, MIT, BSD, etc. |
+| Reused expression | Whether any code / table was copied or modified |
+| Patent review | Not performed, quick search done, confirmed by a professional |
 
-## Apache License 2.0 の運用
+## Operating under the Apache License 2.0
 
-- repository root の `LICENSE` を正本とする。
-- 新規 source file には `SPDX-License-Identifier: Apache-2.0` を記載する。
-- Apache-2.0 code を取り込む場合は、元の copyright、patent、trademark、attribution notice を保持する。
-- upstream に `NOTICE` がある第三者 code を配布する場合は、必要な attribution を本 repository の `NOTICE` へ追加する。
-- 3 条項 BSD の header を持つ file から振る舞いを写した場合も、著作権表示・条件・免責を `NOTICE` へ保持する。Apache-2.0 だけを前提にすると、この保持義務を落とす。
-- 著作権者の名称を、本 project の宣伝や推奨の示唆に使わない。3 条項 BSD の第 3 条による。
-- contribution は Apache License 2.0 Section 5 に従う。
+- The `LICENSE` at the repository root is authoritative.
+- New source files carry `SPDX-License-Identifier: Apache-2.0`.
+- When incorporating Apache-2.0 code, preserve the original copyright, patent, trademark, and attribution notices.
+- When distributing third-party code that has a `NOTICE` upstream, add the required attribution to this repository's `NOTICE`.
+- When behavior is copied from a file carrying a 3-clause BSD header, the copyright notice, conditions, and disclaimer are likewise kept in `NOTICE`. Assuming Apache-2.0 alone would drop this preservation obligation.
+- Do not use the names of copyright holders to suggest promotion or endorsement of this project. This follows from clause 3 of the 3-clause BSD.
+- Contributions follow Section 5 of the Apache License 2.0.
 
-## 目標
+## Goals
 
-- repository 全体を Apache License 2.0 で公開可能にする。
-- 公式 ArUco GPLv3 code を含めず、GPL 派生物ではないことを code provenance で説明できるようにする。
-- OpenCV へ寄稿する code が Apache-2.0 contribution checklist を満たすようにする。
-- 商用利用前に必要な patent clearance を完了する。
+- Make the entire repository publishable under the Apache License 2.0.
+- Include no official ArUco GPLv3 code, and be able to explain through code provenance that this is not a GPL derivative work.
+- Ensure that code contributed to OpenCV satisfies the Apache-2.0 contribution checklist.
+- Complete the patent clearance required before commercial use.
 
-## 未確定事項
+## Open questions
 
-- 公式 ArUco ページの commercial-use 表記と GPLv3 本文の関係。表記そのものは 2026-08-29 に確認済み。解釈は未解決だが、本 project は公式配布物を使っていないため依存しない。
-- OpenCV から取得した定義済み Dictionary の attribution を `NOTICE` と source header のどちらへ記載するか。現時点では `NOTICE` へ記載している。
-- `ArUco` について、**考案者側の未登録商標としての保護** (不正競争防止法) の評価。登録は全世界に存在しないことを 2026-08-29 に確認済みです。学研ホールディングスの登録は同日、本 project の妨げにならないと判断しました。
+- The relationship between the commercial-use wording on the official ArUco page and the text of GPLv3. The wording itself was confirmed on 2026-08-29. The interpretation remains unresolved, but this project does not depend on it because it does not use the official distribution.
+- Whether attribution for the predefined Dictionary obtained from OpenCV should be stated in `NOTICE` or in the source headers. At present it is stated in `NOTICE`.
+- Evaluation of **protection as an unregistered trademark on the originators' side** (Unfair Competition Prevention Act) for `ArUco`. It was confirmed on 2026-08-29 that no registration exists anywhere in the world. On the same day, the Gakken Holdings registrations were judged not to be an obstacle to this project.
 
-## 関連
+## See also
 
-- [Code Provenance 記録](code-provenance.md)
-- [Dictionary 方針](dictionaries.md)
+- [Code Provenance record](code-provenance.md)
+- [Dictionary policy](dictionaries.md)
 
-## 参考資料
+## References
 
 - [Universidad de Córdoba: ArUco](https://www.uco.es/investiga/grupos/ava/portfolio/aruco/)
 - [WIPO: Copyright](https://www.wipo.int/en/web/copyright)

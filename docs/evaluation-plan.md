@@ -1,182 +1,182 @@
-# 評価計画
+# Evaluation Plan
 
-## 目的
+## Purpose
 
-CUDA 実装の正確性、性能、device memory 使用量、移植性を、再現可能な条件で評価するための方法を定めます。CUDA が常に CPU より速いとは仮定せず、CPU が有利な条件を同じ精度で示すことを目的に含みます。
+This document defines how we evaluate the correctness, performance, device memory usage, and portability of the CUDA implementation under reproducible conditions. We do not assume that CUDA is always faster than the CPU; showing the conditions under which the CPU wins, with the same precision, is part of the purpose.
 
-本書は測り方の定義です。得られた結果は [Benchmark 報告](benchmark-report.md) と [正確性評価の結果](accuracy-report.md) にあります。
+This document defines how we measure. The results themselves are in the [Benchmark Report](benchmark-report.md) and the [Accuracy Evaluation Results](accuracy-report.md).
 
-## 対象範囲
+## Scope
 
-比較の基準は OpenCV の ArUco3 検出戦略 (CPU) であり、比較対象は本 repository の CUDA 実装です。次の 3 機で測ります。
+The comparison baseline is the OpenCV ArUco3 detection strategy (CPU), and the subject of comparison is the CUDA implementation in this repository. We measure on the following three machines.
 
-| 機体 | architecture | GPU | GPU の種別 | CC | CUDA |
+| Machine | Architecture | GPU | GPU type | CC | CUDA |
 | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | aarch64 | NVIDIA GB10 | 統合 | 12.1 | 13.0 |
-| Jetson AGX Orin | aarch64 | Orin | 統合 | 8.7 | 11.4 |
-| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | 単体 | 12.0 | 13.0 |
+| DGX Spark GB10 | aarch64 | NVIDIA GB10 | Integrated | 12.1 | 13.0 |
+| Jetson AGX Orin | aarch64 | Orin | Integrated | 8.7 | 11.4 |
+| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | Discrete | 12.0 | 13.0 |
 
-統合 GPU 2 機と単体 GPU 1 機という構成は、統合 GPU 固有の結果と一般に成り立つ結果を切り分けるためです。統合 GPU では host と device が同一物理 memory を共有するため、転送の費用が単体 GPU と異なります。ただし実測では単体 GPU でも転送費用は小さく、統合 GPU の DGX Spark GB10 の方が大きく出ています。理由は特定できていません。入力 memory の種別では統合と単体がはっきり分かれ、managed memory は単体 GPU で 6.4 から 30 倍遅く、統合 GPU では 1.01 から 1.22 倍にとどまります。
+The configuration of two integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally. On an integrated GPU, the host and the device share the same physical memory, so transfer costs differ from a discrete GPU. In our measurements, however, transfer cost is small even on the discrete GPU, and it comes out larger on the integrated-GPU DGX Spark GB10. We have not identified the reason. Input memory kind does divide integrated and discrete clearly: managed memory is 6.4 to 30 times slower on the discrete GPU, while on integrated GPUs it stays within 1.01 to 1.22 times.
 
-入力は合成 corpus です。実画像データセットは扱いません。姿勢推定も対象外です。
+The input is a synthetic corpus. We do not handle real-image datasets. Pose estimation is also out of scope.
 
-## 現状
+## Current state
 
-合成 corpus 生成器、CPU 基準 runner、4 経路の測定 harness、ground truth との正確性評価器がそろっており、下記の条件で測定できます。device 常駐入力の経路は 3 機で測っています。host 入力を含む経路は、入力 memory 種別の比較に用いています。
+The synthetic corpus generator, the CPU reference runner, the measurement harness for four routes, and the accuracy evaluator against ground truth are all in place, and we can measure under the conditions below. The device-resident input route is measured on all three machines. The routes that take host input are used for comparing input memory kinds.
 
-### 比較する経路
+### Routes compared
 
-| ID | 経路 | 測定区間 |
+| ID | Route | Measured interval |
 | --- | --- | --- |
-| `CPU` | OpenCV ArUco3 | `cv::Mat` 入力から結果取得まで |
-| `Hybrid` | GPU で前処理と二値化、CPU で候補抽出と decode | 各段と同期を個別に計測 |
-| `CUDA-Resident` | device 常駐入力の CUDA 経路 | GPU 上の画像から device 上の結果まで |
-| `CUDA-E2E` | host 入力の CUDA 経路 | upload、検出、download、同期を含む |
+| `CPU` | OpenCV ArUco3 | From `cv::Mat` input to obtaining the result |
+| `Hybrid` | Preprocessing and thresholding on the GPU, candidate extraction and decode on the CPU | Each stage and synchronization measured separately |
+| `CUDA-Resident` | CUDA route with device-resident input | From an image on the GPU to results on the device |
+| `CUDA-E2E` | CUDA route with host input | Includes upload, detection, download, and synchronization |
 
-経路の識別子は測定結果 JSONL に現れる文字列と同じです。集計時に読み替えず、そのまま使います。
+The route identifiers are the same strings that appear in the measurement result JSONL. We use them as they are during aggregation, without renaming.
 
-### 入力 memory の種別
+### Input memory kinds
 
-入力 buffer の memory 種別は、経路とは独立した測定軸として記録します。
+The memory kind of the input buffer is recorded as a measurement axis independent of the route.
 
-| 記号 | memory 種別 | 測定区間で起きること |
+| Symbol | Memory kind | What happens in the measured interval |
 | --- | --- | --- |
-| `M-Pageable` | pageable host memory | driver が中継へ写してから DMA する |
-| `M-Pinned` | page-locked host memory | DMA が直接読む。page-locked への写しは測定区間の外で 1 度だけ行う |
-| `M-Managed` | managed memory | 明示的な copy は無い。device が触った時点で page が移送され、同期と cache の費用は残る |
-| `M-Device` | device 常駐 | 上流処理が GPU 上にある場合 |
+| `M-Pageable` | Pageable host memory | The driver copies into a staging buffer, then DMAs |
+| `M-Pinned` | Page-locked host memory | DMA reads directly. The copy into page-locked memory happens once, outside the measured interval |
+| `M-Managed` | Managed memory | There is no explicit copy. Pages migrate the moment the device touches them, and the synchronization and cache costs remain |
+| `M-Device` | Device-resident | For when the upstream processing is on the GPU |
 
-`M-Pinned` の写しを測定区間の外へ置くのは、この軸が測るのが**入力 buffer の種別**であって写しの費用ではないためです。毎 frame 写すと種別の差が写しの費用に埋もれます。
+We place the `M-Pinned` copy outside the measured interval because this axis measures the **kind of the input buffer**, not the cost of the copy. Copying every frame would bury the difference between kinds in the cost of the copy.
 
-### 測定区間
+### Measured interval
 
-測定するのは検出だけです。画像の読み込みと checksum は含みません。実時間処理では PNG を復号しないうえ、1 反復ごとに読み込むと復号が測定区間を支配し、検出時間の比較として成立しないためです。
+We measure detection only. Image loading and checksums are not included. Real-time processing does not decode PNG, and if we loaded the image on every iteration, decoding would dominate the measured interval and the comparison would no longer be a comparison of detection time.
 
 ```mermaid
 flowchart LR
-    L["画像の読み込み<br/>checksum<br/>初期化・memory 確保"] -.測定区間の外.-> S
-    subgraph S["測定区間"]
+    L["Image loading<br/>checksum<br/>initialization / memory allocation"] -.outside the measured interval.-> S
+    subgraph S["Measured interval"]
         direction LR
-        I["入力の受け渡し<br/>(経路により有無)"] --> D["検出"] --> R["結果の取り出しと同期<br/>(経路により有無)"]
+        I["Passing the input<br/>(present or not depending on the route)"] --> D["Detection"] --> R["Retrieving results and synchronization<br/>(present or not depending on the route)"]
     end
 ```
 
-初期化と memory 確保は測定区間から外しますが、捨てずに別項目として記録します。CUDA 経路は文脈の生成と kernel の読み込みで、定常状態の数百倍の費用が process ごとに 1 度発生します。暖機後の分位点だけを見るとこの費用が現れず、単発の検出や短い burst での比較ができません。
+Initialization and memory allocation are excluded from the measured interval, but they are not discarded: we record them as a separate item. On the CUDA routes, context creation and kernel loading incur a cost several hundred times the steady state, once per process. Looking only at post-warmup percentiles hides this cost and makes it impossible to compare single detections or short bursts.
 
-### 入力条件
+### Input conditions
 
-| 項目 | 値 |
+| Item | Value |
 | --- | --- |
-| 解像度 | 640x480、1280x720、1920x1080、3840x2160 |
-| 画像形式 | 8-bit grayscale |
-| マーカー数 | 0、1、4、16、上限近傍 |
-| マーカー辺長 | 8、16、32、64、128 pixel 以上 |
-| 劣化条件 | 回転、射影歪み、ぼけ、noise、照度差、部分遮蔽、画像境界 |
-| Dictionary | `DICT_ARUCO_MIP_36h12` に固定 |
+| Resolution | 640x480, 1280x720, 1920x1080, 3840x2160 |
+| Image format | 8-bit grayscale |
+| Marker count | 0, 1, 4, 16, near the upper limit |
+| Marker side length | 8, 16, 32, 64, 128 pixels and above |
+| Degradation conditions | Rotation, projective distortion, blur, noise, illumination difference, partial occlusion, image border |
+| Dictionary | Fixed to `DICT_ARUCO_MIP_36h12` |
 
-対応 Dictionary を広げる方針は [Dictionary 方針](dictionaries.md) にあります。corpus の生成規則と ground truth の求め方は [corpus 生成器](../tools/corpusgen/corpus_generator.md) にあります。
+The policy for widening dictionary support is in the [Dictionary Policy](dictionaries.md). The corpus generation rules and how ground truth is derived are in the [corpus generator](../tools/corpusgen/corpus_generator.md).
 
-同じ seed で生成した corpus 画像は、aarch64 と x86_64 で 91 場面中 54 場面が一致しません。差は画素の 0.1% 未満、最大 4 階調です。同一 architecture 内の比較には影響しませんが、architecture をまたいで四隅の誤差を比べる場合はこの差を考慮します。
+Corpus images generated with the same seed differ between aarch64 and x86_64 in 54 of 91 scenes. The difference is under 0.1% of pixels, with a maximum of 4 gray levels. This does not affect comparisons within the same architecture, but when comparing corner errors across architectures, we take this difference into account.
 
-### 測定条件
+### Measurement conditions
 
-| 項目 | 決め方 |
+| Item | How it is decided |
 | --- | --- |
-| CPU core | 種別で固定する。番号では固定しない |
-| OpenCV の thread 数 | 1 に固定する |
-| 分位点 | nearest-rank。補間しない |
-| 独立実行 | 同一条件を独立した process として複数回実行する |
-| 外れ値 | 削除しない。全分布を保存する |
+| CPU core | Fixed by core type, not by core number |
+| OpenCV thread count | Fixed to 1 |
+| Percentile | Nearest-rank. No interpolation |
+| Independent runs | The same condition is run multiple times as independent processes |
+| Outliers | Not removed. The full distribution is kept |
 
-CPU core を種別で固定するのは、性能 core と効率 core が混在する機で、番号だけを揃えると別種の core を比べることになるためです。DGX Spark GB10 の CPU 0 は効率 core、GeForce RTX 5070 Ti の機の CPU 0 は性能 core であり、どちらで測るかで CPU 経路の値は約 2 倍変わります。
+We fix the CPU core by type because on machines that mix performance cores and efficiency cores, matching only the core number means comparing cores of different types. CPU 0 on the DGX Spark GB10 is an efficiency core, while CPU 0 on the GeForce RTX 5070 Ti machine is a performance core, and the value for the CPU route changes by roughly a factor of 2 depending on which one we measure.
 
-分位点を nearest-rank にするのは、返る値が必ず実測値のいずれかになるようにするためです。補間すると集計方法が実装依存になり、環境をまたぐ比較が成立しません。
+We use nearest-rank percentiles so that the returned value is always one of the actual measurements. Interpolation makes the aggregation method implementation-dependent, and comparisons across environments no longer hold.
 
-独立した process で複数回実行するのは、1 回の実行内の分位点が process ごとの memory 配置による変動を捉えないためです。実行間ばらつきは GPU 経路の方が CPU 経路より 1 桁大きく、結果には必ず併記します。前後比較で変化を切り分けたい場合は `setarch -R` で ASLR を無効にし、その旨を記録します。
+We run multiple times as independent processes because percentiles within a single run do not capture the variation caused by per-process memory layout. Run-to-run variance is an order of magnitude larger on the GPU routes than on the CPU route, and we always report it alongside the results. When we want to isolate a change in a before-and-after comparison, we disable ASLR with `setarch -R` and record that we did so.
 
-### 正確性指標
+### Accuracy metrics
 
-- precision と recall
-- false positive 数
-- ID と rotation の一致率
-- 四隅座標の RMSE と最大誤差
-- マーカー辺長、角度、劣化条件ごとの検出率
-- CPU 基準との差異件数および差異画像
+- Precision and recall
+- Number of false positives
+- ID and rotation agreement rate
+- RMSE and maximum error of the corner coordinates
+- Detection rate by marker side length, angle, and degradation condition
+- Number of differences from the CPU reference, and the differing images
 
-CPU 基準の結果は互換性の基準であって、ground truth ではありません。合成 corpus では生成時の真値を ground truth として併用します。
+The CPU reference result is a compatibility baseline, not ground truth. For the synthetic corpus, we also use the true values from generation time as ground truth.
 
-recall は 3 区分で示します。ArUco3 検出戦略は、縮小後の 1 辺が下限を下回るマーカーを原理上検出しません。corpus はこの下限を下回る大きさを意図的に含むため、全体の recall は下限に支配されます。全体、下限以上、下限未満を分けないと、実装の取りこぼしと戦略上の限界を区別できません。指標の定義は [正確性評価の指標](../tools/evaluate/accuracy.md) にあります。
+We report recall in three categories. The ArUco3 detection strategy inherently cannot detect markers whose side, after downscaling, falls below a lower limit. The corpus deliberately includes sizes below this limit, so the overall recall is dominated by that limit. Unless we separate overall, at or above the limit, and below the limit, we cannot distinguish misses by the implementation from the limits of the strategy. The definitions of the metrics are in the [Accuracy Evaluation Metrics](../tools/evaluate/accuracy.md).
 
-### 性能指標
+### Performance metrics
 
-- `T_kernel`: CUDA event で測るカーネル時間
-- `T_end_to_end`: 入力準備から結果取得までの wall-clock
-- latency: p50、p95、p99
-- throughput: 連続処理時の frame/s
-- device memory の最大使用量と、frame ごとの確保回数
-- 1 枚目の結果が出るまでの時間と、CUDA の文脈生成にかかる時間
-- CPU 使用率、GPU 使用率、対象機で取得できる消費電力
+- `T_kernel`: Kernel time measured with CUDA events
+- `T_end_to_end`: Wall-clock time from input preparation to obtaining the result
+- Latency: p50, p95, p99
+- Throughput: frames/s during continuous processing
+- Peak device memory usage, and the number of allocations per frame
+- Time until the first image produces a result, and the time taken by CUDA context creation
+- CPU utilization, GPU utilization, and power consumption where obtainable on the target machine
 
-`T_kernel` は現在記録していません。段ごとの時間は host 同期を含む wall-clock であり、`T_end_to_end` と同じ性質の値です。両者を混ぜて集計しません。
+We do not currently record `T_kernel`. The per-stage times are wall-clock values that include host synchronization, which makes them the same kind of value as `T_end_to_end`. We do not mix the two in aggregation.
 
-### 測定手順
+### Measurement procedure
 
-1. hardware、OS、CUDA、driver、compiler、OpenCV、power mode、clock を記録する。CPU の core 構成、測定に使った core、ASLR の状態も記録する。
-2. CPU を core 種別で固定する。使用する Jetson は AGX Orin Developer Kit、power mode は MAXN とする。`--cpu-list` で指定し、どの core を使ったかを結果へ残す。
-3. 入力と detector parameters を固定する。ArUco3 検出戦略の設定は、縮小率 `fxfy` の実効値も併せて記録する。`minMarkerLengthRatioOriginalImg` の既定値は 0.0 であり、この場合は `useAruco3Detection` を有効にしても縮小が起きない。
-4. 初期化と memory 確保を測定区間から分離し、別項目として記録する。
-5. 暖機の後に測定する。暖機と反復の回数は結果へ記録する。
-6. 外れ値を削除せず、集計方法と全分布を保存する。
-7. 同一条件を独立した process として複数回実行し、実行間ばらつきを報告する。
-8. **CPU が速い条件を含めて crossover point を求める。** 有利な側だけを報告しない。
-9. CPU 基準の測定値が桁違いに外れていないかを確かめる。[OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118) の報告者は環境と設定が不明な参考値を挙げている。これは合格基準ではなく、測定条件を疑うための sanity check として扱う。
+1. Record the hardware, OS, CUDA, driver, compiler, OpenCV, power mode, and clocks. Also record the CPU core configuration, the cores used for the measurement, and the ASLR state.
+2. Pin the CPU by core type. The Jetson used is the AGX Orin Developer Kit, with power mode MAXN. Specify with `--cpu-list` and keep a record in the results of which cores were used.
+3. Fix the input and the detector parameters. For the ArUco3 detection strategy settings, also record the effective value of the downscale factor `fxfy`. The default of `minMarkerLengthRatioOriginalImg` is 0.0, in which case no downscaling occurs even with `useAruco3Detection` enabled.
+4. Separate initialization and memory allocation from the measured interval, and record them as a separate item.
+5. Measure after warmup. Record the warmup and iteration counts in the results.
+6. Do not remove outliers; keep the aggregation method and the full distribution.
+7. Run the same condition multiple times as independent processes, and report the run-to-run variance.
+8. **Determine the crossover point, including the conditions where the CPU is faster.** Do not report only the favorable side.
+9. Check that the CPU reference measurements are not off by an order of magnitude. The reporter of [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118) cites reference values whose environment and settings are unknown. These are not a pass criterion; treat them as a sanity check for questioning the measurement conditions.
 
-再現に必要な command は [Benchmark 報告](benchmark-report.md) と [正確性評価の結果](accuracy-report.md) の測定の再現節にあります。測定 harness の設計は [測定 harness](../bench/benchmark_harness.md)、CPU 基準の実行は [CPU 基準 runner](../reference/reference_runner.md) にあります。
+The commands needed for reproduction are in the Reproducing the measurements sections of the [Benchmark Report](benchmark-report.md) and the [Accuracy Evaluation Results](accuracy-report.md). The design of the measurement harness is in the [Measurement Harness](../bench/benchmark_harness.md), and running the CPU reference is covered in the [CPU Reference Runner](../reference/reference_runner.md).
 
-### 評価が満たすべき条件
+### Conditions the evaluation must satisfy
 
-- 正確性の結果が対象条件で安定して再現する。
-- Compute Sanitizer で memory error と race が検出されない。
-- 3 機すべてで同一の test corpus が通る。
-- 性能結果に測定範囲と同期点が明記されている。
-- CUDA が有利な条件と、CPU が有利な条件の両方を説明できる。
+- The accuracy results reproduce stably under the target conditions.
+- Compute Sanitizer detects no memory errors and no races.
+- The same test corpus passes on all three machines.
+- The performance results state the measured interval and the synchronization points explicitly.
+- We can explain both the conditions where CUDA wins and the conditions where the CPU wins.
 
-合成 corpus に対しては上記を満たしています。実画像に対する再現性は今後の課題です。
+For the synthetic corpus, the above are satisfied. Reproducibility on real images remains future work.
 
-### 成果物
+### Deliverables
 
-- machine-readable な環境情報と測定結果 (`docs/measurements/`)
-- 集計表とグラフ
-- CPU 基準との差異画像
-- 再現 command
-- benchmark 報告と正確性評価の結果
+- Machine-readable environment information and measurement results (`docs/measurements/`)
+- Aggregate tables and graphs
+- Images that differ from the CPU reference
+- Reproduction commands
+- The benchmark report and the accuracy evaluation results
 
-大容量の画像や動画は Git repository へ直接 commit せず、保存先と checksum を manifest へ記録します。
+Large images and videos are not committed directly to the Git repository; we record their storage location and checksum in a manifest.
 
-## 目標
+## Goals
 
-- 実画像データセットの注釈結果を真値として、同じ指標を出す。
-- CUDA event で段ごとのカーネル時間を測り、wall-clock と分離して記録する。
-- crossover point を実画像で確かめる。合成 corpus で得た境界は輪郭点数に支配されており、実画像では動く可能性がある。
-- 640x480 より小さい場面と、4K を超える解像度を corpus へ加え、境界の内側と外側を確かめる。
-- 消費電力あたりの検出数を、取得できる機体で測る。
+- Produce the same metrics using annotations of a real-image dataset as ground truth.
+- Measure per-stage kernel time with CUDA events and record it separately from wall-clock.
+- Confirm the crossover point on real images. The boundary obtained on the synthetic corpus is dominated by contour point count, and it may move on real images.
+- Add scenes smaller than 640x480 and resolutions above 4K to the corpus, and check both inside and outside the boundary.
+- Measure detections per unit of power consumption on the machines where it can be obtained.
 
-## 未確定事項
+## Open questions
 
-- 測定時に GPU の動作周波数を固定するか、既定のまま測るか。固定するなら `nvidia-smi --lock-gpu-clocks` の可否を機種ごとに確かめる必要がある。
-- CPU 経路を 1 thread に固定した比較だけで足りるか。多 thread の CPU 経路とは比較していない。
-- 実画像データセットの入手条件と配布条件。
-- 許容する四隅座標の誤差と、性能改善率の数値基準。
-- corpus 画像が architecture 間で一致しない原因。
-- CUDA Toolkit の version 差 (Jetson は 11.4、他 2 機は 13.0) が測定値へ与える影響。切り分けていない。
+- Whether to lock the GPU clock frequency during measurement or measure at the default. If we lock it, we need to check per model whether `nvidia-smi --lock-gpu-clocks` is possible.
+- Whether a comparison with the CPU route fixed to 1 thread is enough on its own. We have not compared against a multi-threaded CPU route.
+- The terms under which a real-image dataset can be obtained and distributed.
+- The acceptable corner coordinate error, and numeric criteria for the performance improvement rate.
+- The reason corpus images do not match across architectures.
+- The effect of the CUDA Toolkit version difference (11.4 on the Jetson, 13.0 on the other two machines) on the measurements. We have not isolated it.
 
-## 関連
+## See also
 
-- [Benchmark 報告](benchmark-report.md)
-- [正確性評価の結果](accuracy-report.md)
-- [ロードマップ](roadmap.md)
-- [検出パイプライン設計](design/detector-pipeline.md)
-- [host と device の間の memory 受け渡し](design/memory-transfer.md)
-- [測定 harness](../bench/benchmark_harness.md)
-- [正確性評価 CLI](../tools/evaluate/main.md)
-- [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
+- [Benchmark Report](benchmark-report.md)
+- [Accuracy Evaluation Results](accuracy-report.md)
+- [Roadmap](roadmap.md)
+- [Detection Pipeline Design](design/detector-pipeline.md)
+- [Memory Transfer Between Host and Device](design/memory-transfer.md)
+- [Measurement Harness](../bench/benchmark_harness.md)
+- [Accuracy Evaluation CLI](../tools/evaluate/main.md)
+- [ADR-0002: Fix the build infrastructure and target environment baseline](adr/0002-toolchain-and-target-baseline.md)

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 合成 corpus 生成器を検証する。
+// Verifies the synthetic corpus generator.
 //
-// 重要な性質は 2 つある。
-//   1. seed を固定すれば同じ画像が再生成できる。
-//   2. manifest の四隅が真値であり、CPU 基準実装の検出結果と一致する。
-// 2 は corpus 生成器と CPU 基準 runner を相互に検証することにもなる。
+// Two properties matter:
+//   1. Fixing the seed reproduces the same image.
+//   2. The corners in the manifest are ground truth and agree with what the CPU
+//      reference implementation detects.
+// Property 2 also cross-validates the corpus generator and the CPU reference
+// runner against each other.
 #include "corpus_generator.hpp"
 
 #include <gtest/gtest.h>
@@ -32,8 +34,9 @@ using aruco3cuda::corpusgen::SceneSpec;
 class CorpusGeneratorTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 出力先を test ごとに分ける。ctest -j で複数の test が同時に走ると、
-        // 共有 directory では他の test の TearDown に消される。
+        // Give each test its own output directory. Under ctest -j several
+        // tests run at once, and a shared directory would be wiped by another
+        // test's TearDown.
         const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
         this->config_.output_dir_ = std::string("/tmp/aruco3cuda_corpus_test_") +
                                     (info != nullptr ? info->name() : "unknown") + "_" +
@@ -58,7 +61,7 @@ SceneSpec clean_spec(const std::string& name) {
     return spec;
 }
 
-// 正常系: preset が既知の名前でのみ成功する。
+// Happy path: presets succeed only for known names.
 TEST(CorpusPresetTest, builds_known_presets_only) {
     std::vector<SceneSpec> specs;
     for (const std::string& name : aruco3cuda::corpusgen::known_presets()) {
@@ -69,7 +72,8 @@ TEST(CorpusPresetTest, builds_known_presets_only) {
     EXPECT_FALSE(aruco3cuda::corpusgen::build_preset("smoke", nullptr));
 }
 
-// 正常系: preset の scene 名が重複しない。重複すると file が上書きされる。
+// Happy path: scene names within a preset are unique. Duplicates would
+// overwrite each other's files.
 TEST(CorpusPresetTest, scene_names_are_unique_within_preset) {
     for (const std::string& name : aruco3cuda::corpusgen::known_presets()) {
         std::vector<SceneSpec> specs;
@@ -81,11 +85,11 @@ TEST(CorpusPresetTest, scene_names_are_unique_within_preset) {
         }
         std::sort(names.begin(), names.end());
         EXPECT_EQ(std::adjacent_find(names.begin(), names.end()), names.end())
-                << "preset=" << name << " に重複した scene 名がある";
+                << "preset=" << name << " has duplicate scene names";
     }
 }
 
-// 正常系: 同じ seed からは byte 単位で同じ画像が得られる。
+// Happy path: the same seed yields a byte-for-byte identical image.
 TEST_F(CorpusGeneratorTest, same_seed_reproduces_identical_image) {
     const SceneSpec spec = clean_spec("determinism");
     GeneratedScene first;
@@ -103,7 +107,7 @@ TEST_F(CorpusGeneratorTest, same_seed_reproduces_identical_image) {
     }
 }
 
-// 正常系: seed が違えば内容が変わる。
+// Happy path: a different seed changes the content.
 TEST_F(CorpusGeneratorTest, different_seed_changes_content) {
     const SceneSpec spec = clean_spec("seed_variation");
     GeneratedScene first;
@@ -118,8 +122,8 @@ TEST_F(CorpusGeneratorTest, different_seed_changes_content) {
     EXPECT_NE(first.sha256_, second.sha256_);
 }
 
-// 境界値: scene_index が違えば独立した乱数列になる。
-// scene を追加しても既存 scene が変わらないことの裏付けになる。
+// Boundary: a different scene_index yields an independent random sequence.
+// This backs up the claim that adding a scene does not change existing ones.
 TEST_F(CorpusGeneratorTest, scene_index_produces_independent_randomness) {
     SceneSpec spec = clean_spec("index_a");
     GeneratedScene first;
@@ -133,8 +137,9 @@ TEST_F(CorpusGeneratorTest, scene_index_produces_independent_randomness) {
     EXPECT_NE(first.sha256_, second.sha256_);
 }
 
-// 正常系: manifest の四隅が CPU 基準実装の検出結果と一致する。
-// corpus 生成器と CPU 基準 runner の相互検証になる。
+// Happy path: the corners in the manifest agree with what the CPU reference
+// implementation detects. This cross-validates the corpus generator and the CPU
+// reference runner.
 TEST_F(CorpusGeneratorTest, ground_truth_corners_match_cpu_detection) {
     const SceneSpec spec = clean_spec("ground_truth");
     GeneratedScene scene;
@@ -149,8 +154,9 @@ TEST_F(CorpusGeneratorTest, ground_truth_corners_match_cpu_detection) {
             << error;
     ASSERT_EQ(result.detections_.size(), scene.markers_.size());
 
-    // ground truth を ID で引けるようにする。preset は ID の重複を避けていないため、
-    // 同じ ID が複数ある場合は最も近い候補と対応付ける。
+    // Look up ground truth by ID. Presets do not avoid duplicate IDs, so when
+    // several markers share an ID we pair each detection with the closest
+    // candidate.
     for (const auto& detection : result.detections_) {
         double best_error = 1e9;
         for (const auto& truth : scene.markers_) {
@@ -165,12 +171,13 @@ TEST_F(CorpusGeneratorTest, ground_truth_corners_match_cpu_detection) {
             }
             best_error = std::min(best_error, worst_corner);
         }
-        // 劣化のない合成画像であり、subpixel 補正込みで 1.5 pixel 以内に収まる。
+        // The synthetic image has no degradation, so with subpixel refinement
+        // the error stays within 1.5 pixels.
         EXPECT_LT(best_error, 1.5) << "id=" << detection.id_;
     }
 }
 
-// 正常系: side_ratio が manifest へ記録される。
+// Happy path: side_ratio is recorded in the manifest.
 TEST_F(CorpusGeneratorTest, records_side_ratio) {
     SceneSpec spec = clean_spec("side_ratio");
     spec.marker_side_px_ = 64.0;
@@ -183,16 +190,17 @@ TEST_F(CorpusGeneratorTest, records_side_ratio) {
     EXPECT_NEAR(scene.markers_[0].side_ratio_, 0.05, 1e-9);
 }
 
-// 正常系: 検出下限の式が導出どおりの値を返す。
-// 下限は tau_i そのものではなく S + L * tau_i である。
+// Happy path: the detection-threshold formula returns the derived value.
+// The lower bound is S + L * tau_i, not tau_i itself.
 TEST(CorpusThresholdTest, minimum_detectable_side_follows_derivation) {
     EXPECT_NEAR(aruco3cuda::corpusgen::minimum_detectable_side_px(32, 1280, 0.05), 96.0, 1e-9);
     EXPECT_NEAR(aruco3cuda::corpusgen::minimum_detectable_side_px(32, 1920, 0.05), 128.0, 1e-9);
-    // tau_i = 0 では縮小が発生せず、下限は S に等しい。
+    // At tau_i = 0 no downscaling happens, so the lower bound equals S.
     EXPECT_NEAR(aruco3cuda::corpusgen::minimum_detectable_side_px(32, 1280, 0.0), 32.0, 1e-9);
 }
 
-// 正常系: 境界にかかる配置では fully_inside_ が false になる。
+// Happy path: a placement that crosses the image border sets fully_inside_ to
+// false.
 TEST_F(CorpusGeneratorTest, marks_markers_outside_image_bounds) {
     SceneSpec spec = clean_spec("border_clip");
     spec.marker_count_ = 1;
@@ -206,7 +214,8 @@ TEST_F(CorpusGeneratorTest, marks_markers_outside_image_bounds) {
     EXPECT_FALSE(scene.markers_[0].fully_inside_);
 }
 
-// 境界値: マーカー 0 個でも生成でき、ground truth は空になる。
+// Boundary: a scene with zero markers still generates, with empty ground
+// truth.
 TEST_F(CorpusGeneratorTest, generates_scene_without_markers) {
     SceneSpec spec = clean_spec("empty");
     spec.marker_count_ = 0;
@@ -223,8 +232,10 @@ TEST_F(CorpusGeneratorTest, generates_scene_without_markers) {
     EXPECT_TRUE(result.detections_.empty());
 }
 
-// 正常系: 評価計画が挙げる劣化条件それぞれで生成でき、ground truth を保つ。
-// 歪み、照明、ぼけ、遮蔽は代表条件として個別に確認する必要がある。
+// Happy path: generation succeeds and ground truth is preserved for each
+// degradation condition listed in the evaluation plan. Distortion, lighting,
+// blur, and occlusion are representative conditions that each need to be
+// checked individually.
 TEST_F(CorpusGeneratorTest, generates_each_degradation_condition) {
     struct Condition {
         const char* name;
@@ -261,15 +272,17 @@ TEST_F(CorpusGeneratorTest, generates_each_degradation_condition) {
                 << condition.name << ": " << error;
         EXPECT_EQ(scene.markers_.size(), 2U) << condition.name;
         EXPECT_FALSE(scene.sha256_.empty()) << condition.name;
-        // 劣化を加えても ground truth は生成条件から定まり、変化しない。
+        // Even with degradation applied, ground truth is determined by the
+        // generation parameters and does not change.
         for (const auto& marker : scene.markers_) {
             EXPECT_GT(marker.side_ratio_, 0.0) << condition.name;
         }
     }
 }
 
-// 正常系: 同じ劣化条件は同じ seed から同じ画像を再生成する。
-// noise と歪みが乱数を消費するため、決定性は劣化条件でこそ確認する意味がある。
+// Happy path: the same degradation condition reproduces the same image from the
+// same seed. Noise and distortion consume random numbers, so determinism is
+// worth checking precisely under degradation.
 TEST_F(CorpusGeneratorTest, degraded_scene_is_reproducible) {
     SceneSpec spec = clean_spec("degraded_repro");
     spec.rotation_deg_ = 17.0;
@@ -288,7 +301,7 @@ TEST_F(CorpusGeneratorTest, degraded_scene_is_reproducible) {
     EXPECT_EQ(first.sha256_, second.sha256_);
 }
 
-// 異常系: 設定値が範囲外なら生成しない。
+// Failure path: out-of-range settings generate nothing.
 TEST_F(CorpusGeneratorTest, rejects_out_of_range_settings) {
     GeneratedScene scene;
     std::string error;
@@ -315,7 +328,7 @@ TEST_F(CorpusGeneratorTest, rejects_out_of_range_settings) {
     EXPECT_FALSE(aruco3cuda::corpusgen::generate_scene(this->config_, unnamed, 0, &scene, &error));
 }
 
-// 異常系: 不正な spec と出力先を拒否する。
+// Failure path: rejects an invalid spec and an invalid output destination.
 TEST_F(CorpusGeneratorTest, rejects_invalid_input) {
     GeneratedScene scene;
     std::string error;
@@ -334,7 +347,8 @@ TEST_F(CorpusGeneratorTest, rejects_invalid_input) {
                                                        nullptr));
 }
 
-// 正常系: manifest が生成条件と ground truth を含む。
+// Happy path: the manifest contains the generation conditions and the ground
+// truth.
 TEST_F(CorpusGeneratorTest, manifest_contains_conditions_and_ground_truth) {
     const SceneSpec spec = clean_spec("manifest");
     GeneratedScene scene;

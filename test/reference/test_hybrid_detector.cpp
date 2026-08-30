@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// ハイブリッド経路を CPU 基準実装と突き合わせる。
+// Cross-checks the hybrid path against the CPU reference implementation.
 //
-// hybrid 経路が満たすべき条件は「合成画像の基本条件で ID と四隅を取得できる」ことである。
-// あわせて、CPU 基準との差異を分類できる状態にする。前処理と二値化が
-// OpenCV と一致しているため、ここで残る差は CPU 側の実装差に絞られる。
+// The condition the hybrid path has to meet is that it recovers IDs and corners
+// under the basic conditions of the synthetic images. Beyond that, the test keeps
+// the differences against the CPU reference classifiable. Preprocessing and
+// binarization already agree with OpenCV, so the differences that remain here are
+// narrowed down to implementation differences on the CPU side.
 #include "hybrid_detector.hpp"
 
 #include <gtest/gtest.h>
@@ -88,11 +90,11 @@ private:
     int height_px_ = 0;
 };
 
-/// 合成 corpus の 1 枚を仕様から生成して読み込む。
+/// Generates one image of the synthetic corpus from its spec and loads it.
 cv::Mat make_scene_from_spec(const aruco3cuda::corpusgen::SceneSpec& spec,
                              aruco3cuda::corpusgen::GeneratedScene* out_scene) {
     aruco3cuda::corpusgen::CorpusConfig config;
-    // 同じ binary を並行実行しても衝突しないよう process ごとに分ける。
+    // Keep the directory per process so that concurrent runs of the same binary do not collide.
     config.output_dir_ = "/tmp/aruco3cuda_hybrid_test_" + std::to_string(::getpid());
     config.seed_ = 20260827U;
     std::string error;
@@ -100,7 +102,7 @@ cv::Mat make_scene_from_spec(const aruco3cuda::corpusgen::SceneSpec& spec,
     return cv::imread(out_scene->path_, cv::IMREAD_GRAYSCALE);
 }
 
-/// 歪みの無い 1280x720 の場面を生成して読み込む。
+/// Generates an undistorted 1280x720 scene and loads it.
 cv::Mat make_scene(const std::string& name, int marker_count, double side_px,
                    aruco3cuda::corpusgen::GeneratedScene* out_scene) {
     aruco3cuda::corpusgen::SceneSpec spec;
@@ -112,7 +114,7 @@ cv::Mat make_scene(const std::string& name, int marker_count, double side_px,
     return make_scene_from_spec(spec, out_scene);
 }
 
-/// CPU 基準実装で同じ画像を検出する。
+/// Runs detection on the same image with the CPU reference implementation.
 aruco3cuda::reference::ReferenceResult detect_with_reference(const std::string& path,
                                                              const DetectorConfig& config) {
     aruco3cuda::reference::ReferenceConfig reference_config;
@@ -129,7 +131,8 @@ aruco3cuda::reference::ReferenceResult detect_with_reference(const std::string& 
     return result;
 }
 
-/// 検出結果を ID で対応付け、四隅の最大誤差を返す。対応が無ければ -1。
+/// Matches detections by ID and returns the largest corner error. Returns -1 when
+/// there is no match.
 double corner_error_for_id(const aruco3cuda::reference::ReferenceResult& reference,
                            const aruco3cuda::hybrid::HybridDetection& detection) {
     for (const auto& expected : reference.detections_) {
@@ -147,7 +150,7 @@ double corner_error_for_id(const aruco3cuda::reference::ReferenceResult& referen
     return -1.0;
 }
 
-// 異常系: 初期化前は検出できない。
+// Failure: detection is not possible before initialization.
 TEST(HybridDetectorTest, detect_before_initialize_fails) {
     HybridDetector detector;
     ImageViewU8 view;
@@ -157,7 +160,7 @@ TEST(HybridDetectorTest, detect_before_initialize_fails) {
     EXPECT_FALSE(message.empty());
 }
 
-// 異常系: 不正な設定と Dictionary を拒否する。
+// Failure: an invalid configuration and an invalid dictionary are rejected.
 TEST(HybridDetectorTest, rejects_invalid_initialization) {
     HybridDetector detector;
     std::string message;
@@ -175,10 +178,10 @@ TEST(HybridDetectorTest, rejects_invalid_initialization) {
               Status::kInvalidArgument);
 }
 
-// 異常系: 不正な画像 view を境界で拒否する。
+// Failure: an invalid image view is rejected at the boundary.
 TEST(HybridDetectorTest, rejects_invalid_image) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     HybridDetector detector;
     std::string message;
@@ -191,10 +194,11 @@ TEST(HybridDetectorTest, rejects_invalid_image) {
     EXPECT_EQ(detector.detect(view, nullptr, &message), Status::kInvalidArgument);
 }
 
-// 正常系: 合成画像から ID と四隅を取得できる。hybrid 経路の最低条件である。
+// Nominal: IDs and corners are recovered from a synthetic image. This is the minimum
+// condition for the hybrid path.
 TEST(HybridDetectorTest, detects_markers_in_synthetic_scene) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     aruco3cuda::corpusgen::GeneratedScene scene;
     const cv::Mat image = make_scene("hybrid_basic", 4, 128.0, &scene);
@@ -214,10 +218,10 @@ TEST(HybridDetectorTest, detects_markers_in_synthetic_scene) {
     HybridResult result;
     ASSERT_EQ(detector.detect(device.view(), &result, &message), Status::kOk) << message;
 
-    std::printf("[hybrid] 候補 %zu 検出 %zu GPU %.3f ms CPU %.3f ms\n", result.candidate_count_,
-                result.detections_.size(), result.gpu_ms_, result.cpu_ms_);
+    std::printf("[hybrid] candidates %zu detections %zu GPU %.3f ms CPU %.3f ms\n",
+                result.candidate_count_, result.detections_.size(), result.gpu_ms_, result.cpu_ms_);
 
-    // ground truth の ID を全て検出する。
+    // Every ground-truth ID is detected.
     ASSERT_EQ(result.detections_.size(), scene.markers_.size());
     for (const auto& truth : scene.markers_) {
         const bool found = std::any_of(result.detections_.begin(), result.detections_.end(),
@@ -226,17 +230,19 @@ TEST(HybridDetectorTest, detects_markers_in_synthetic_scene) {
     }
 }
 
-// 正常系: CPU 基準実装と ID が一致し、四隅の差を分類できる。
-// hybrid 経路が成立していることの確認に対応する。
+// Nominal: the IDs agree with the CPU reference implementation and the corner
+// differences can be classified. This is the confirmation that the hybrid path holds up.
 TEST(HybridDetectorTest, matches_cpu_reference_and_reports_differences) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
-    // 素の場面だけでなく、劣化と解像度も変えて比較する。縮小画像の生成は
-    // OpenCV と bit 単位では一致しないため、輪郭が動きやすい条件を含める。
+    // Compare not only plain scenes but also varying degradation and resolution.
+    // Generating the downscaled image does not agree with OpenCV bit for bit, so the
+    // cases include conditions under which the contours move easily.
     std::vector<aruco3cuda::corpusgen::SceneSpec> cases;
     {
-        // 既定は 1280x720、マーカー 4 枚、辺 128 px。ここから 1 つずつ変える。
+        // The baseline is 1280x720, four markers, 128 px per side. Each case changes
+        // one thing from there.
         aruco3cuda::corpusgen::SceneSpec base;
         base.width_px_ = 1280;
         base.height_px_ = 720;
@@ -264,7 +270,7 @@ TEST(HybridDetectorTest, matches_cpu_reference_and_reports_differences) {
         spec.marker_side_px_ = 112.0;
         cases.push_back(spec);
 
-        // ArUco3 の下限を下回る大きさ。両者とも検出しないことを確かめる。
+        // A size below the ArUco3 lower bound. This confirms that neither side detects it.
         spec = base;
         spec.name_ = "hybrid_too_small";
         spec.marker_count_ = 6;
@@ -312,8 +318,9 @@ TEST(HybridDetectorTest, matches_cpu_reference_and_reports_differences) {
         cases.push_back(spec);
     }
 
-    // ArUco3 有効時 (既定) と無効時 (OpenCV 既定) の両方で比較する。
-    // 原寸へ戻す処理が経路ごとに異なるため、片方だけでは足りない。
+    // Compare both with ArUco3 enabled (the default) and disabled (the OpenCV default).
+    // The step that maps back to the original scale differs between the two paths, so
+    // one of them alone would not be enough.
     struct ConfigCase {
         const char* label;
         DetectorConfig config;
@@ -349,13 +356,13 @@ TEST(HybridDetectorTest, matches_cpu_reference_and_reports_differences) {
 
             const auto reference = detect_with_reference(scene.path_, config);
 
-            // 差異を分類する。未検出、過検出、四隅ずれ。
+            // Classify the differences: missed, extra, and corner shift.
             std::size_t matched = 0;
             double worst_corner_error = 0.0;
             for (const auto& detection : result.detections_) {
                 const double error = corner_error_for_id(reference, detection);
                 if (error < 0.0) {
-                    continue;  // CPU 基準に無い ID。過検出として数える
+                    continue;  // An ID absent from the CPU reference; counted as extra.
                 }
                 ++matched;
                 worst_corner_error = std::max(worst_corner_error, error);
@@ -365,27 +372,30 @@ TEST(HybridDetectorTest, matches_cpu_reference_and_reports_differences) {
             worst_overall = std::max(worst_overall, worst_corner_error);
 
             std::printf(
-                    "[hybrid vs CPU] %s/%s: 基準 %zu 一致 %zu 未検出 %zu 過検出 %zu 四隅最大差 "
-                    "%.4f px\n",
+                    "[hybrid vs CPU] %s/%s: baseline %zu matched %zu missed %zu extra %zu "
+                    "largest corner difference %.4f px\n",
                     config_case.label, spec.name_.c_str(), reference.detections_.size(), matched,
                     missed, extra, worst_corner_error);
 
             EXPECT_EQ(missed, 0U) << spec.name_;
             EXPECT_EQ(extra, 0U) << spec.name_;
-            // 前処理と二値化が OpenCV と一致し、候補の grouping も同じ代表を
-            // 選ぶため、素の場面では四隅が完全に一致する。差が出るのは縮小
-            // 画像の生成が bit 単位では一致しないためで、上限は実測に基づく。
+            // Preprocessing and binarization agree with OpenCV, and candidate grouping
+            // picks the same representative, so on plain scenes the corners agree exactly.
+            // Differences appear because generating the downscaled image does not agree
+            // bit for bit, and the upper bound is based on measurement.
             EXPECT_LT(worst_corner_error, 0.5) << spec.name_;
         }
     }
-    std::printf("[hybrid vs CPU] 全 %zu 場面 x %zu 設定の四隅最大差 %.4f px\n", cases.size(),
-                std::size(config_cases), worst_overall);
+    std::printf(
+            "[hybrid vs CPU] largest corner difference over all %zu scenes x %zu configs "
+            "%.4f px\n",
+            cases.size(), std::size(config_cases), worst_overall);
 }
 
-// 正常系: 定常状態でフレームごとの確保が発生しない。
+// Nominal: in steady state no allocation happens per frame.
 TEST(HybridDetectorTest, steady_state_does_not_allocate_per_frame) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     aruco3cuda::corpusgen::GeneratedScene scene;
     const cv::Mat image = make_scene("hybrid_steady", 4, 128.0, &scene);
@@ -412,10 +422,10 @@ TEST(HybridDetectorTest, steady_state_does_not_allocate_per_frame) {
     }
 }
 
-// 正常系: 同じ入力からは同じ結果が得られる。
+// Nominal: the same input yields the same result.
 TEST(HybridDetectorTest, results_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     aruco3cuda::corpusgen::GeneratedScene scene;
     const cv::Mat image = make_scene("hybrid_determinism", 4, 128.0, &scene);
@@ -440,10 +450,10 @@ TEST(HybridDetectorTest, results_are_deterministic) {
     }
 }
 
-// 境界値: マーカーが無い画像では検出が 0 件になる。
+// Boundary: an image without markers yields no detections.
 TEST(HybridDetectorTest, reports_no_detection_for_empty_scene) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     aruco3cuda::corpusgen::GeneratedScene scene;
     const cv::Mat image = make_scene("hybrid_empty", 0, 128.0, &scene);
@@ -461,13 +471,16 @@ TEST(HybridDetectorTest, reports_no_detection_for_empty_scene) {
     EXPECT_TRUE(result.detections_.empty());
 }
 
-// 境界値: マーカーを黒枠が囲む場面でも CPU 基準と一致する。
+// Boundary: a scene where a black frame surrounds the marker still agrees with the
+// CPU reference.
 //
-// 黒枠の外周も四角形候補になり、マーカーを内側に含む。候補の木では
-// マーカーが子、枠が親になる。親を識別対象から外す経路を通す。
+// The outer edge of the black frame is a quadrilateral candidate too, and it
+// contains the marker inside it. In the candidate tree the marker is the child and
+// the frame is the parent. This exercises the path that drops the parent from
+// identification.
 TEST(HybridDetectorTest, matches_cpu_reference_for_nested_quads) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
@@ -475,7 +488,7 @@ TEST(HybridDetectorTest, matches_cpu_reference_for_nested_quads) {
     dictionary.generateImageMarker(101, 192, marker, 1);
 
     cv::Mat scene(720, 1280, CV_8UC1, cv::Scalar(255));
-    // マーカーの周りに余白を置き、その外側を黒枠で囲む。
+    // Leave a margin around the marker and surround it with a black frame.
     const cv::Rect marker_rect(544, 264, 192, 192);
     marker.copyTo(scene(marker_rect));
     const cv::Rect frame_rect(marker_rect.x - 40, marker_rect.y - 40, marker_rect.width + 80,
@@ -504,18 +517,18 @@ TEST(HybridDetectorTest, matches_cpu_reference_for_nested_quads) {
     double worst = 0.0;
     for (const auto& detection : result.detections_) {
         const double error = corner_error_for_id(reference, detection);
-        ASSERT_GE(error, 0.0) << "CPU 基準に無い id=" << detection.id_;
+        ASSERT_GE(error, 0.0) << "id absent from the CPU reference: id=" << detection.id_;
         worst = std::max(worst, error);
     }
-    std::printf("[hybrid vs CPU] nested: 検出 %zu 四隅最大差 %.4f px\n", result.detections_.size(),
-                worst);
+    std::printf("[hybrid vs CPU] nested: detections %zu largest corner difference %.4f px\n",
+                result.detections_.size(), worst);
     EXPECT_LT(worst, 0.5);
 }
 
-// 正常系: move してもそのまま検出できる。pimpl の move を確認する。
+// Nominal: detection still works after a move. This exercises the move of the pimpl.
 TEST(HybridDetectorTest, detector_can_be_moved) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     aruco3cuda::corpusgen::GeneratedScene scene;
     const cv::Mat image = make_scene("hybrid_move", 4, 128.0, &scene);

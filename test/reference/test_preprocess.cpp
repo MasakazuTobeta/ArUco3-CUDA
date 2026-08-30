@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 前処理 kernel を OpenCV の結果と突き合わせる。
+// Cross-checks the preprocessing kernels against the OpenCV results.
 //
-// 候補抽出の入力になるため、ここでの差は以降の全段階へ伝播する。
-// pyrDown は整数演算であり完全一致を要求する。resize は浮動小数点の
-// 丸めが残るため、許容差を実測して固定する。
+// This stage feeds candidate extraction, so any difference here propagates to
+// every stage downstream. pyrDown is integer arithmetic, so an exact match is
+// required. resize keeps floating-point rounding, so the tolerance is measured
+// and pinned down instead.
 #include "preprocess.hpp"
 
 #include <gtest/gtest.h>
@@ -42,10 +43,11 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 決定的な試験画像を作る。
+/// Builds a deterministic test image.
 ///
-/// 勾配と市松模様と noise を混ぜる。平坦な画像では補間の差が現れず、
-/// 一致していると誤って判断してしまう。
+/// Mixes a gradient, a checkerboard, and noise. On a flat image the differences
+/// in interpolation never show up, which would lead to the wrong conclusion that
+/// the two implementations agree.
 cv::Mat make_test_image(int width, int height, std::uint64_t seed) {
     cv::Mat image(height, width, CV_8UC1);
     std::mt19937_64 rng(seed);
@@ -61,7 +63,7 @@ cv::Mat make_test_image(int width, int height, std::uint64_t seed) {
     return image;
 }
 
-/// device 上の画像を保持する。test の中でだけ使う簡易な RAII。
+/// Holds an image on the device. A minimal RAII helper used only inside this test.
 class DeviceImage {
 public:
     DeviceImage() = default;
@@ -76,7 +78,8 @@ public:
     bool upload(const cv::Mat& image) {
         this->width_px_ = image.cols;
         this->height_px_ = image.rows;
-        // 幅と異なる pitch を使い、非連続配置でも正しく扱えることを同時に確認する。
+        // Use a pitch that differs from the width, so that a non-contiguous layout
+        // is exercised at the same time.
         this->pitch_bytes_ = static_cast<std::size_t>(image.cols) + 64U;
         const std::size_t bytes = this->pitch_bytes_ * static_cast<std::size_t>(image.rows);
         if (cudaMalloc(&this->data_, bytes) != cudaSuccess) {
@@ -105,7 +108,7 @@ private:
     int height_px_ = 0;
 };
 
-/// device 上の面を host の Mat へ取り出す。
+/// Copies a device-side plane back into a host Mat.
 cv::Mat download(const ImageViewU8& view) {
     cv::Mat result(view.height_px_, view.width_px_, CV_8UC1);
     const cudaError_t error =
@@ -144,7 +147,7 @@ Difference compare(const cv::Mat& expected, const cv::Mat& actual) {
     return difference;
 }
 
-/// 前処理を一式実行して buffer を返す。
+/// Runs the full preprocessing chain and holds on to the resulting buffers.
 class PreprocessFixture {
 public:
     bool run(const cv::Mat& image, const DetectorConfig& config) {
@@ -186,8 +189,8 @@ public:
     DeviceImage input_;
 };
 
-// 正常系: 縮小計画が観測仕様どおりの値を返す。
-// docs/design/detector-pipeline.md に記録した式と一致することを固定する。
+// Nominal: the downscale plan returns the values the observed specification calls for.
+// This pins the plan to the formulas recorded in docs/design/detector-pipeline.md.
 TEST(ScalePlanTest, matches_documented_formulas) {
     DetectorConfig config;
     config.use_aruco3_detection_ = true;
@@ -197,7 +200,8 @@ TEST(ScalePlanTest, matches_documented_formulas) {
     ScalePlan plan;
     ASSERT_EQ(aruco3cuda::detail::plan_scales(config, 1280, 720, &plan), Status::kOk);
     // fxfy = 32 / (32 + 1280 * 0.05) = 32 / 96
-    // OpenCV と同じく単精度で計算するため、許容差は単精度の分解能に合わせる。
+    // The computation runs in single precision, as OpenCV does, so the tolerance
+    // matches the resolution of single precision.
     EXPECT_NEAR(plan.fxfy_, 1.0 / 3.0, 1e-6);
     EXPECT_EQ(plan.segmentation_width_px_, 427);
     EXPECT_EQ(plan.segmentation_height_px_, 240);
@@ -207,9 +211,10 @@ TEST(ScalePlanTest, matches_documented_formulas) {
     EXPECT_LT(plan.closest_level_index_, plan.level_count_);
 }
 
-// 正常系: segmentation の寸法が OpenCV の計算と一致する。
-// OpenCV は fxfy を単精度で求め、寸法を cvRound で丸める。演算の型と
-// 丸め規約を揃えないと、境界で 1 pixel 食い違う。
+// Nominal: the segmentation size matches the OpenCV arithmetic.
+// OpenCV computes fxfy in single precision and rounds the size with cvRound.
+// Unless the arithmetic type and the rounding convention are matched, the sizes
+// disagree by one pixel at the boundaries.
 TEST(ScalePlanTest, segmentation_size_matches_opencv_arithmetic) {
     struct Case {
         int width;
@@ -232,7 +237,7 @@ TEST(ScalePlanTest, segmentation_size_matches_opencv_arithmetic) {
         ASSERT_EQ(aruco3cuda::detail::plan_scales(config, item.width, item.height, &plan),
                   Status::kOk);
 
-        // OpenCV と同じ式を同じ型で計算する。
+        // Compute the same formula in the same type OpenCV uses.
         const float side = static_cast<float>(item.side);
         const float longest = static_cast<float>(std::max(item.width, item.height));
         const float fxfy = side / (side + longest * item.ratio);
@@ -243,7 +248,7 @@ TEST(ScalePlanTest, segmentation_size_matches_opencv_arithmetic) {
     }
 }
 
-// 境界値: ArUco3 を無効にすると縮小せず pyramid も 1 段になる。
+// Boundary: with ArUco3 disabled there is no downscaling and the pyramid has a single level.
 TEST(ScalePlanTest, disabled_aruco3_has_no_downscale) {
     DetectorConfig config = DetectorConfig::opencv_defaults();
     ScalePlan plan;
@@ -254,7 +259,7 @@ TEST(ScalePlanTest, disabled_aruco3_has_no_downscale) {
     EXPECT_EQ(plan.level_count_, 1);
 }
 
-// 異常系: 不正な引数を拒否する。
+// Failure: invalid arguments are rejected.
 TEST(ScalePlanTest, rejects_invalid_arguments) {
     const DetectorConfig config;
     ScalePlan plan;
@@ -264,11 +269,11 @@ TEST(ScalePlanTest, rejects_invalid_arguments) {
     EXPECT_EQ(aruco3cuda::detail::plan_scales(config, 1280, 0, &plan), Status::kInvalidArgument);
 }
 
-// 正常系: pyramid が OpenCV の buildPyramid と完全に一致する。
-// pyrDown は整数演算であり、丸めまで含めて再現できる。
+// Nominal: the pyramid matches the OpenCV buildPyramid exactly.
+// pyrDown is integer arithmetic, so it can be reproduced down to the rounding.
 TEST(PyramidTest, matches_opencv_build_pyramid_exactly) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(640, 480, 20260827U);
     DetectorConfig config;
@@ -288,14 +293,14 @@ TEST(PyramidTest, matches_opencv_build_pyramid_exactly) {
 
         const Difference difference = compare(expected[level], download(view));
         EXPECT_EQ(difference.max_abs, 0)
-                << "level=" << level << " 一致率 " << (1.0 - difference.mismatch_ratio);
+                << "level=" << level << " agreement ratio " << (1.0 - difference.mismatch_ratio);
     }
 }
 
-// 正常系: level 0 は入力そのものを指し、複製しない。
+// Nominal: level 0 points at the input itself rather than copying it.
 TEST(PyramidTest, level_zero_references_input) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(320, 240, 7U);
     PreprocessFixture fixture;
@@ -305,7 +310,7 @@ TEST(PyramidTest, level_zero_references_input) {
     EXPECT_EQ(compare(image, download(level0)).max_abs, 0);
 }
 
-// 境界値: 範囲外の level は空の view を返す。
+// Boundary: a level outside the valid range returns an empty view.
 TEST(PyramidTest, out_of_range_level_returns_empty_view) {
     PreprocessBuffers buffers;
     buffers.level_count_ = 3;
@@ -313,23 +318,25 @@ TEST(PyramidTest, out_of_range_level_returns_empty_view) {
     EXPECT_EQ(aruco3cuda::detail::level_view(buffers, 3).data_, nullptr);
 }
 
-// 正常系: segmentation 画像が OpenCV の resize と 1 階調以内で一致する。
+// Nominal: the segmentation image matches the OpenCV resize to within one level.
 //
-// OpenCV の 8-bit INTER_LINEAR は INTER_LINEAR_EXACT と同じ結果を返す。
-// これは softdouble による軟件浮動小数点と ufixedpoint16 で構成された
-// bit exact 経路であり、平台間で同じ結果になることを目的としている。
-// kernel 内で再現するにはこの 2 つの数値型を移植する必要があり、前処理
-// 段階の代償として見合わない。
+// The OpenCV 8-bit INTER_LINEAR returns the same result as INTER_LINEAR_EXACT.
+// That is a bit-exact path built from software floating point (softdouble) and
+// ufixedpoint16, whose purpose is to produce identical results across platforms.
+// Reproducing it inside the kernel would mean porting both numeric types, which
+// is not worth the cost at the preprocessing stage.
 //
-// 差は最大 1 階調に収まる。この差が下流の適応的二値化で画素の白黒を
-// 入れ替える割合は、25% の画素へ無作為に 1 階調を加えた場合で 0.45% である。
-// 既知かつ定量化された差異として記録し、候補の差異分類ではこの分を
-// 候補抽出の設計差と区別する。
+// The difference stays within one level. The fraction of pixels whose black and
+// white the downstream adaptive threshold then swaps is 0.45% when one level is
+// added at random to 25% of the pixels. This is recorded as a known and
+// quantified difference, and when classifying candidate differences it is kept
+// apart from design differences in candidate extraction.
 //
-// 上限を 1 に固定することで、補間規約の食い違いのような別種の劣化を検出できる。
+// Pinning the upper bound at 1 lets a different kind of degradation, such as a
+// mismatch in the interpolation convention, be detected.
 TEST(SegmentationTest, matches_opencv_resize_within_one_level) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     struct Case {
         int width;
@@ -357,23 +364,25 @@ TEST(SegmentationTest, matches_opencv_resize_within_one_level) {
                 fixture.buffers_.segmentation_.pitch_bytes_, MemorySpace::kDevice};
         const Difference difference = compare(expected, download(segmentation_view));
 
-        // 1 階調を超える差は補間規約の食い違いを意味する。
+        // A difference beyond one level means the interpolation conventions disagree.
         EXPECT_LE(difference.max_abs, 1)
-                << item.width << "x" << item.height << " 最大差 " << difference.max_abs;
-        // 不一致の割合も上限を設ける。実測は最大 0.372 であり、
-        // 大きく増える変更は補間の劣化を意味する。
+                << item.width << "x" << item.height << " max difference " << difference.max_abs;
+        // Bound the mismatch ratio as well. The measured maximum is 0.372, and a
+        // change that raises it markedly means the interpolation has degraded.
         EXPECT_LE(difference.mismatch_ratio, 0.45)
-                << item.width << "x" << item.height << " 不一致率 " << difference.mismatch_ratio;
-        std::printf("[resize] %dx%d -> %dx%d  最大差 %d  不一致率 %.4f\n", item.width, item.height,
-                    fixture.plan_.segmentation_width_px_, fixture.plan_.segmentation_height_px_,
-                    difference.max_abs, difference.mismatch_ratio);
+                << item.width << "x" << item.height << " mismatch ratio "
+                << difference.mismatch_ratio;
+        std::printf("[resize] %dx%d -> %dx%d  max difference %d  mismatch ratio %.4f\n", item.width,
+                    item.height, fixture.plan_.segmentation_width_px_,
+                    fixture.plan_.segmentation_height_px_, difference.max_abs,
+                    difference.mismatch_ratio);
     }
 }
 
-// 境界値: 縮小率が 1 のとき segmentation は入力の複製になる。
+// Boundary: when the scale factor is 1 the segmentation is a copy of the input.
 TEST(SegmentationTest, copies_input_when_scale_is_one) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(320, 240, 11U);
     const DetectorConfig config = DetectorConfig::opencv_defaults();
@@ -388,11 +397,12 @@ TEST(SegmentationTest, copies_input_when_scale_is_one) {
     EXPECT_EQ(compare(image, download(segmentation_view)).max_abs, 0);
 }
 
-// 正常系: block 寸法を変えても結果が変わらない。
-// 機種別 tuning で block 寸法を動かすため、結果が寸法に依存しないことを固定する。
+// Nominal: the result does not depend on the block dimension.
+// Per-device tuning varies the block dimension, so the independence of the result
+// from that dimension is pinned down here.
 TEST(PreprocessTest, result_is_independent_of_block_dim) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(640, 480, 3U);
     cv::Mat reference;
@@ -412,7 +422,7 @@ TEST(PreprocessTest, result_is_independent_of_block_dim) {
     }
 }
 
-// 異常系: 不正な引数を拒否する。
+// Failure: invalid arguments are rejected.
 TEST(PreprocessTest, rejects_invalid_arguments) {
     const DetectorConfig config;
     EXPECT_EQ(aruco3cuda::detail::build_pyramid_async(nullptr, config, nullptr),
@@ -436,10 +446,10 @@ TEST(PreprocessTest, rejects_invalid_arguments) {
               Status::kInvalidArgument);
 }
 
-// 異常系: workspace の容量が足りなければ切り出しに失敗する。
+// Failure: carving out the buffers fails when the workspace capacity is too small.
 TEST(PreprocessTest, fails_when_workspace_is_too_small) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(640, 480, 5U);
     DeviceImage input;

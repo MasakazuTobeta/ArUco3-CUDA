@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   評価対象の実機へ repository を同期する。3 機で同じ commit を build して
-#   測定するため、同期の取りこぼしがあると「どの機で何を測ったか」が崩れる。
+# Purpose:
+#   Synchronize the repository to a target machine used for evaluation. The same
+#   commit is built and measured on three machines, so anything missed during the
+#   sync destroys the record of which machine measured what.
 #
-# 除外の注意:
-#   build 出力は転送しない。ただし除外 pattern は転送元 root からの相対で
-#   固定する。`build*` のように書くと `docker/scripts/build-opencv.sh` まで
-#   一致して転送されず、image の build が「file が無い」で失敗する。
-#   rsync は除外した file を受信側で削除しないため、一度届いた古い file が
-#   残り続けて気付きにくい。
+# Note on exclusions:
+#   Build outputs are not transferred. The exclusion patterns are anchored relative
+#   to the source root. Writing them as `build*` would also match
+#   `docker/scripts/build-opencv.sh`, which would then not be transferred and the
+#   image build would fail with a missing-file error. rsync does not delete excluded
+#   files on the receiving side, so a stale file that arrived once keeps lingering
+#   and is easy to miss.
 #
-#   .git も転送しない。実機では build と測定のみを行い、commit はしない。
+#   .git is not transferred either. The target machine only builds and measures; it
+#   never commits.
 #
-# 使用方法:
+# Usage:
 #   tools/sync-to-host.sh <user>@<host>
 #   tools/sync-to-host.sh <user>@<host> ~/ArUco3-CUDA
 #
-# 戻り値:
-#   0 = 同期して検証まで成功、1 = 失敗
+# Return value:
+#   0 = synchronized and verified, 1 = failed
 set -uo pipefail
 
-readonly kUsage="使用方法: $0 <user@host> [転送先 path]"
+readonly kUsage="usage: $0 <user@host> [destination path]"
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
   echo "${kUsage}" >&2
@@ -33,21 +36,21 @@ readonly kTarget="$1"
 readonly kRemotePath="${2:-~/ArUco3-CUDA}"
 readonly kSourceDir="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "同期元: ${kSourceDir}"
-echo "同期先: ${kTarget}:${kRemotePath}"
+echo "source: ${kSourceDir}"
+echo "destination: ${kTarget}:${kRemotePath}"
 
-# --delete で受信側の余分な file を消す。build 出力は除外しているため残る。
+# --delete removes extra files on the receiving side. Build outputs are excluded, so they survive.
 if ! rsync -a --delete \
     --exclude '/build/' \
     --exclude '/build-*/' \
     --exclude '.git' \
     "${kSourceDir}/" "${kTarget}:${kRemotePath}/"; then
-  echo "同期に失敗した" >&2
+  echo "synchronization failed" >&2
   exit 1
 fi
 
-# 追跡している file が全て届いたことを確認する。除外 pattern の書き間違いは
-# 転送されない file を静かに生むため、件数と checksum の両方で確かめる。
+# Confirm that every tracked file arrived. A mistake in an exclusion pattern
+# silently leaves files untransferred, so verify both the count and the checksums.
 readonly kManifest="$(mktemp)"
 trap 'rm -f "${kManifest}"' EXIT
 (cd "${kSourceDir}" && git ls-files -z | xargs -0 sha256sum) | sort -k2 > "${kManifest}"
@@ -61,14 +64,14 @@ readonly kRemoteSum="$(
 missing=0
 while read -r digest path; do
   if ! printf '%s\n' "${kRemoteSum}" | grep -qF "${digest}  ${path}"; then
-    echo "  不一致または欠落: ${path}"
+    echo "  mismatched or missing: ${path}"
     missing=$((missing + 1))
   fi
 done < "${kManifest}"
 
-echo "追跡 file ${kLocalCount} 件を検査"
+echo "checked ${kLocalCount} tracked files"
 if [ "${missing}" -ne 0 ]; then
-  echo "${missing} 件が同期先で一致しない" >&2
+  echo "${missing} files do not match on the destination" >&2
   exit 1
 fi
-echo "同期完了。全ての追跡 file が一致した"
+echo "synchronization complete; all tracked files match"

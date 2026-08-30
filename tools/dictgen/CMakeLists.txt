@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# OpenCV の定義済み Dictionary から packed codeword を生成する build 時 tool。
-# 生成物は repository へ commit し、OpenCV との一致は test で検証する。
+# Build-time tool that generates packed codewords from OpenCV's predefined Dictionary.
+# The generated files are committed to the repository, and their agreement with
+# OpenCV is verified by tests.
 add_executable(aruco3cuda_dictgen main.cpp)
 
 target_link_libraries(aruco3cuda_dictgen

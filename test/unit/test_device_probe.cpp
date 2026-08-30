@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// device probe の正常系、異常系、境界値を検証する。
+// Verifies the nominal, error, and boundary behavior of the device probe.
 //
-// 備考:
-//   CUDA device が存在しない環境でも test 自体は成立させる。device 依存の
-//   検証は device がある場合にのみ実行し、無い場合は skip として記録する。
+// Note:
+//   The test must still hold up in an environment with no CUDA device. Checks
+//   that depend on a device run only when one is present; otherwise they are
+//   recorded as skipped.
 #include "aruco3cuda/device_probe.hpp"
 
 #include <gtest/gtest.h>
@@ -23,14 +24,14 @@ int available_device_count() {
     return count;
 }
 
-// 異常系: nullptr を拒否する。
+// Error case: a null output pointer is rejected.
 TEST(DeviceProbeTest, device_count_rejects_null_output) {
     EXPECT_EQ(aruco3cuda::device_count(nullptr), aruco3cuda::Status::kInvalidArgument);
 }
 
-// 正常系: device 数を取得でき、非負値を書き込む。
-// helper が失敗を握り潰すため、この test が無いと device_count が常に失敗しても
-// 他の test が skip されるだけで気付けない。
+// Nominal: the device count can be queried and a non-negative value is written.
+// The helper swallows failures, so without this test a device_count that always
+// failed would merely skip the other tests and go unnoticed.
 TEST(DeviceProbeTest, device_count_succeeds_and_writes_non_negative) {
     int count = -1;
     const aruco3cuda::Status status = aruco3cuda::device_count(&count);
@@ -38,25 +39,25 @@ TEST(DeviceProbeTest, device_count_succeeds_and_writes_non_negative) {
     EXPECT_GE(count, 0);
 }
 
-// 異常系: nullptr を拒否する。
+// Error case: a null output pointer is rejected.
 TEST(DeviceProbeTest, probe_device_rejects_null_output) {
     EXPECT_EQ(aruco3cuda::probe_device(0, nullptr), aruco3cuda::Status::kInvalidArgument);
 }
 
-// 異常系: 負の index を拒否する。
+// Error case: a negative index is rejected.
 TEST(DeviceProbeTest, probe_device_rejects_negative_index) {
     aruco3cuda::DeviceProbeResult result;
     EXPECT_EQ(aruco3cuda::probe_device(-1, &result), aruco3cuda::Status::kInvalidArgument);
 }
 
-// 境界値: device 数そのものは有効な index ではない。
+// Boundary: the device count itself is not a valid index.
 TEST(DeviceProbeTest, probe_device_rejects_index_equal_to_device_count) {
     const int count = available_device_count();
     aruco3cuda::DeviceProbeResult result;
     EXPECT_EQ(aruco3cuda::probe_device(count, &result), aruco3cuda::Status::kInvalidArgument);
 }
 
-// 異常系: 失敗時に出力先を変更しない。
+// Error case: the output is left unchanged on failure.
 TEST(DeviceProbeTest, probe_device_leaves_output_unchanged_on_failure) {
     aruco3cuda::DeviceProbeResult result;
     result.compute_capability_major_ = 42;
@@ -65,11 +66,11 @@ TEST(DeviceProbeTest, probe_device_leaves_output_unchanged_on_failure) {
     EXPECT_EQ(result.compute_capability_major_, 42);
 }
 
-// 正常系: device が存在する場合に性質を取得できる。
+// Nominal: the device properties can be read when a device exists.
 TEST(DeviceProbeTest, probe_device_returns_properties_when_device_exists) {
     const int count = available_device_count();
     if (count == 0) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     aruco3cuda::DeviceProbeResult result;
     ASSERT_EQ(aruco3cuda::probe_device(0, &result), aruco3cuda::Status::kOk);
@@ -80,17 +81,17 @@ TEST(DeviceProbeTest, probe_device_returns_properties_when_device_exists) {
     EXPECT_FALSE(result.name_.empty());
 }
 
-// 正常系: 自己診断 kernel が期待どおりの計算結果を返す。
+// Nominal: the self-test kernel returns the expected computation result.
 TEST(DeviceProbeTest, self_test_succeeds_when_device_exists) {
     const int count = available_device_count();
     if (count == 0) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipped: no CUDA device is available in this environment";
     }
     EXPECT_EQ(aruco3cuda::run_device_self_test(0), aruco3cuda::Status::kOk)
             << aruco3cuda::last_cuda_error_message();
 }
 
-// 異常系と境界値: 範囲外および負の index を拒否する。
+// Error and boundary cases: out-of-range and negative indices are rejected.
 TEST(DeviceProbeTest, self_test_rejects_out_of_range_index) {
     const int count = available_device_count();
     EXPECT_EQ(aruco3cuda::run_device_self_test(count), aruco3cuda::Status::kInvalidArgument);

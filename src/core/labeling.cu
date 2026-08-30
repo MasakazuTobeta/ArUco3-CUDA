@@ -17,18 +17,21 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// 走査系 kernel の block あたり thread 数。
+/// Threads per block for the linear-traversal kernels.
 constexpr int kLinearThreads = 256;
-/// 外接矩形の初期値。atomicMin と atomicMax の単位元として使う。
+/// Initial values of the bounding box. Used as the identity elements for
+/// atomicMin and atomicMax.
 ///
-/// std::numeric_limits は device code から呼べないため、値を直接置く。
+/// std::numeric_limits cannot be called from device code, so the values are
+/// spelled out directly.
 constexpr std::int32_t kBoundsMinInitial = 2147483647;
 constexpr std::int32_t kBoundsMaxInitial = -2147483647 - 1;
 
-/// label 配列の根を辿る。
+/// Walks the label array to the root.
 ///
-/// 併合中の他 thread が親を書き換えても、親の値は必ず小さくなる方向へ
-/// しか動かない。そのため辿る先は有限で、無限 loop にはならない。
+/// Even when another thread rewrites a parent mid-merge, the parent value only
+/// ever moves toward smaller values. The chain to walk is therefore finite, and
+/// this cannot loop forever.
 __device__ std::int32_t find_root(const std::int32_t* labels, std::int32_t index) {
     while (labels[index] != index) {
         index = labels[index];
@@ -36,11 +39,11 @@ __device__ std::int32_t find_root(const std::int32_t* labels, std::int32_t index
     return index;
 }
 
-/// 2 つの成分を併合する。
+/// Merges two components.
 ///
-/// 小さい index を根とする。atomicMin の戻り値が期待どおりなら併合が
-/// 成立し、そうでなければ他 thread が先に書き換えているため、その値から
-/// 辿り直す。
+/// The smaller index becomes the root. When the return value of atomicMin is what
+/// was expected, the merge took effect; otherwise another thread rewrote the entry
+/// first, so the walk restarts from that value.
 __device__ void merge_components(std::int32_t* labels, std::int32_t a, std::int32_t b) {
     while (a != b) {
         a = find_root(labels, a);
@@ -61,7 +64,8 @@ __device__ void merge_components(std::int32_t* labels, std::int32_t a, std::int3
     }
 }
 
-/// 前景画素へ自分の線形 index を、背景へ kBackgroundLabel を入れる。
+/// Stores its own linear index in each foreground pixel and kBackgroundLabel in
+/// each background pixel.
 __global__ void initialize_labels_kernel(const std::uint8_t* binary, std::size_t binary_pitch,
                                          std::int32_t* labels, int width, int height) {
     const int x = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -75,10 +79,10 @@ __global__ void initialize_labels_kernel(const std::uint8_t* binary, std::size_t
     labels[index] = (value != 0U) ? index : kBackgroundLabel;
 }
 
-/// 走査順で手前にある 4 近傍と併合する。
+/// Merges with the 4 neighbors that precede this pixel in scan order.
 ///
-/// 8 近傍の辺は 2 つの端点を持つ。後から現れる側だけが併合を行えば、
-/// 全ての辺をちょうど 1 回ずつ処理できる。
+/// Every edge of the 8-neighborhood has two endpoints. Letting only the endpoint
+/// that comes later perform the merge processes each edge exactly once.
 __global__ void merge_neighbors_kernel(const std::int32_t* labels_in, std::int32_t* labels,
                                        int width, int height) {
     const int x = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -105,7 +109,7 @@ __global__ void merge_neighbors_kernel(const std::int32_t* labels_in, std::int32
     }
 }
 
-/// 各画素の label を根へ置き換える。
+/// Replaces each pixel's label with its root.
 __global__ void compress_labels_kernel(std::int32_t* labels, int count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= count) {
@@ -117,7 +121,7 @@ __global__ void compress_labels_kernel(std::int32_t* labels, int count) {
     labels[index] = find_root(labels, index);
 }
 
-/// 根である画素へ 1、それ以外へ 0 を書く。
+/// Writes 1 for pixels that are roots and 0 for the rest.
 __global__ void flag_roots_kernel(const std::int32_t* labels, std::int32_t* flags, int count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= count) {
@@ -126,7 +130,7 @@ __global__ void flag_roots_kernel(const std::int32_t* labels, std::int32_t* flag
     flags[index] = (labels[index] == index) ? 1 : 0;
 }
 
-/// 根の線形 index を詰めた label へ置き換える。
+/// Replaces the root's linear index with the compacted label.
 __global__ void relabel_kernel(std::int32_t* labels, const std::int32_t* compact_ids, int count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= count) {
@@ -139,10 +143,11 @@ __global__ void relabel_kernel(std::int32_t* labels, const std::int32_t* compact
     labels[index] = compact_ids[root];
 }
 
-/// 統計を初期集約値へ戻す。
+/// Resets the statistics to their initial aggregation values.
 ///
-/// label 数を device 側で読み、使う範囲だけ触る。上限で確保しているため
-/// 全体を初期化すると無駄が大きい。
+/// Reads the label count on the device side and touches only the range actually in
+/// use. The allocation is sized for the upper bound, so initializing all of it
+/// would waste a great deal of work.
 __global__ void reset_stats_kernel(LabelStatisticsBuffers stats, const std::int32_t* label_count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= *label_count) {
@@ -159,7 +164,8 @@ __global__ void reset_stats_kernel(LabelStatisticsBuffers stats, const std::int3
     stats.centroid_y_[index] = 0.0F;
 }
 
-/// 画素を走査し、label ごとの外接矩形と画素数と座標和を集める。
+/// Traverses the pixels and gathers the bounding box, pixel count, and coordinate
+/// sums per label.
 __global__ void accumulate_stats_kernel(const std::int32_t* labels, LabelStatisticsBuffers stats,
                                         int width, int height) {
     const int x = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -180,10 +186,11 @@ __global__ void accumulate_stats_kernel(const std::int32_t* labels, LabelStatist
     atomicAdd(&stats.sum_y_[label], static_cast<unsigned long long>(y));
 }
 
-/// 座標和と画素数から重心を求める。
+/// Derives the centroid from the coordinate sums and the pixel count.
 ///
-/// 割り算を double で行ってから float へ落とす。総和は最大で
-/// 画素数 x 座標であり、float の仮数では正確に表せない。
+/// Performs the division in double and then narrows to float. The sum is at most
+/// the pixel count times the coordinate, which a float mantissa cannot represent
+/// exactly.
 __global__ void finalize_stats_kernel(LabelStatisticsBuffers stats,
                                       const std::int32_t* label_count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -200,7 +207,7 @@ __global__ void finalize_stats_kernel(LabelStatisticsBuffers stats,
                                                   static_cast<double>(count));
 }
 
-/// int32 配列の byte 数を求める。桁溢れなら 0 を返す。
+/// Computes the byte count of an int32 array. Returns 0 on overflow.
 std::size_t array_bytes_i32(std::size_t count) {
     if (count == 0U) {
         return 0U;
@@ -224,7 +231,8 @@ std::size_t labeling_workspace_bytes(int width_px, int height_px) {
     }
     const std::size_t count = width * height;
     if (count > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        // label へ線形 index を入れるため、画素数が int の範囲を超えると扱えない。
+        // The linear index is stored in the label, so a pixel count beyond the range
+        // of an int cannot be handled.
         return 0U;
     }
     const std::size_t plane = array_bytes_i32(count);
@@ -275,7 +283,8 @@ Status reserve_labeling(int width_px, int height_px, Workspace& workspace, Label
     if (status != Status::kOk) {
         return status;
     }
-    // scan の総和がそのまま label 数になる。別に数え直す必要はない。
+    // The scan's grand total is the label count as is. There is no need to count
+    // them again separately.
     buffers.label_count_ = buffers.scan_.total_;
 
     *out = buffers;
@@ -305,8 +314,9 @@ Status build_labels_async(const ImagePlaneU8& binary, LabelBuffers* buffers, cud
     if (status != Status::kOk) {
         return status;
     }
-    // 初期 label を読み出しにも使う。併合で書き換わるのは根の側だけであり、
-    // 前景か背景かの判定は初期値のままで正しい。
+    // The initial labels double as the read side. A merge rewrites only the root
+    // entries, so the foreground-versus-background test remains correct against the
+    // initial values.
     merge_neighbors_kernel<<<grid, block, 0, stream>>>(buffers->labels_, buffers->labels_, width,
                                                        height);
     status = check_kernel_launch("labeling.merge_neighbors_kernel", -1, false, stream);
@@ -380,7 +390,7 @@ std::size_t label_stats_workspace_bytes(int width_px, int height_px) {
         return 0U;
     }
     const auto count = static_cast<std::size_t>(capacity);
-    // int32 が 5 本、uint64 が 2 本、float が 2 本。
+    // 5 int32 arrays, 2 uint64 arrays, and 2 float arrays.
     const std::size_t int32_bytes = array_bytes_i32(count);
     const std::size_t sum_bytes = align_up(count * sizeof(unsigned long long), kPlaneAlignment);
     const std::size_t float_bytes = align_up(count * sizeof(float), kPlaneAlignment);
@@ -449,7 +459,8 @@ Status build_label_stats_async(const LabelBuffers& labels, LabelStatisticsBuffer
         return Status::kInvalidArgument;
     }
     if (stats->capacity_ < max_label_count(labels.width_px_, labels.height_px_)) {
-        // label が確保数を超えうる組み合わせ。上限で確保していれば起きない。
+        // A combination where the labels could exceed the allocated count. This
+        // cannot happen when the allocation is sized for the upper bound.
         return Status::kInvalidArgument;
     }
 

@@ -18,17 +18,17 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// 1 候補を担当する block の thread 数。
+/// Thread count of the block that handles one candidate.
 constexpr int kDecodeThreads = 256;
-/// 階調の数。8-bit なので 256。
+/// Number of intensity levels. 256 because the image is 8-bit.
 constexpr int kHistogramBins = 256;
 constexpr int kWarpSize = 32;
-/// 1 block の warp 数。畳み込みの共有領域をこの数に抑える。
+/// Warp count of one block. It caps the shared memory used by the reductions.
 constexpr int kDecodeWarps = kDecodeThreads / kWarpSize;
-/// OpenCV が Otsu の除外判定に使う値。FLT_EPSILON と同じ。
+/// Value OpenCV uses when excluding Otsu bins. The same as FLT_EPSILON.
 constexpr double kOtsuGuard = 1.1920928955078125e-07;
 
-/// 判定に必要な定数をまとめて渡す。引数の数を抑えるため。
+/// Bundles the constants the decision needs, to keep the argument count down.
 struct DecodeParams {
     int canonical_side_ = 0;
     int cells_ = 0;
@@ -40,37 +40,37 @@ struct DecodeParams {
     double min_otsu_std_dev_ = 0.0;
 };
 
-/// Otsu の漸化式が bin ごとに残す状態。
+/// State the Otsu recurrence leaves behind for each bin.
 ///
-/// 逐次でなければならないのは漸化式だけである。その前後は要素ごとに独立で
-/// あり、並列に計算しても丸めは変わらない。
+/// Only the recurrence itself has to run sequentially. Everything before and after it is
+/// independent per element, so computing it in parallel does not change the rounding.
 struct OtsuState {
     double q1_[kHistogramBins];
     double mu1_[kHistogramBins];
-    /// guard を通り抜けた bin か。通り抜けなかった bin は候補にならない。
+    /// Whether the bin passed the guard. A bin that did not is never a candidate.
     bool candidate_[kHistogramBins];
 };
 
-/// 閾値の探索で使う 1 候補分の値。
+/// The values for a single candidate in the threshold search.
 struct OtsuCandidate {
     double sigma_;
     int index_;
 };
 
-/// histogram の重心を並列に求める。
+/// Computes the centroid of the histogram in parallel.
 ///
-/// 各項 i * histogram[i] とその部分和はすべて整数であり、上限は
-/// 255 * pixel_count である。canonical の 1 辺は 32767 以下に制限されている
-/// ため pixel_count は 1.07e9 以下、255 倍しても 2.7e11 で 2^53 に収まる。
-/// **すべての部分和が倍精度で厳密に表せるため丸めが 1 度も起きず、加算の
-/// 順序を変えても結果は bit 同一である。**
+/// Every term i * histogram[i] and every partial sum is an integer bounded by
+/// 255 * pixel_count. The canonical side length is limited to 32767, so pixel_count stays at or
+/// below 1.07e9 and even multiplied by 255 it reaches only 2.7e11, which fits within 2^53.
+/// **Every partial sum is therefore exactly representable in double precision, no rounding ever
+/// occurs, and changing the order of the additions leaves the result bit-identical.**
 __device__ double otsu_center(const int* histogram, double scale, double* warp_partial) {
     double partial = 0.0;
     for (int i = static_cast<int>(threadIdx.x); i < kHistogramBins;
          i += static_cast<int>(blockDim.x)) {
         partial += static_cast<double>(i) * static_cast<double>(histogram[i]);
     }
-    // warp 内は shuffle で畳む。共有 memory を thread 数だけ使わずに済む。
+    // Reduce within the warp with shuffles, which avoids spending shared memory per thread.
     for (int offset = kWarpSize / 2; offset > 0; offset /= 2) {
         partial += __shfl_down_sync(0xffffffffU, partial, offset);
     }
@@ -87,14 +87,14 @@ __device__ double otsu_center(const int* histogram, double scale, double* warp_p
     return total * scale;
 }
 
-/// Otsu の漸化式を逐次で回し、bin ごとの状態を残す。
+/// Runs the Otsu recurrence sequentially and records the state of every bin.
 ///
-/// **この部分は絶対に並列化してはならない。** p_i は丸められた倍精度であり、
-/// q1 の累積は順序に依存する。さらに guard で飛ばした反復では mu1 が
-/// 正規化されない状態 (前回の mu1 に前回の q1 を掛けたもの) のまま持ち越され、
-/// 次の反復でさらに新しい q1 を掛けられる。つまり mu1 は「連続して何回
-/// 飛ばしたか」に依存する経路依存量であり、q1 を並列 scan で作ってから
-/// mu1 を復元する形では必ず壊れる。
+/// **This part must never be parallelized.** p_i is a rounded double, so accumulating q1 depends
+/// on the order. On top of that, an iteration skipped by the guard carries mu1 forward in its
+/// unnormalized state (the previous mu1 multiplied by the previous q1), and the next iteration
+/// multiplies it by yet another q1. mu1 is thus a path-dependent quantity that depends on how
+/// many iterations in a row were skipped, and any scheme that builds q1 with a parallel scan and
+/// then reconstructs mu1 is guaranteed to break.
 __device__ void otsu_recurrence(const int* histogram, double scale, OtsuState* state) {
     double mu1 = 0.0;
     double q1 = 0.0;
@@ -114,17 +114,17 @@ __device__ void otsu_recurrence(const int* histogram, double scale, OtsuState* s
     }
 }
 
-/// bin ごとの分離度を並列に求め、最大を与える階調を選ぶ。
+/// Computes the separability of every bin in parallel and picks the level that maximizes it.
 ///
-/// 逐次版は max_sigma を 0.0 で始め、厳密な大なりで更新する。そこから
-/// 3 つの性質が出る。
+/// The sequential version starts max_sigma at 0.0 and updates on a strict greater-than. Three
+/// properties follow from that.
 ///
-/// 1. sigma が 0 以下の bin は絶対に選ばれない
-/// 2. 同値なら小さい階調が残る
-/// 3. 一度も更新されなければ 0 を返す
+/// 1. A bin whose sigma is 0 or less is never selected
+/// 2. On a tie the lower intensity level wins
+/// 3. If no update ever happens the result is 0
 ///
-/// 畳み込みでもこの 3 つを厳密に守る。比較は (sigma が大きい, 階調が小さい)
-/// の辞書式にする。
+/// The reduction honors all three exactly. The comparison is lexicographic on
+/// (larger sigma, lower level).
 __device__ int otsu_argmax(const OtsuState& state, double mu, OtsuCandidate* warp_best) {
     double best_sigma = 0.0;
     int best_index = kHistogramBins;
@@ -138,8 +138,8 @@ __device__ int otsu_argmax(const OtsuState& state, double mu, OtsuCandidate* war
         const double q2 = 1.0 - q1;
         const double mu2 = (mu - (q1 * mu1)) / q2;
         const double sigma = q1 * q2 * (mu1 - mu2) * (mu1 - mu2);
-        // 0 以下は候補にしない。逐次版の max_sigma の初期値が 0.0 で、
-        // 更新が厳密な大なりであることに対応する。
+        // Values of 0 or less are not candidates, matching the sequential version whose
+        // max_sigma starts at 0.0 and updates only on a strict greater-than.
         if (sigma <= 0.0) {
             continue;
         }
@@ -148,7 +148,7 @@ __device__ int otsu_argmax(const OtsuState& state, double mu, OtsuCandidate* war
             best_index = i;
         }
     }
-    // warp 内は shuffle で畳む。比較は (sigma が大きい, 階調が小さい) の辞書式。
+    // Reduce within the warp with shuffles, lexicographic on (larger sigma, lower level).
     for (int offset = kWarpSize / 2; offset > 0; offset /= 2) {
         const double other_sigma = __shfl_down_sync(0xffffffffU, best_sigma, offset);
         const int other_index = __shfl_down_sync(0xffffffffU, best_index, offset);
@@ -173,11 +173,12 @@ __device__ int otsu_argmax(const OtsuState& state, double mu, OtsuCandidate* war
             index = warp_best[w].index_;
         }
     }
-    // 一度も候補が無ければ 0 を返す。
+    // Return 0 when there was never a candidate.
     return (index >= kHistogramBins) ? 0 : index;
 }
 
-/// 候補ごとにセル比を求め、外周セルの誤りを数える。1 block が 1 候補を担当する。
+/// Computes the cell ratios per candidate and counts the erroneous border cells. One block
+/// handles one candidate.
 __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::int32_t* count,
                                     float* ratios, std::int32_t* border_errors,
                                     std::uint8_t* accepted, std::int32_t* thresholds,
@@ -188,7 +189,8 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     }
 
     __shared__ int histogram[kHistogramBins];
-    // Otsu の 3 相で使う共有領域。漸化式が残す状態と、畳み込みの作業領域。
+    // Shared memory for the three Otsu phases: the state left by the recurrence and the scratch
+    // space of the reductions.
     __shared__ OtsuState otsu_state;
     __shared__ double reduction[kDecodeWarps];
     __shared__ OtsuCandidate best[kDecodeWarps];
@@ -214,7 +216,8 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     }
     __syncthreads();
 
-    // 内側の範囲。CPU 基準は各辺を cell の半分だけ寄せる。整数除算である。
+    // The interior range. The CPU reference pulls each side in by half a cell, using integer
+    // division.
     const int margin = params.cell_size_ / 2;
     const int inner_begin = margin;
     const int inner_end = side - margin;
@@ -224,7 +227,7 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     for (int index = static_cast<int>(threadIdx.x); index < pixels;
          index += static_cast<int>(blockDim.x)) {
         const int value = static_cast<int>(image[index]);
-        // Otsu は canonical の全体に掛ける。内側ではない。
+        // Otsu is applied to the whole canonical image, not to its interior.
         atomicAdd(&histogram[value], 1);
         const int x = index % side;
         const int y = index / side;
@@ -240,7 +243,7 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     if (threadIdx.x == 0U) {
         const int inner_side = inner_end - inner_begin;
         const int inner_count = inner_side * inner_side;
-        // 和と二乗和は整数のまま積んだ。丸めが入るのはここからである。
+        // The sum and the sum of squares were accumulated as integers; rounding starts here.
         const double scale = 1.0 / static_cast<double>(inner_count);
         const double mean = static_cast<double>(inner_sum) * scale;
         const double variance = (static_cast<double>(inner_square_sum) * scale) - (mean * mean);
@@ -250,8 +253,9 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     }
     __syncthreads();
 
-    // Otsu の閾値を 3 相で求める。重心の集計と分離度の探索は要素ごとに独立
-    // なので並列にし、漸化式だけを thread 0 の逐次で回す。
+    // Determine the Otsu threshold in three phases. Accumulating the centroid and searching for
+    // the separability are independent per element and therefore run in parallel; only the
+    // recurrence runs sequentially on thread 0.
     if (!uniform) {
         const double pixel_scale = 1.0 / static_cast<double>(pixels);
         const double center = otsu_center(histogram, pixel_scale, reduction);
@@ -271,7 +275,7 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
         thresholds[candidate] = threshold;
     }
 
-    // セルごとの比。余白を除いた範囲の白画素数を数える。
+    // Ratio per cell: count the white pixels in the range that excludes the margin.
     const int cells = params.cells_;
     const int cell_size = params.cell_size_;
     const int cell_margin = params.cell_margin_;
@@ -295,7 +299,7 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
         for (int y = 0; y < inner_cell; ++y) {
             for (int x = 0; x < inner_cell; ++x) {
                 const int value = static_cast<int>(image[((origin_y + y) * side) + origin_x + x]);
-                // 二値化は「画素 > 閾値」。等しい場合は 0 側である。
+                // Binarization is "pixel > threshold", so an equal value falls on the 0 side.
                 if (value > threshold) {
                     ++white;
                 }
@@ -306,8 +310,9 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     __syncthreads();
 
     if (threadIdx.x == 0U) {
-        // 外周セルの誤りを数える。左右の列を全て見てから、上下の中央列を見る。
-        // CPU 基準と同じ走査であり、角のセルを二重に数えない。
+        // Count the erroneous border cells: first the full left and right columns, then the
+        // middle part of the top and bottom rows. This is the same traversal as the CPU
+        // reference and never counts a corner cell twice.
         int errors = 0;
         for (int y = 0; y < cells; ++y) {
             for (int k = 0; k < params.border_bits_; ++k) {
@@ -436,11 +441,13 @@ Status build_cell_ratios_async(const CanonicalBuffers& canonical,
     params.canonical_side_ = canonical.side_px_;
     params.cells_ = cells;
     params.cell_size_ = config.perspective_remove_pixel_per_cell_;
-    // 余白は 0 方向へ切り捨てる。既定設定では 0 になり、cell の全域を数える。
+    // The margin truncates toward zero. Under the default configuration it becomes 0 and the
+    // whole cell is counted.
     params.cell_margin_ = static_cast<int>(config.perspective_remove_ignored_margin_per_cell_ *
                                            config.perspective_remove_pixel_per_cell_);
     params.border_bits_ = config.marker_border_bits_;
-    // 外周セル数ではなく marker_size の 2 乗に率を掛ける。CPU 基準と同じである。
+    // The rate multiplies the square of marker_size, not the number of border cells, matching
+    // the CPU reference.
     params.max_border_errors_ = static_cast<int>(static_cast<double>(marker_size) * marker_size *
                                                  config.max_erroneous_bits_in_border_rate_);
     params.valid_bit_threshold_ = static_cast<float>(config.valid_bit_threshold_);

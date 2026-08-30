@@ -1,106 +1,106 @@
-=== 正確性評価 ===
-preset full / 場面 91 枚 / seed 20260827
+=== Accuracy evaluation ===
+preset full / scenes 91 / seed 20260827
 
-真値との突き合わせ (全て)
-  CPU                真値   480 検出    88 TP    88 FP    0 FN  392  precision  100.00%  recall   18.33%  rotation 一致  100.00%  四隅 RMSE 0.5184 px 最大 3.6351 px
-  Hybrid             真値   480 検出    88 TP    88 FP    0 FN  392  precision  100.00%  recall   18.33%  rotation 一致  100.00%  四隅 RMSE 0.5184 px 最大 3.6351 px
-  CUDA               真値   480 検出    88 TP    88 FP    0 FN  392  precision  100.00%  recall   18.33%  rotation 一致  100.00%  四隅 RMSE 0.4806 px 最大 1.0936 px
+Matched against the true values (all)
+  CPU                truth   480 detections    88 TP    88 FP    0 FN  392  precision  100.00%  recall   18.33%  rotation match  100.00%  corner RMSE 0.5184 px max 3.6351 px
+  Hybrid             truth   480 detections    88 TP    88 FP    0 FN  392  precision  100.00%  recall   18.33%  rotation match  100.00%  corner RMSE 0.5184 px max 3.6351 px
+  CUDA               truth   480 detections    88 TP    88 FP    0 FN  392  precision  100.00%  recall   18.33%  rotation match  100.00%  corner RMSE 0.4806 px max 1.0936 px
 
-真値との突き合わせ (ArUco3 の下限以上の大きさのみ。precision はこの区分では定義しない)
-  CPU                真値    90                  TP    85          FN    5  precision        -  recall   94.44%  rotation 一致  100.00%  四隅 RMSE 0.5223 px 最大 3.6351 px
-  Hybrid             真値    90                  TP    85          FN    5  precision        -  recall   94.44%  rotation 一致  100.00%  四隅 RMSE 0.5223 px 最大 3.6351 px
-  CUDA               真値    90                  TP    85          FN    5  precision        -  recall   94.44%  rotation 一致  100.00%  四隅 RMSE 0.4834 px 最大 1.0936 px
+Matched against the true values (only sizes at or above the ArUco3 lower bound; precision is not defined for this group)
+  CPU                truth    90                  TP    85          FN    5  precision        -  recall   94.44%  rotation match  100.00%  corner RMSE 0.5223 px max 3.6351 px
+  Hybrid             truth    90                  TP    85          FN    5  precision        -  recall   94.44%  rotation match  100.00%  corner RMSE 0.5223 px max 3.6351 px
+  CUDA               truth    90                  TP    85          FN    5  precision        -  recall   94.44%  rotation match  100.00%  corner RMSE 0.4834 px max 1.0936 px
 
-真値との突き合わせ (下限を下回る大きさのみ)
-  CPU                真値   390                  TP     3          FN  387  precision        -  recall    0.77%  rotation 一致  100.00%  四隅 RMSE 0.3913 px 最大 0.6240 px
-  Hybrid             真値   390                  TP     3          FN  387  precision        -  recall    0.77%  rotation 一致  100.00%  四隅 RMSE 0.3913 px 最大 0.6240 px
-  CUDA               真値   390                  TP     3          FN  387  precision        -  recall    0.77%  rotation 一致  100.00%  四隅 RMSE 0.3913 px 最大 0.6240 px
+Matched against the true values (only sizes below the lower bound)
+  CPU                truth   390                  TP     3          FN  387  precision        -  recall    0.77%  rotation match  100.00%  corner RMSE 0.3913 px max 0.6240 px
+  Hybrid             truth   390                  TP     3          FN  387  precision        -  recall    0.77%  rotation match  100.00%  corner RMSE 0.3913 px max 0.6240 px
+  CUDA               truth   390                  TP     3          FN  387  precision        -  recall    0.77%  rotation match  100.00%  corner RMSE 0.3913 px max 0.6240 px
 
-条件別 (CPU)
-  blur               真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.7052 px 最大 1.0138 px
-  border             真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 0.3064 px 最大 0.4684 px
-  clean              真値   352 検出    60 TP    60 FP    0 FN  292  precision  100.00%  recall   17.05%  rotation 一致  100.00%  四隅 RMSE 0.4896 px 最大 0.7956 px
-  combined           真値    16 検出     1 TP     1 FP    0 FN   15  precision  100.00%  recall    6.25%  rotation 一致  100.00%  四隅 RMSE 0.4317 px 最大 0.5621 px
-  illumination       真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.5922 px
-  noise              真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.4257 px 最大 0.5883 px
-  occlusion          真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 1.1497 px 最大 3.6351 px
-  perspective        真値    16 検出     5 TP     5 FP    0 FN   11  precision  100.00%  recall   31.25%  rotation 一致  100.00%  四隅 RMSE 0.4407 px 最大 0.7889 px
-  rotation           真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.6955 px
+By condition (CPU)
+  blur               truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.7052 px max 1.0138 px
+  border             truth    16 detections     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation match  100.00%  corner RMSE 0.3064 px max 0.4684 px
+  clean              truth   352 detections    60 TP    60 FP    0 FN  292  precision  100.00%  recall   17.05%  rotation match  100.00%  corner RMSE 0.4896 px max 0.7956 px
+  combined           truth    16 detections     1 TP     1 FP    0 FN   15  precision  100.00%  recall    6.25%  rotation match  100.00%  corner RMSE 0.4317 px max 0.5621 px
+  illumination       truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.5922 px
+  noise              truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.4257 px max 0.5883 px
+  occlusion          truth    16 detections     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation match  100.00%  corner RMSE 1.1497 px max 3.6351 px
+  perspective        truth    16 detections     5 TP     5 FP    0 FN   11  precision  100.00%  recall   31.25%  rotation match  100.00%  corner RMSE 0.4407 px max 0.7889 px
+  rotation           truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.6955 px
 
-条件別 (Hybrid)
-  blur               真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.7052 px 最大 1.0138 px
-  border             真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 0.3064 px 最大 0.4684 px
-  clean              真値   352 検出    60 TP    60 FP    0 FN  292  precision  100.00%  recall   17.05%  rotation 一致  100.00%  四隅 RMSE 0.4896 px 最大 0.7956 px
-  combined           真値    16 検出     1 TP     1 FP    0 FN   15  precision  100.00%  recall    6.25%  rotation 一致  100.00%  四隅 RMSE 0.4317 px 最大 0.5621 px
-  illumination       真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.5922 px
-  noise              真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.4257 px 最大 0.5883 px
-  occlusion          真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 1.1497 px 最大 3.6351 px
-  perspective        真値    16 検出     5 TP     5 FP    0 FN   11  precision  100.00%  recall   31.25%  rotation 一致  100.00%  四隅 RMSE 0.4407 px 最大 0.7889 px
-  rotation           真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.6955 px
+By condition (Hybrid)
+  blur               truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.7052 px max 1.0138 px
+  border             truth    16 detections     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation match  100.00%  corner RMSE 0.3064 px max 0.4684 px
+  clean              truth   352 detections    60 TP    60 FP    0 FN  292  precision  100.00%  recall   17.05%  rotation match  100.00%  corner RMSE 0.4896 px max 0.7956 px
+  combined           truth    16 detections     1 TP     1 FP    0 FN   15  precision  100.00%  recall    6.25%  rotation match  100.00%  corner RMSE 0.4317 px max 0.5621 px
+  illumination       truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.5922 px
+  noise              truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.4257 px max 0.5883 px
+  occlusion          truth    16 detections     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation match  100.00%  corner RMSE 1.1497 px max 3.6351 px
+  perspective        truth    16 detections     5 TP     5 FP    0 FN   11  precision  100.00%  recall   31.25%  rotation match  100.00%  corner RMSE 0.4407 px max 0.7889 px
+  rotation           truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.6955 px
 
-条件別 (CUDA)
-  blur               真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.7020 px 最大 1.0104 px
-  border             真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 0.3056 px 最大 0.4684 px
-  clean              真値   352 検出    60 TP    60 FP    0 FN  292  precision  100.00%  recall   17.05%  rotation 一致  100.00%  四隅 RMSE 0.4897 px 最大 0.7956 px
-  combined           真値    16 検出     1 TP     1 FP    0 FN   15  precision  100.00%  recall    6.25%  rotation 一致  100.00%  四隅 RMSE 0.4215 px 最大 0.5621 px
-  illumination       真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.5922 px
-  noise              真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.4257 px 最大 0.5883 px
-  occlusion          真値    16 検出     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation 一致  100.00%  四隅 RMSE 0.4722 px 最大 1.0936 px
-  perspective        真値    16 検出     5 TP     5 FP    0 FN   11  precision  100.00%  recall   31.25%  rotation 一致  100.00%  四隅 RMSE 0.4403 px 最大 0.7889 px
-  rotation           真値    16 検出     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.6955 px
+By condition (CUDA)
+  blur               truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.7020 px max 1.0104 px
+  border             truth    16 detections     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation match  100.00%  corner RMSE 0.3056 px max 0.4684 px
+  clean              truth   352 detections    60 TP    60 FP    0 FN  292  precision  100.00%  recall   17.05%  rotation match  100.00%  corner RMSE 0.4897 px max 0.7956 px
+  combined           truth    16 detections     1 TP     1 FP    0 FN   15  precision  100.00%  recall    6.25%  rotation match  100.00%  corner RMSE 0.4215 px max 0.5621 px
+  illumination       truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.5922 px
+  noise              truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.4257 px max 0.5883 px
+  occlusion          truth    16 detections     3 TP     3 FP    0 FN   13  precision  100.00%  recall   18.75%  rotation match  100.00%  corner RMSE 0.4722 px max 1.0936 px
+  perspective        truth    16 detections     5 TP     5 FP    0 FN   11  precision  100.00%  recall   31.25%  rotation match  100.00%  corner RMSE 0.4403 px max 0.7889 px
+  rotation           truth    16 detections     4 TP     4 FP    0 FN   12  precision  100.00%  recall   25.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.6955 px
 
-条件別・下限以上のみ (CPU)
-  blur               真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.7052 px 最大 1.0138 px
-  border             真値     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.3064 px 最大 0.4684 px
-  clean              真値    58                  TP    58          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4910 px 最大 0.7956 px
-  combined           真値     4                  TP     1          FN    3  precision        -  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.4317 px 最大 0.5621 px
-  illumination       真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.5922 px
-  noise              真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4257 px 最大 0.5883 px
-  occlusion          真値     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 1.1497 px 最大 3.6351 px
-  perspective        真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4778 px 最大 0.7889 px
-  rotation           真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.6955 px
+By condition, at or above the lower bound only (CPU)
+  blur               truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.7052 px max 1.0138 px
+  border             truth     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation match  100.00%  corner RMSE 0.3064 px max 0.4684 px
+  clean              truth    58                  TP    58          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4910 px max 0.7956 px
+  combined           truth     4                  TP     1          FN    3  precision        -  recall   25.00%  rotation match  100.00%  corner RMSE 0.4317 px max 0.5621 px
+  illumination       truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.5922 px
+  noise              truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4257 px max 0.5883 px
+  occlusion          truth     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation match  100.00%  corner RMSE 1.1497 px max 3.6351 px
+  perspective        truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4778 px max 0.7889 px
+  rotation           truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.6955 px
 
-条件別・下限以上のみ (Hybrid)
-  blur               真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.7052 px 最大 1.0138 px
-  border             真値     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.3064 px 最大 0.4684 px
-  clean              真値    58                  TP    58          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4910 px 最大 0.7956 px
-  combined           真値     4                  TP     1          FN    3  precision        -  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.4317 px 最大 0.5621 px
-  illumination       真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.5922 px
-  noise              真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4257 px 最大 0.5883 px
-  occlusion          真値     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 1.1497 px 最大 3.6351 px
-  perspective        真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4778 px 最大 0.7889 px
-  rotation           真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.6955 px
+By condition, at or above the lower bound only (Hybrid)
+  blur               truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.7052 px max 1.0138 px
+  border             truth     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation match  100.00%  corner RMSE 0.3064 px max 0.4684 px
+  clean              truth    58                  TP    58          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4910 px max 0.7956 px
+  combined           truth     4                  TP     1          FN    3  precision        -  recall   25.00%  rotation match  100.00%  corner RMSE 0.4317 px max 0.5621 px
+  illumination       truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.5922 px
+  noise              truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4257 px max 0.5883 px
+  occlusion          truth     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation match  100.00%  corner RMSE 1.1497 px max 3.6351 px
+  perspective        truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4778 px max 0.7889 px
+  rotation           truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.6955 px
 
-条件別・下限以上のみ (CUDA)
-  blur               真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.7020 px 最大 1.0104 px
-  border             真値     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.3056 px 最大 0.4684 px
-  clean              真値    58                  TP    58          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4911 px 最大 0.7956 px
-  combined           真値     4                  TP     1          FN    3  precision        -  recall   25.00%  rotation 一致  100.00%  四隅 RMSE 0.4215 px 最大 0.5621 px
-  illumination       真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.5922 px
-  noise              真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4257 px 最大 0.5883 px
-  occlusion          真値     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation 一致  100.00%  四隅 RMSE 0.4722 px 最大 1.0936 px
-  perspective        真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4775 px 最大 0.7889 px
-  rotation           真値     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.3778 px 最大 0.6955 px
+By condition, at or above the lower bound only (CUDA)
+  blur               truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.7020 px max 1.0104 px
+  border             truth     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation match  100.00%  corner RMSE 0.3056 px max 0.4684 px
+  clean              truth    58                  TP    58          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4911 px max 0.7956 px
+  combined           truth     4                  TP     1          FN    3  precision        -  recall   25.00%  rotation match  100.00%  corner RMSE 0.4215 px max 0.5621 px
+  illumination       truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.5922 px
+  noise              truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4257 px max 0.5883 px
+  occlusion          truth     4                  TP     3          FN    1  precision        -  recall   75.00%  rotation match  100.00%  corner RMSE 0.4722 px max 1.0936 px
+  perspective        truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.4775 px max 0.7889 px
+  rotation           truth     4                  TP     4          FN    0  precision        -  recall  100.00%  rotation match  100.00%  corner RMSE 0.3778 px max 0.6955 px
 
-マーカー 1 辺別 (CPU)
-  16 px              真値    84 検出     0 TP     0 FP    0 FN   84  precision        -  recall    0.00%  rotation 一致        -
-  32 px              真値    84 検出     0 TP     0 FP    0 FN   84  precision        -  recall    0.00%  rotation 一致        -
-  64 px              真値    84 検出     2 TP     2 FP    0 FN   82  precision  100.00%  recall    2.38%  rotation 一致  100.00%  四隅 RMSE 0.4482 px 最大 0.6240 px
-  96 px              真値   128 検出    28 TP    28 FP    0 FN  100  precision  100.00%  recall   21.88%  rotation 一致  100.00%  四隅 RMSE 0.5751 px 最大 3.6351 px
-  128 px             真値    68 検出    26 TP    26 FP    0 FN   42  precision  100.00%  recall   38.24%  rotation 一致  100.00%  四隅 RMSE 0.5781 px 最大 0.7956 px
-  256 px             真値    32 検出    32 TP    32 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation 一致  100.00%  四隅 RMSE 0.4066 px 最大 0.7747 px
+By marker side length (CPU)
+  16 px              truth    84 detections     0 TP     0 FP    0 FN   84  precision        -  recall    0.00%  rotation match        -
+  32 px              truth    84 detections     0 TP     0 FP    0 FN   84  precision        -  recall    0.00%  rotation match        -
+  64 px              truth    84 detections     2 TP     2 FP    0 FN   82  precision  100.00%  recall    2.38%  rotation match  100.00%  corner RMSE 0.4482 px max 0.6240 px
+  96 px              truth   128 detections    28 TP    28 FP    0 FN  100  precision  100.00%  recall   21.88%  rotation match  100.00%  corner RMSE 0.5751 px max 3.6351 px
+  128 px             truth    68 detections    26 TP    26 FP    0 FN   42  precision  100.00%  recall   38.24%  rotation match  100.00%  corner RMSE 0.5781 px max 0.7956 px
+  256 px             truth    32 detections    32 TP    32 FP    0 FN    0  precision  100.00%  recall  100.00%  rotation match  100.00%  corner RMSE 0.4066 px max 0.7747 px
 
-解像度別 (CPU)
-  1280x720           真値   121 検出    27 TP    27 FP    0 FN   94  precision  100.00%  recall   22.31%  rotation 一致  100.00%  四隅 RMSE 0.6085 px 最大 0.7956 px
-  1920x1080          真値   121 検出     5 TP     5 FP    0 FN  116  precision  100.00%  recall    4.13%  rotation 一致  100.00%  四隅 RMSE 0.3404 px 最大 0.6325 px
-  3840x2160          真値   137 検出    21 TP    21 FP    0 FN  116  precision  100.00%  recall   15.33%  rotation 一致  100.00%  四隅 RMSE 0.3519 px 最大 0.6512 px
-  640x480            真値   101 検出    35 TP    35 FP    0 FN   66  precision  100.00%  recall   34.65%  rotation 一致  100.00%  四隅 RMSE 0.5469 px 最大 3.6351 px
+By resolution (CPU)
+  1280x720           truth   121 detections    27 TP    27 FP    0 FN   94  precision  100.00%  recall   22.31%  rotation match  100.00%  corner RMSE 0.6085 px max 0.7956 px
+  1920x1080          truth   121 detections     5 TP     5 FP    0 FN  116  precision  100.00%  recall    4.13%  rotation match  100.00%  corner RMSE 0.3404 px max 0.6325 px
+  3840x2160          truth   137 detections    21 TP    21 FP    0 FN  116  precision  100.00%  recall   15.33%  rotation match  100.00%  corner RMSE 0.3519 px max 0.6512 px
+  640x480            truth   101 detections    35 TP    35 FP    0 FN   66  precision  100.00%  recall   34.65%  rotation match  100.00%  corner RMSE 0.5469 px max 3.6351 px
 
-CPU 基準との差異
-  Hybrid 一致 91 / 91 枚、四隅の最大差 0 px
-  CUDA 一致 90 / 91 枚、四隅の最大差 3.804 px、四隅ずれ 1 件
-    occlusion_640x480 四隅ずれ id=140 位置 (110.9, 144.4) 差 3.804 px
+Differences against the CPU baseline
+  Hybrid agreed 91 / 91 images, worst corner difference 0 px
+  CUDA agreed 90 / 91 images, worst corner difference 3.804 px, corner shift 1
+    occlusion_640x480 corner shift id=140 at (110.9, 144.4) difference 3.804 px
 
-device memory (CUDA 経路)
-  workspace の最大使用量 17512724 byte / 最大容量 22685440 byte
-  検出 91 回で増えた確保回数 0 回
+device memory (CUDA route)
+  workspace peak usage 17512724 bytes / peak capacity 22685440 bytes
+  allocations added over 91 detections: 0

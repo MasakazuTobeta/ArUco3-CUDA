@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 測定 harness を検証する。
+// Verifies the measurement harness.
 //
-// 測定値そのものは環境依存で再現しないため、検証対象は次に限る。
-//   - 測定条件と環境情報が結果へ確実に残ること
-//   - 未実装の経路を無言で CPU へ読み替えないこと
-//   - 統計の整合性 (min <= p50 <= p95 <= p99 <= max)
+// The measured values themselves depend on the machine and do not reproduce, so
+// only the following are checked here.
+//   - The measurement conditions and the environment information always end up in
+//     the result
+//   - An unimplemented route is never silently reinterpreted as the CPU route
+//   - The statistics stay consistent (min <= p50 <= p95 <= p99 <= max)
 #include "benchmark_harness.hpp"
 #include "reference_runner.hpp"
 
@@ -48,15 +50,16 @@ protected:
         dictionary.generateImageMarker(17, 160, marker, 1);
         cv::Mat scene(480, 640, CV_8UC1, cv::Scalar(230));
         marker.copyTo(scene(cv::Rect(200, 150, 160, 160)));
-        // 画像の path を test ごとに分ける。ctest -j で同時に走る他の test の
-        // TearDown に消されないようにする。
+        // Give every test its own image path so that the TearDown of another test
+        // running concurrently under ctest -j cannot delete it.
         const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
         this->image_path_ = std::string("/tmp/aruco3cuda_bench_test_") +
                             (info != nullptr ? info->name() : "unknown") + "_" +
                             std::to_string(static_cast<long>(::getpid())) + ".png";
         ASSERT_TRUE(cv::imwrite(this->image_path_, scene));
 
-        // test を短時間で終えるため回数を絞る。既定値の妥当性は別途評価する。
+        // Keep the iteration counts small so the test finishes quickly. Whether the
+        // defaults are appropriate is evaluated separately.
         this->config_.warmup_iterations_ = 2;
         this->config_.latency_iterations_ = 5;
         this->config_.throughput_frames_ = 3;
@@ -67,10 +70,11 @@ protected:
     BenchmarkConfig config_;
 };
 
-/// 経路どうしの結果を突き合わせる test。
+/// Tests that cross-check the results of the different routes.
 ///
-/// 時間の大小は主張しないため suite 名に Timing を含めない。Compute Sanitizer
-/// の下でも走らせる。CUDA-EndToEnd 経路を通す唯一の test である。
+/// They make no claim about which route is faster, so the suite name does not
+/// contain Timing and the suite also runs under Compute Sanitizer. This is the
+/// only test that exercises the CUDA-EndToEnd route.
 class BenchmarkHarnessRouteTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -80,15 +84,16 @@ protected:
         dictionary.generateImageMarker(17, 160, marker, 1);
         cv::Mat scene(480, 640, CV_8UC1, cv::Scalar(230));
         marker.copyTo(scene(cv::Rect(200, 150, 160, 160)));
-        // 画像の path を test ごとに分ける。ctest -j で同時に走る他の test の
-        // TearDown に消されないようにする。
+        // Give every test its own image path so that the TearDown of another test
+        // running concurrently under ctest -j cannot delete it.
         const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
         this->image_path_ = std::string("/tmp/aruco3cuda_bench_test_") +
                             (info != nullptr ? info->name() : "unknown") + "_" +
                             std::to_string(static_cast<long>(::getpid())) + ".png";
         ASSERT_TRUE(cv::imwrite(this->image_path_, scene));
 
-        // test を短時間で終えるため回数を絞る。既定値の妥当性は別途評価する。
+        // Keep the iteration counts small so the test finishes quickly. Whether the
+        // defaults are appropriate is evaluated separately.
         this->config_.warmup_iterations_ = 2;
         this->config_.latency_iterations_ = 5;
         this->config_.throughput_frames_ = 3;
@@ -99,7 +104,7 @@ protected:
     BenchmarkConfig config_;
 };
 
-// 正常系: CPU 経路を測定でき、統計が整合する。
+// Happy path: the CPU route can be measured and the statistics are consistent.
 TEST_F(BenchmarkHarnessTest, measures_cpu_route) {
     MeasurementRecord record;
     std::string error;
@@ -117,24 +122,26 @@ TEST_F(BenchmarkHarnessTest, measures_cpu_route) {
     EXPECT_LE(record.end_to_end_ms_.p99_, record.end_to_end_ms_.max_);
     EXPECT_GT(record.end_to_end_ms_.min_, 0.0);
 
-    // CPU 経路には kernel 時間が存在しない。0 で埋めず未測定として扱う。
+    // The CPU route has no kernel time. It is reported as not measured rather than
+    // filled in with 0.
     EXPECT_FALSE(record.kernel_time_available_);
     EXPECT_TRUE(record.throughput_available_);
     EXPECT_GT(record.throughput_fps_, 0.0);
 }
 
-// 異常系: 経路が対応しない memory 種別を無言で読み替えない。
+// Failure path: a memory kind the route does not support is never silently
+// reinterpreted.
 TEST_F(BenchmarkHarnessTest, refuses_mismatched_memory_mode) {
     struct Case {
         Route route_;
         aruco3cuda::bench::MemoryMode mode_;
     };
     const std::vector<Case> cases = {
-            // device 常駐の経路に転送込みの種別を渡す。
+            // Pass a kind that includes a transfer to a device-resident route.
             {Route::kCudaResident, aruco3cuda::bench::MemoryMode::kHostPageable},
-            // 転送を含む経路に device 常駐を渡す。
+            // Pass device-resident memory to a route that includes the transfer.
             {Route::kCudaEndToEnd, aruco3cuda::bench::MemoryMode::kDevice},
-            // CPU 経路に memory 種別は無い。
+            // The CPU route has no memory kind.
             {Route::kCpu, aruco3cuda::bench::MemoryMode::kManaged},
             {Route::kCpu, aruco3cuda::bench::MemoryMode::kHostPinned},
             {Route::kCpu, aruco3cuda::bench::MemoryMode::kDevice},
@@ -148,18 +155,18 @@ TEST_F(BenchmarkHarnessTest, refuses_mismatched_memory_mode) {
         std::string error;
         EXPECT_FALSE(aruco3cuda::bench::measure_image(this->image_path_, config, &record, &error))
                 << aruco3cuda::bench::to_string(item.route_);
-        EXPECT_NE(error.find("memory 種別"), std::string::npos) << error;
+        EXPECT_NE(error.find("memory kind"), std::string::npos) << error;
     }
 }
 
-// 正常系: CUDA-Resident 経路を測定できる。
+// Happy path: the CUDA-Resident route can be measured.
 //
-// 測定区間には stream の同期を含める。含めないと kernel の発行時間しか
-// 測らない。それが実際に行われていることを、定常の中央値が発行だけの
-// 時間より大きいことで確かめる。
+// The measured interval includes the stream synchronization. Without it only the
+// kernel launch time would be measured. That the synchronization really happens is
+// confirmed by the steady-state median being larger than a launch alone.
 TEST_F(BenchmarkHarnessTest, measures_cuda_resident_route) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     BenchmarkConfig config = this->config_;
     config.route_ = Route::kCudaResident;
@@ -173,44 +180,50 @@ TEST_F(BenchmarkHarnessTest, measures_cuda_resident_route) {
     EXPECT_GT(record.end_to_end_ms_.p50_, 0.0);
     EXPECT_EQ(record.end_to_end_ms_.count_, static_cast<std::size_t>(config.latency_iterations_));
     EXPECT_EQ(record.detection_count_, 1U);
-    // 段階の内訳は CUDA event を要するため、まだ無い。
+    // The per-stage breakdown requires CUDA events and does not exist yet.
     EXPECT_FALSE(record.stage_times_available_);
     EXPECT_FALSE(record.kernel_time_available_);
-    // 「1 枚目まで > 定常」は主張しない。Compute Sanitizer の下では定常側が
-    // 桁違いに伸び、向きが入れ替わる。値は下に表示して目視できるようにする。
+    // No claim is made that "time to first result > steady state". Under Compute
+    // Sanitizer the steady state grows by orders of magnitude and the direction
+    // flips. The values are printed below so they can be inspected by eye.
     EXPECT_GT(record.time_to_first_result_ms_, 0.0);
-    std::printf("[bench] CUDA-Resident 1 枚目まで %.3f ms (検出 %.3f ms) 定常 %.3f ms\n",
-                record.time_to_first_result_ms_, record.first_frame_ms_,
-                record.end_to_end_ms_.p50_);
+    std::printf(
+            "[bench] CUDA-Resident time to first result %.3f ms (detect %.3f ms) "
+            "steady state %.3f ms\n",
+            record.time_to_first_result_ms_, record.first_frame_ms_, record.end_to_end_ms_.p50_);
 }
 
-// 正常系: 起動の費用が経路ごとに記録される。
+// Happy path: the startup cost is recorded per route.
 //
-// warm-up 後の分位点には現れないため、別に記録しないと単発の検出での
-// 比較ができない。CUDA 経路は文脈の生成と kernel の読み込みで、定常状態の
-// 数百倍になる。
+// It does not show up in the post-warm-up percentiles, so without recording it
+// separately a single-shot detection cannot be compared. On the CUDA routes the
+// context creation and kernel loading make it hundreds of times the steady state.
 TEST_F(BenchmarkHarnessTest, records_startup_cost) {
     MeasurementRecord record;
     std::string error;
     ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, this->config_, &record, &error))
             << error;
     EXPECT_GT(record.first_frame_ms_, 0.0);
-    // 1 枚目までの時間は 1 枚目の検出を含むため、それ以上になる。
+    // The time to the first result includes the first detection, so it is at least
+    // as large as that detection.
     EXPECT_GE(record.time_to_first_result_ms_, record.first_frame_ms_);
-    // 「1 枚目は cache が冷えているため定常より遅い」は主張しない。CPU 経路の
-    // 起動の費用は数 ms しかなく、機の負荷で容易に逆転する。実際 Jetson で
-    // ctest -j 8 のとき 6 回中 3 回この向きが崩れた。負荷の影響を受けない
-    // 定義上の関係だけを検査し、値そのものは下に表示して目視できるようにする。
+    // No claim is made that "the first frame is slower than the steady state because
+    // the caches are cold". On the CPU route the startup cost is only a few ms and
+    // machine load easily reverses it: on a Jetson under ctest -j 8 this direction
+    // broke in 3 out of 6 runs. Only the relation that holds by definition, and is
+    // therefore immune to load, is checked; the values themselves are printed below
+    // so they can be inspected by eye.
     EXPECT_GT(record.end_to_end_ms_.p50_, 0.0);
-    std::printf("[bench] CPU 1 枚目まで %.3f ms (検出 %.3f ms) 定常 %.3f ms\n",
-                record.time_to_first_result_ms_, record.first_frame_ms_,
-                record.end_to_end_ms_.p50_);
+    std::printf(
+            "[bench] CPU time to first result %.3f ms (detect %.3f ms) "
+            "steady state %.3f ms\n",
+            record.time_to_first_result_ms_, record.first_frame_ms_, record.end_to_end_ms_.p50_);
 }
 
-// 正常系: hybrid 経路を測定でき、段階時間が記録される。
+// Happy path: the hybrid route can be measured and the stage times are recorded.
 TEST_F(BenchmarkHarnessTest, measures_hybrid_route) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     BenchmarkConfig config = this->config_;
     config.route_ = Route::kHybrid;
@@ -225,31 +238,37 @@ TEST_F(BenchmarkHarnessTest, measures_hybrid_route) {
     EXPECT_GT(record.gpu_stage_ms_.p50_, 0.0);
     EXPECT_GT(record.cpu_stage_ms_.p50_, 0.0);
     EXPECT_EQ(record.gpu_stage_ms_.count_, record.cpu_stage_ms_.count_);
-    // 段階の標本数は遅延測定の反復数と一致する。warm-up と throughput の分が
-    // 混ざっていれば、end_to_end の分位点と直接は比べられない。
+    // The stage sample count equals the latency iteration count. If warm-up or
+    // throughput samples were mixed in, the stage numbers could not be compared
+    // directly against the end_to_end percentiles.
     EXPECT_EQ(record.gpu_stage_ms_.count_, static_cast<std::size_t>(config.latency_iterations_));
-    // 段階の中央値の和と end-to-end の中央値は比べない。中央値の和は和の
-    // 中央値と一致せず、段階が互いに逆方向へ振れると大小が入れ替わる。
-    // kernel 時間は CUDA event 由来のみとする。段階時間で埋めない。
+    // The sum of the stage medians is not compared against the end-to-end median.
+    // The sum of medians is not the median of the sum, and when the stages swing in
+    // opposite directions the order between them flips.
+    // Kernel time only ever comes from CUDA events; it is not filled in with stage
+    // times.
     EXPECT_FALSE(record.kernel_time_available_);
 
-    // 「1 枚目まで > 定常」は主張しない。Compute Sanitizer の下や機が混んで
-    // いるときは定常側が伸び、向きが入れ替わる。値は下に表示する。
+    // No claim is made that "time to first result > steady state". Under Compute
+    // Sanitizer, or on a busy machine, the steady state grows and the direction
+    // flips. The values are printed below.
     EXPECT_GT(record.time_to_first_result_ms_, 0.0);
-    std::printf("[bench] Hybrid 1 枚目まで %.3f ms (検出 %.3f ms) 定常 %.3f ms\n",
-                record.time_to_first_result_ms_, record.first_frame_ms_,
-                record.end_to_end_ms_.p50_);
+    std::printf(
+            "[bench] Hybrid time to first result %.3f ms (detect %.3f ms) "
+            "steady state %.3f ms\n",
+            record.time_to_first_result_ms_, record.first_frame_ms_, record.end_to_end_ms_.p50_);
 }
 
-// 正常系: host 入力の memory 種別でも測定でき、検出結果は同じになる。
+// Happy path: a host-input memory kind can also be measured and yields the same
+// detections.
 //
-// 転送を測定区間へ含めた分だけ時間は長くなるはずだが、その大小をここで
-// 主張しない。640x480 の転送は数十 us であり、ctest を並列実行したときの
-// 測定ばらつきに埋もれる。時間の比較は benchmark の仕事であり、test の
-// 仕事は両方の経路が成立することの確認である。
+// Including the transfer in the measured interval should make the time longer, but
+// no claim about that ordering is made here. A 640x480 transfer takes tens of us,
+// which is buried in the measurement spread when ctest runs in parallel. Comparing
+// times is the benchmark's job; the test's job is to confirm that both paths work.
 TEST_F(BenchmarkHarnessTest, hybrid_supports_both_memory_modes) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     BenchmarkConfig config = this->config_;
     config.route_ = Route::kHybrid;
@@ -265,14 +284,14 @@ TEST_F(BenchmarkHarnessTest, hybrid_supports_both_memory_modes) {
     ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, config, &pageable, &error))
             << error;
 
-    // 入力の置き場所を変えても検出結果は変わらない。
+    // Changing where the input lives does not change the detections.
     EXPECT_EQ(pageable.detection_count_, resident.detection_count_);
     EXPECT_EQ(pageable.image_sha256_, resident.image_sha256_);
     EXPECT_TRUE(pageable.stage_times_available_);
     EXPECT_GT(pageable.end_to_end_ms_.p50_, 0.0);
 }
 
-// 異常系: hybrid が対応しない memory 種別は拒否する。
+// Failure path: a memory kind the hybrid route does not support is rejected.
 TEST_F(BenchmarkHarnessTest, hybrid_rejects_unsupported_memory_mode) {
     BenchmarkConfig config = this->config_;
     config.route_ = Route::kHybrid;
@@ -280,22 +299,26 @@ TEST_F(BenchmarkHarnessTest, hybrid_rejects_unsupported_memory_mode) {
     MeasurementRecord record;
     std::string error;
     EXPECT_FALSE(aruco3cuda::bench::measure_image(this->image_path_, config, &record, &error));
-    EXPECT_NE(error.find("memory 種別"), std::string::npos);
+    EXPECT_NE(error.find("memory kind"), std::string::npos);
 }
 
-// 正常系: CPU 経路の測定区間に画像の読み込みが入らない。
+// Happy path: the measured interval of the CPU route excludes image loading.
 //
-// 読み込みを含めると、合成 corpus の 1280x720 PNG では測定区間の 6 割以上が
-// PNG の復号になる。検出時間の比較にならないため、区間から外している。
-// 同じ画像を detect_image で回した場合との差でそれを確かめる。
+// With loading included, more than 60% of the measured interval on the 1280x720 PNGs
+// of the synthetic corpus is PNG decoding, which makes the numbers useless for
+// comparing detection times, so loading is kept outside the interval. This is
+// confirmed by the difference against running the same image through detect_image.
 TEST_F(BenchmarkHarnessTest, cpu_route_excludes_image_loading) {
-    // 読み込みを含む経路を測る。測定の前後で 2 度取り、harness の測定を時刻で
-    // 挟む。Jetson のように負荷で clock が大きく動く機では、先に取った標本と
-    // 後に取った標本の速さが 2 倍ほど違う。片側だけで比べると、経路の違いでは
-    // なく clock の違いを見てしまう。挟んだ両方の最小値を基準にすれば、
-    // どちらへ動いても取りこぼさない。
+    // Measure the path that includes loading. It is sampled twice, before and after,
+    // so that the harness measurement is bracketed in time. On a machine such as a
+    // Jetson, where load moves the clock a lot, samples taken before and after can
+    // differ in speed by about a factor of two. Comparing against only one side would
+    // show the clock difference rather than the difference between the paths. Using
+    // the minimum of both bracketing samples as the baseline keeps the comparison
+    // valid whichever way the clock moved.
     BenchmarkConfig config = this->config_;
-    // 標本 5 個では最小値が偶然に左右される。この test だけ数を増やす。
+    // With only 5 samples the minimum is dominated by chance. This test alone uses
+    // more iterations.
     config.latency_iterations_ = 15;
 
     const auto measure_with_loading = [&]() {
@@ -322,14 +345,17 @@ TEST_F(BenchmarkHarnessTest, cpu_route_excludes_image_loading) {
     const double after = measure_with_loading();
 
     const double loading_min = std::min(before, after);
-    std::printf("[bench] 検出のみ 最小 %.3f ms / 読み込み込み 最小 %.3f ms (前 %.3f 後 %.3f)\n",
-                record.end_to_end_ms_.min_, loading_min, before, after);
-    // 最小値で比べる。中央値は負荷の山を拾い、経路の差より大きく振れる。
-    // PNG の復号は必ず加算されるため、同じ clock で比べる限り向きは変わらない。
+    std::printf(
+            "[bench] detect only min %.3f ms / with loading min %.3f ms "
+            "(before %.3f after %.3f)\n",
+            record.end_to_end_ms_.min_, loading_min, before, after);
+    // Compare on the minimum. The median picks up load spikes and swings more than
+    // the difference between the paths. PNG decoding is always added on top, so as
+    // long as both are compared at the same clock the direction cannot change.
     EXPECT_LT(record.end_to_end_ms_.min_, loading_min);
 }
 
-// 異常系: 不正な入力と引数を拒否する。
+// Failure path: invalid input and arguments are rejected.
 TEST_F(BenchmarkHarnessTest, rejects_invalid_input) {
     MeasurementRecord record;
     std::string error;
@@ -347,7 +373,7 @@ TEST_F(BenchmarkHarnessTest, rejects_invalid_input) {
             aruco3cuda::bench::measure_image(this->image_path_, this->config_, &record, nullptr));
 }
 
-// 境界値: throughput を無効にすると未測定として記録される。
+// Boundary case: disabling throughput records it as not measured.
 TEST_F(BenchmarkHarnessTest, throughput_can_be_disabled) {
     BenchmarkConfig config = this->config_;
     config.throughput_frames_ = 0;
@@ -358,7 +384,7 @@ TEST_F(BenchmarkHarnessTest, throughput_can_be_disabled) {
     EXPECT_FALSE(record.throughput_available_);
 }
 
-// 正常系: 全標本を保存できる。
+// Happy path: all samples can be saved.
 TEST_F(BenchmarkHarnessTest, can_save_all_samples) {
     BenchmarkConfig config = this->config_;
     config.save_all_samples_ = true;
@@ -369,7 +395,8 @@ TEST_F(BenchmarkHarnessTest, can_save_all_samples) {
     EXPECT_EQ(record.end_to_end_samples_ms_.size(), 5U);
 }
 
-// 正常系: 測定条件と縮小率が結果 JSONL へ残る。
+// Happy path: the measurement conditions and the scale factor survive into the
+// result JSONL.
 TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
     MeasurementRecord record;
     std::string error;
@@ -382,7 +409,7 @@ TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
     aruco3cuda::bench::write_measurement_line(out, this->config_, record);
     const std::string jsonl = out.str();
 
-    // JSONL は 1 行 1 record。改行が 2 つある。
+    // JSONL holds one record per line, so there are two newlines.
     std::size_t newline_count = 0;
     for (const char c : jsonl) {
         if (c == '\n') {
@@ -397,15 +424,16 @@ TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
     EXPECT_NE(jsonl.find("\"fxfy_effective\""), std::string::npos);
     EXPECT_NE(jsonl.find("\"warmup_iterations\""), std::string::npos);
     EXPECT_NE(jsonl.find("\"p99_ms\""), std::string::npos);
-    // CPU 経路の kernel は null であり 0 ではない。
+    // The kernel entry of the CPU route is null, not 0.
     EXPECT_NE(jsonl.find("\"kernel\":null"), std::string::npos);
     EXPECT_NE(jsonl.find("\"startup\""), std::string::npos);
     EXPECT_NE(jsonl.find("\"time_to_first_result_ms\""), std::string::npos);
     EXPECT_NE(jsonl.find(record.image_sha256_), std::string::npos);
 }
 
-// 正常系: 測定条件の再現に必要な環境情報が記録される。
-// CPU の core 種別と親和性、ASLR の状態が分からないと測定値を比較できない。
+// Happy path: the environment information needed to reproduce the measurement
+// conditions is recorded. Without the CPU core kinds, the affinity, and the ASLR
+// state, measured values cannot be compared.
 TEST(BenchmarkEnvironmentTest, records_cpu_topology_and_affinity) {
     aruco3cuda::bench::BenchmarkConfig config;
     const aruco3cuda::bench::EnvironmentRecord unpinned =
@@ -420,7 +448,8 @@ TEST(BenchmarkEnvironmentTest, records_cpu_topology_and_affinity) {
     EXPECT_EQ(pinned.cpu_affinity_, "0");
 }
 
-// 異常系: 範囲外の CPU 番号は固定せず、その旨を記録する。
+// Failure path: an out-of-range CPU number is not pinned, and that fact is
+// recorded.
 TEST(BenchmarkEnvironmentTest, invalid_cpu_number_is_reported) {
     aruco3cuda::bench::BenchmarkConfig config;
     config.cpu_affinity_ = {-1};
@@ -430,8 +459,9 @@ TEST(BenchmarkEnvironmentTest, invalid_cpu_number_is_reported) {
             << environment.cpu_affinity_;
 }
 
-// 正常系: 経路と memory 種別の識別子が評価計画の表記と一致する。
-// 集計 script が識別子で経路を区別するため、表記のずれは比較を壊す。
+// Happy path: the route and memory kind identifiers match the spelling used in the
+// evaluation plan. The aggregation scripts tell the routes apart by these
+// identifiers, so any drift in spelling breaks the comparison.
 TEST(BenchmarkRouteTest, identifiers_match_evaluation_plan) {
     using aruco3cuda::bench::MemoryMode;
     EXPECT_STREQ(aruco3cuda::bench::to_string(Route::kCpu), "CPU");
@@ -445,15 +475,16 @@ TEST(BenchmarkRouteTest, identifiers_match_evaluation_plan) {
     EXPECT_STREQ(aruco3cuda::bench::to_string(MemoryMode::kDevice), "M-Device");
 }
 
-// 異常系: 列挙に無い値でも nullptr を返さない。
+// Failure path: even a value outside the enumeration does not yield nullptr.
 TEST(BenchmarkRouteTest, unknown_enum_values_are_named) {
     EXPECT_STREQ(aruco3cuda::bench::to_string(static_cast<Route>(999)), "Unknown");
     EXPECT_STREQ(aruco3cuda::bench::to_string(static_cast<aruco3cuda::bench::MemoryMode>(999)),
                  "Unknown");
 }
 
-// 正常系: kernel 時間がある場合は JSON へ統計を出力する。
-// CUDA 経路が入るまで実測では通らない経路のため、record を直接組み立てて確認する。
+// Happy path: when kernel time is available, its statistics are written to the JSON.
+// This path is not exercised by a real measurement until the CUDA routes land, so
+// the record is assembled directly.
 TEST(BenchmarkOutputTest, kernel_statistics_are_written_when_available) {
     const aruco3cuda::bench::BenchmarkConfig config;
     aruco3cuda::bench::MeasurementRecord record;
@@ -472,7 +503,7 @@ TEST(BenchmarkOutputTest, kernel_statistics_are_written_when_available) {
     EXPECT_NE(json.find("3.5000"), std::string::npos) << json;
 }
 
-// 境界値: throughput が未測定なら null を出力する。0 で埋めない。
+// Boundary case: an unmeasured throughput is written as null, not filled in with 0.
 TEST(BenchmarkOutputTest, unavailable_throughput_is_null) {
     const aruco3cuda::bench::BenchmarkConfig config;
     aruco3cuda::bench::MeasurementRecord record;
@@ -482,8 +513,9 @@ TEST(BenchmarkOutputTest, unavailable_throughput_is_null) {
     EXPECT_NE(out.str().find("\"throughput_fps\":null"), std::string::npos) << out.str();
 }
 
-// 境界値: clock を取得できない環境では null を出力する。
-// 0 を書くと「clock が 0」と誤読されるため、未取得と 0 を区別する。
+// Boundary case: on a machine where the clock cannot be read, null is written.
+// Writing 0 would be misread as "the clock is 0", so unavailable and 0 are kept
+// distinct.
 TEST(BenchmarkOutputTest, unavailable_clock_is_null) {
     aruco3cuda::bench::EnvironmentRecord environment;
     environment.hostname_ = "test-host";
@@ -497,7 +529,7 @@ TEST(BenchmarkOutputTest, unavailable_clock_is_null) {
     EXPECT_NE(json.find("\"gpu_current_clock_mhz\":null"), std::string::npos) << json;
 }
 
-// 正常系: clock を取得できる環境では数値を出力する。
+// Happy path: on a machine where the clock can be read, the number is written.
 TEST(BenchmarkOutputTest, available_clock_is_written) {
     aruco3cuda::bench::EnvironmentRecord environment;
     environment.gpu_clock_available_ = true;
@@ -511,16 +543,19 @@ TEST(BenchmarkOutputTest, available_clock_is_written) {
     EXPECT_NE(json.find("\"gpu_current_clock_mhz\":306"), std::string::npos) << json;
 }
 
-// 正常系: CUDA-EndToEnd 経路と CUDA-Resident 経路が同じ結果を出す。
+// Happy path: the CUDA-EndToEnd route and the CUDA-Resident route produce the same
+// results.
 //
-// **時間の大小は主張しない。** 経路の差は転送と取り出しの費用だけであり、
-// 640x480 では 307 KB の転送になる。統合 GPU の帯域では 10 us 未満であり、
-// 検出の 1 ms に対して 1% に届かない。実測でも clock の立ち上がりによる
-// ばらつきの方が大きく、測る順序で大小が入れ替わる。差が見える大きさの
-// 画像での比較は、実機の測定 (docs/measurements) の役目とする。
+// **No claim is made about which is faster.** The two routes differ only by the cost
+// of the transfer and the readback, which at 640x480 is a 307 KB transfer. On the
+// bandwidth of an integrated GPU that is under 10 us, less than 1% of the 1 ms
+// detection. In practice the spread caused by the clock ramping up is larger, and the
+// order flips with the order in which the routes are measured. Comparing on images
+// large enough for the difference to show is the job of the on-device measurements
+// (docs/measurements).
 TEST_F(BenchmarkHarnessRouteTest, cuda_routes_agree_on_detections) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     BenchmarkConfig resident = this->config_;
     resident.route_ = Route::kCudaResident;
@@ -540,11 +575,12 @@ TEST_F(BenchmarkHarnessRouteTest, cuda_routes_agree_on_detections) {
                                                  &error))
             << error;
 
-    // どちらの経路も同じ検出結果でなければ、経路の実装が食い違っている。
+    // If the two routes do not agree on the detections, their implementations have
+    // diverged.
     EXPECT_EQ(end_to_end_record.detection_count_, resident_record.detection_count_);
     EXPECT_GT(resident_record.end_to_end_ms_.min_, 0.0);
     EXPECT_GT(end_to_end_record.end_to_end_ms_.min_, 0.0);
-    std::printf("[bench] 最小 Resident %.3f ms / EndToEnd(pageable) %.3f ms\n",
+    std::printf("[bench] min Resident %.3f ms / EndToEnd(pageable) %.3f ms\n",
                 resident_record.end_to_end_ms_.min_, end_to_end_record.end_to_end_ms_.min_);
 }
 

@@ -15,17 +15,18 @@ namespace {
 using aruco3cuda::report::quad_centroid;
 using aruco3cuda::report::quad_squared_error;
 
-/// 対応付けの候補 1 件。
+/// One candidate pairing.
 struct Pair {
     std::size_t truth_index_ = 0;
     std::size_t observed_index_ = 0;
     double distance_ = 0.0;
 };
 
-/// 四隅の並びが何段巡回しているかを求める。
+/// Determines by how many positions the corner ordering is rotated.
 ///
-/// 真値の四隅はマーカー座標系の順で並ぶ。ID を正しく読めていれば検出も同じ順に
-/// なるため、0 以外が返る場合は rotation の判定を誤ったことを意味する。
+/// The corners of a true value are ordered in marker coordinates. A detection whose
+/// ID was read correctly follows the same order, so a non-zero return means the
+/// rotation was determined incorrectly.
 int best_rotation_steps(const Quad& truth, const Quad& observed, double* out_squared) {
     int best_steps = 0;
     double best_squared = quad_squared_error(truth, observed, 0);
@@ -64,7 +65,7 @@ ImageAccuracy compare_to_truth(const std::string& image_name, const std::vector<
             }
         }
     }
-    // 距離が同じ組の順序を入力順で決める。結果を実行ごとに変えないため。
+    // Break ties on distance by input order, so the result does not change from run to run.
     std::sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) {
         if (a.distance_ != b.distance_) {
             return a.distance_ < b.distance_;
@@ -92,9 +93,9 @@ ImageAccuracy compare_to_truth(const std::string& image_name, const std::vector<
         const TruthMarker& expected = truth[pair.truth_index_];
         const Observation& actual = observed[pair.observed_index_];
         if (expected.id_ != actual.id_) {
-            // 同じマーカーの ID を誤った。真値は取りこぼし、検出は誤りとして
-            // 両方に数える。片方だけに数えると precision と recall の一方が
-            // 誤りを見落とす。
+            // The ID of the same marker was read incorrectly. Count it both as a
+            // missed true value and as a wrong detection. Counting it on one side only
+            // would let either precision or recall overlook the error.
             ++accuracy.false_positive_;
             ++accuracy.false_negative_;
             accuracy.truth_outcomes_[pair.truth_index_] = TruthOutcome::kIdMismatched;
@@ -170,8 +171,9 @@ void accumulate_selected(const ImageAccuracy& image, const std::vector<bool>& se
                         std::max(out_summary->corner_max_px_, image.truth_corner_max_px_[i]);
                 break;
             case TruthOutcome::kIdMismatched:
-                // ID を誤られた真値は取りこぼしと同じく recall を下げる。
-                // 対応する false positive は真値に属さないため足し込まない。
+                // A true value whose ID was misread lowers recall just as a miss does.
+                // The corresponding false positive belongs to no true value and is not
+                // accumulated.
                 ++out_summary->false_negative_;
                 break;
             case TruthOutcome::kMissed:

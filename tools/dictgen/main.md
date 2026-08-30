@@ -1,53 +1,53 @@
 # dictgen
 
-## 目的
+## Purpose
 
-OpenCV 4.x の定義済み Dictionary から、CUDA 側で使用する packed codeword を生成し、C++ source として出力します。生成物が OpenCV と整合していることを継続的に確認する `--check` も提供します。
+Generates the packed codewords used on the CUDA side from OpenCV 4.x predefined Dictionaries, and outputs them as C++ source. Also provides `--check`, which continuously verifies that the generated files are consistent with OpenCV.
 
-## 対象範囲
+## Scope
 
-定義済み Dictionary の読み出し、bit 配列の packed 表現への変換、回転規則の検証、C++ source の生成、生成物と OpenCV の整合確認を対象とします。custom Dictionary の生成、MILP による codeword 探索は対象外です。
+Covers reading predefined Dictionaries, converting bit arrays to the packed representation, verifying the rotation rule, generating C++ source, and verifying that the generated files are consistent with OpenCV. Generating custom Dictionaries and codeword search by MILP are out of scope.
 
-## 現状
+## Current state
 
-- 対応する定義済み Dictionary は 18 種です。
-- 生成対象は 1 回の実行につき 1 Dictionary です。
-- 生成物は `src/dictionary/generated/` へ置き、repository へ commit します。
+- 18 predefined Dictionaries are supported.
+- One run generates one Dictionary.
+- The generated files are placed in `src/dictionary/generated/` and committed to the repository.
 
-## 実装上の判断
+## Design decisions
 
-### 生成物を repository へ commit する
+### The generated files are committed to the repository
 
-build 時に OpenCV から生成すると、`core` の build に OpenCV が必要になります。[アーキテクチャ](../../docs/architecture.md) は core の OpenCV 依存を最小化する方針であり、これと矛盾します。生成物を commit し、OpenCV との一致は `--check` と `test/reference/test_dictionary_conformance.cpp` で継続的に検証します。
+Generating them from OpenCV at build time would make OpenCV a requirement for building `core`. The [architecture](../../docs/architecture.md) sets out a policy of minimizing core's dependency on OpenCV, which this would contradict. The generated files are committed, and agreement with OpenCV is verified continuously by `--check` and `test/reference/test_dictionary_conformance.cpp`.
 
-### bytesList を自前で展開しない
+### `bytesList` is not unpacked by hand
 
-OpenCV の `bytesList` は `CV_8UC4` ですが、memory 配置は channel の interleave ではなく回転ごとの連続 block です。公開 header の記述どおり `bytesList.ptr(i)[k*nbytes + j]` が i 番目 marker の k 回転目の j byte 目です。この配置を誤って interleave として読むと、回転 0 以外が壊れた値になります。誤読を避けるため、byte 列を自前で展開せず `Dictionary::getBitsFromByteList()` に `rotationId` を渡して取得します。
+OpenCV's `bytesList` is `CV_8UC4`, but its memory layout is not channel interleaving; it is a contiguous block per rotation. As described in the public header, `bytesList.ptr(i)[k*nbytes + j]` is byte j of rotation k of marker i. Reading this layout incorrectly as interleaved yields corrupted values for every rotation other than 0. To avoid such a misreading, the byte sequence is not unpacked by hand; it is obtained by passing `rotationId` to `Dictionary::getBitsFromByteList()`.
 
-### 回転規則を生成時に検証する
+### The rotation rule is verified at generation time
 
-CUDA 側は 4 回転を事前展開した table を使い、照合結果の rotation を OpenCV と比較します。table の回転順序が OpenCV の定義と一致していなければ、この比較が成立しません。生成時に `rotate_marker_code()` の連鎖が table の rotation 1 から 3 を再現すること、および 4 回まわすと元へ戻ることを確認し、一致しない場合は生成を中止します。
+The CUDA side uses a table with the 4 rotations expanded in advance, and compares the rotation of a match against OpenCV. If the rotation order of the table does not agree with OpenCV's definition, this comparison does not hold. At generation time it is confirmed that a chain of `rotate_marker_code()` reproduces rotations 1 through 3 of the table, and that rotating 4 times returns to the original; generation is aborted if they do not agree.
 
-### 生成物を整形対象から外す
+### The generated files are excluded from formatting
 
-`clang-format` を適用すると生成器の出力と byte 単位で一致しなくなり、`--check` による再生成の検証が成立しません。`cmake/Aruco3CudaOptions.cmake` が `/generated/` を整形対象から除外します。
+Applying `clang-format` would make them differ byte for byte from the generator's output, and verification of regeneration by `--check` would no longer hold. `cmake/Aruco3CudaOptions.cmake` excludes `/generated/` from formatting.
 
-### 名前空間スコープの const へ extern を付ける
+### `extern` is attached to namespace-scope `const`
 
-C++ では名前空間スコープの `const` は既定で internal linkage になります。`registry.cpp` から参照できるよう、生成物の定義へ `extern` を明示します。
+In C++, a namespace-scope `const` has internal linkage by default. So that it can be referenced from `registry.cpp`, `extern` is stated explicitly on the definitions in the generated files.
 
-### 識別子を kPascalCase で生成する
+### Identifiers are generated in kPascalCase
 
-`CONTRIBUTING.md` は定数を `kPascalCase` と定めます。Dictionary 名の `_` 区切りを語の境界として扱い、`DICT_ARUCO_MIP_36h12` から `kDictArucoMip36h12Codes` を生成します。
+`CONTRIBUTING.md` specifies `kPascalCase` for constants. The `_` separators in the Dictionary name are treated as word boundaries, so `DICT_ARUCO_MIP_36h12` yields `kDictArucoMip36h12Codes`.
 
-## 目標
+## Goals
 
-- 複数 Dictionary を 1 回の実行で生成できるようにする。
-- 生成物の hash を [Code Provenance 記録](../../docs/code-provenance.md) へ自動で反映する。
-- `registry.cpp` の宣言も生成し、Dictionary 追加時の手作業を無くす。
+- Allow multiple Dictionaries to be generated in a single run.
+- Reflect the hashes of the generated files into the [code provenance record](../../docs/code-provenance.md) automatically.
+- Also generate the declarations in `registry.cpp`, eliminating the manual work of adding a Dictionary.
 
-## 関連
+## See also
 
-- [Dictionary 方針](../../docs/dictionaries.md)
-- [検出パイプライン設計](../../docs/design/detector-pipeline.md)
-- [Code Provenance 記録](../../docs/code-provenance.md)
+- [Dictionary policy](../../docs/dictionaries.md)
+- [Detection pipeline design](../../docs/design/detector-pipeline.md)
+- [Code provenance record](../../docs/code-provenance.md)

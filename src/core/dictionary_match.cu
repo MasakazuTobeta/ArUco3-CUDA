@@ -18,12 +18,12 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// 1 候補を担当する block の thread 数。
+/// Thread count of the block that handles one candidate.
 constexpr int kMatchThreads = 256;
-/// 対応する最大の marker 1 辺。MarkerCode が 64 bit であることによる。
+/// Largest supported marker side. It follows from MarkerCode being 64 bits wide.
 constexpr int kMaxMarkerSize = 7;
 
-/// kernel へ渡す定数。引数の数を抑えるためまとめる。
+/// Constants passed to the kernel, bundled to keep the argument count down.
 struct MatchParams {
     int cells_per_side_ = 0;
     int border_bits_ = 0;
@@ -33,10 +33,11 @@ struct MatchParams {
     float valid_bit_threshold_ = 0.0F;
 };
 
-/// 1 つの ID について 4 回転の最小距離を求める。
+/// Computes the smallest distance over the four rotations of one ID.
 ///
-/// OpenCV の hammingDistanceToId と同じ順序で見る。更新は厳密な小なりであり、
-/// 同値なら小さい回転が残る。距離 0 で打ち切るのも同じである。
+/// The rotations are visited in the same order as OpenCV's hammingDistanceToId. The update uses a
+/// strict less-than, so on a tie the lower rotation wins, and the loop breaks at distance 0 just
+/// as the reference does.
 __device__ int distance_to_id(const MarkerCode* codes, int id, MarkerCode not_black,
                               MarkerCode selector, int bit_count, int* out_rotation) {
     int smallest = bit_count + 1;
@@ -57,7 +58,8 @@ __device__ int distance_to_id(const MarkerCode* codes, int id, MarkerCode not_bl
     return smallest;
 }
 
-/// 候補ごとにセル比を Dictionary と照合する。1 block が 1 候補を担当する。
+/// Matches the cell ratios of each candidate against the dictionary. One block handles one
+/// candidate.
 __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
                              const std::int32_t* count, const MarkerCode* codes, std::int32_t* ids,
                              std::int32_t* rotations, std::int32_t* distances, MatchParams params) {
@@ -66,8 +68,8 @@ __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
         return;
     }
 
-    // 既定では unsigned long long と MarkerCode は同じ幅である。atomicOr は
-    // unsigned long long の版しか無いため、その型で持つ。
+    // unsigned long long and MarkerCode have the same width here. atomicOr only exists for
+    // unsigned long long, so the masks are held in that type.
     __shared__ unsigned long long not_black;
     __shared__ unsigned long long not_white;
     __shared__ int best_id;
@@ -82,7 +84,8 @@ __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
     __syncthreads();
 
     if (accepted[candidate] == 0U) {
-        // border 検証で落ちた候補は照合しない。CPU 基準も同じ位置で打ち切る。
+        // Candidates rejected by the border check are not matched. The CPU reference bails out
+        // at the same point.
         if (threadIdx.x == 0U) {
             ids[candidate] = -1;
             rotations[candidate] = 0;
@@ -98,8 +101,8 @@ __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
     const float* cell_ratios =
             ratios + (static_cast<std::size_t>(candidate) * static_cast<std::size_t>(cells) *
                       static_cast<std::size_t>(cells));
-    // 上限は float で求める。OpenCV は `1 - validBitIdThreshold` を float で
-    // 評価する。倍精度で求めると閾値そのものが 1 ULP 動く。
+    // The upper bound is computed in float because OpenCV evaluates `1 - validBitIdThreshold`
+    // in float. Computing it in double precision would shift the threshold itself by 1 ULP.
     const float upper = 1.0F - params.valid_bit_threshold_;
 
     unsigned long long local_black = 0ULL;
@@ -132,9 +135,9 @@ __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
         const int distance =
                 distance_to_id(codes, id, candidate_black, selector, bit_count, &rotation);
         atomicMin(&smallest_distance, distance);
-        // 最小距離の ID ではなく、条件を満たした最初の ID を採る。ID の昇順に
-        // 見て最初に条件を満たしたところで打ち切る OpenCV と同じにするため、
-        // 満たした ID の最小値を取る。
+        // Take the first ID that satisfies the condition, not the ID with the smallest
+        // distance. Taking the minimum over the satisfying IDs reproduces OpenCV, which walks
+        // the IDs in ascending order and stops at the first one that satisfies it.
         if (distance <= params.max_errors_) {
             atomicMin(&best_id, id);
         }
@@ -148,7 +151,7 @@ __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
             distances[candidate] = smallest_distance;
             return;
         }
-        // 採用した ID の回転を求め直す。全 ID 分を保持するより安い。
+        // Recompute the rotation of the selected ID. That is cheaper than keeping one per ID.
         int rotation = 0;
         const int distance =
                 distance_to_id(codes, best_id, candidate_black, selector, bit_count, &rotation);
@@ -253,7 +256,7 @@ Status match_candidates_async(const CellRatioBuffers& ratios, const DeviceCandid
     if (matches->capacity_ < candidates.capacity_) {
         return Status::kInvalidArgument;
     }
-    // セル比の 1 辺は marker_size + 2 * border でなければ内側を切り出せない。
+    // The interior can only be carved out when the cell-ratio side is marker_size + 2 * border.
     if (ratios.cells_per_side_ != dictionary.marker_size_ + (2 * config.marker_border_bits_)) {
         return Status::kInvalidConfig;
     }
@@ -263,7 +266,7 @@ Status match_candidates_async(const CellRatioBuffers& ratios, const DeviceCandid
     params.border_bits_ = config.marker_border_bits_;
     params.marker_size_ = dictionary.marker_size_;
     params.code_count_ = dictionary.code_count_;
-    // 0 方向への切り捨て。OpenCV の maxCorrectionRecalculed と同じ。
+    // Truncation toward zero, the same as OpenCV's maxCorrectionRecalculed.
     params.max_errors_ = static_cast<int>(static_cast<double>(dictionary.max_correction_bits_) *
                                           config.error_correction_rate_);
     params.valid_bit_threshold_ = static_cast<float>(config.valid_bit_threshold_);

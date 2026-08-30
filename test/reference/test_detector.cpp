@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 公開 API の検出器を検証する。
+// Verifies the detector exposed through the public API.
 //
-// 完了条件は「host 同期なしで検出結果を参照できることを test で確認できる」
-// である。単に呼べるだけでは足りないため、stream を占有する kernel を先に
-// 積み、detect_async が戻った時点で stream がまだ動いていることを確かめる。
+// The completion criterion is that a test can confirm the detection results are
+// reachable without a host synchronization. Merely being able to call the API
+// is not enough, so a kernel that occupies the stream is enqueued first, and we
+// confirm that the stream is still running by the time detect_async returns.
 #include "aruco3cuda/detector.hpp"
 
 #include <gtest/gtest.h>
@@ -58,7 +59,7 @@ const aruco3cuda::DictionaryTable& table() {
     return *found;
 }
 
-/// マーカーを 1 枚置いた場面を作る。
+/// Builds a scene with a single marker placed in it.
 cv::Mat make_scene(int width, int height, const cv::Point& origin, int id = kMarkerId) {
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
@@ -69,7 +70,7 @@ cv::Mat make_scene(int width, int height, const cv::Point& origin, int id = kMar
     return scene;
 }
 
-/// 入力上限を場面へ合わせた設定を作る。
+/// Builds a configuration whose input limits match the scene.
 DetectorConfig config_for(const cv::Mat& scene) {
     DetectorConfig config;
     config.max_width_px_ = scene.cols;
@@ -77,7 +78,7 @@ DetectorConfig config_for(const cv::Mat& scene) {
     return config;
 }
 
-/// 場面を device へ載せる。
+/// Uploads the scene to the device.
 class SceneImage {
 public:
     SceneImage() = default;
@@ -94,7 +95,7 @@ private:
     aruco3cuda::hybrid::DeviceImage image_;
 };
 
-/// OpenCV の検出結果。突き合わせの基準にする。
+/// OpenCV's detection result, used as the comparison reference.
 struct ReferenceMarker {
     int id_ = -1;
     std::vector<cv::Point2f> corners_;
@@ -126,7 +127,7 @@ std::vector<ReferenceMarker> detect_with_opencv(const cv::Mat& scene,
     return result;
 }
 
-/// 検出 1 件の四隅を取り出す。
+/// Extracts the four corners of a single detection.
 std::vector<cv::Point2f> corners_of(const HostDetections& detections, std::size_t index) {
     std::vector<cv::Point2f> result;
     result.reserve(4U);
@@ -137,7 +138,7 @@ std::vector<cv::Point2f> corners_of(const HostDetections& detections, std::size_
     return result;
 }
 
-/// 巡回のずれを許した四隅の最大頂点距離。
+/// Maximum vertex distance between two quads, allowing for a cyclic shift.
 double quad_distance(const std::vector<cv::Point2f>& a, const std::vector<cv::Point2f>& b) {
     double best = 1e30;
     for (int shift = 0; shift < 4; ++shift) {
@@ -154,10 +155,10 @@ double quad_distance(const std::vector<cv::Point2f>& a, const std::vector<cv::Po
     return best;
 }
 
-// 正常系: 初期化してマーカーを検出できる。
+// Happy path: initializes and detects a marker.
 TEST(DetectorTest, detects_marker_and_matches_opencv) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     const DetectorConfig config = config_for(scene);
@@ -181,20 +182,22 @@ TEST(DetectorTest, detects_marker_and_matches_opencv) {
     EXPECT_EQ(detections.ids_[0], expected[0].id_);
 
     const double distance = quad_distance(corners_of(detections, 0U), expected[0].corners_);
-    std::printf("[detector] ID %d、四隅の差 %.4f px\n", detections.ids_[0], distance);
+    std::printf("[detector] ID %d, corner deviation %.4f px\n", detections.ids_[0], distance);
     EXPECT_LT(distance, 1.0);
 }
 
-// 正常系: detect_async は host 同期しない。
+// Happy path: detect_async does not synchronize with the host.
 //
-// stream を長く占有する kernel を先に積み、その後ろへ detect_async を積む。
-// host 同期していれば呼び出しから戻るまでに占有が終わっているはずであり、
-// stream は完了している。同期していなければ stream はまだ動いている。
-// suite 名に Timing を含める。Compute Sanitizer の下では占有 kernel の
-// 実時間が読めず、発行と占有の大小が崩れる。既定の除外規則に載せる。
+// A kernel that occupies the stream for a long time is enqueued first, and
+// detect_async is enqueued behind it. If the call synchronized with the host,
+// the occupation would have finished before the call returned and the stream
+// would be complete. If it does not synchronize, the stream is still running.
+// The suite name contains Timing on purpose: under Compute Sanitizer the wall
+// time of the occupying kernel cannot be read and the ordering between dispatch
+// and occupation breaks down, so this suite is on the default exclusion list.
 TEST(DetectorTimingTest, detect_async_does_not_synchronize) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     const DetectorConfig config = config_for(scene);
@@ -206,17 +209,20 @@ TEST(DetectorTimingTest, detect_async_does_not_synchronize) {
     std::string message;
     ASSERT_EQ(detector.initialize(table(), config, &message), Status::kOk) << message;
 
-    // 既定 stream は他の stream と暗黙に同期する。専用の stream を作る。
+    // The default stream synchronizes implicitly with other streams, so create
+    // a dedicated one.
     cudaStream_t stream = nullptr;
     ASSERT_EQ(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cudaSuccess);
     int* sink = nullptr;
     ASSERT_EQ(cudaMalloc(reinterpret_cast<void**>(&sink), sizeof(int)), cudaSuccess);
 
-    // 1 度流して配置を確定させる。以降は同じ入力なので配置を組み直さない。
+    // Run once to settle the layout. The input is identical afterwards, so the
+    // layout is not rebuilt.
     ASSERT_EQ(detector.detect_async(image.view(), stream, &message), Status::kOk) << message;
     ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
 
-    // clock の周波数は機で違う。十分に大きい値を積み、下限だけを検査する。
+    // The clock frequency differs across machines. Enqueue a generously large
+    // value and check only the lower bound.
     constexpr long long kSpinCycles = 2000000000LL;
     ASSERT_TRUE(aruco3cuda::test::enqueue_spin(kSpinCycles, sink, stream));
 
@@ -228,7 +234,7 @@ TEST(DetectorTimingTest, detect_async_does_not_synchronize) {
     const cudaError_t query = cudaStreamQuery(stream);
     const double elapsed_ms = std::chrono::duration<double, std::milli>(finish - start).count();
 
-    // 後始末は先に済ませる。assert が落ちても資源を残さない。
+    // Clean up first so that no resource is left behind if an assertion fails.
     const cudaError_t sync = cudaStreamSynchronize(stream);
     const auto spin_finish = std::chrono::steady_clock::now();
     const double spin_ms = std::chrono::duration<double, std::milli>(spin_finish - start).count();
@@ -241,19 +247,21 @@ TEST(DetectorTimingTest, detect_async_does_not_synchronize) {
     EXPECT_NE(device.count_, nullptr);
     EXPECT_GT(device.capacity_, 0);
 
-    std::printf("[detector] 発行 %.3f ms、占有の完了まで %.3f ms、query=%s\n", elapsed_ms, spin_ms,
-                cudaGetErrorName(query));
-    // 占有が十分に長いことを先に確かめる。短ければこの test は何も測っていない。
-    ASSERT_GT(spin_ms, 50.0) << "占有 kernel が短すぎる。cycle 数を増やすこと";
-    // 発行が占有の完了を待っていないこと。
+    std::printf("[detector] dispatch %.3f ms, until occupation completes %.3f ms, query=%s\n",
+                elapsed_ms, spin_ms, cudaGetErrorName(query));
+    // First confirm the occupation was long enough; if it was short, this test
+    // measured nothing.
+    ASSERT_GT(spin_ms, 50.0) << "the spin kernel is too short; increase the cycle count";
+    // The dispatch must not have waited for the occupation to complete.
     EXPECT_EQ(query, cudaErrorNotReady);
     EXPECT_LT(elapsed_ms, spin_ms / 2.0);
 }
 
-// 正常系: device 常駐の結果を host 同期なしで参照できる。
+// Happy path: the device-resident results are reachable without a host
+// synchronization.
 TEST(DetectorTest, device_detections_needs_no_synchronization) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     const DetectorConfig config = config_for(scene);
@@ -270,7 +278,8 @@ TEST(DetectorTest, device_detections_needs_no_synchronization) {
     ASSERT_NE(device.count_, nullptr);
     ASSERT_EQ(cudaStreamSynchronize(nullptr), cudaSuccess);
 
-    // device pointer をそのまま読み、host 側の詰め替えを介さずに一致を見る。
+    // Read the device pointer directly, checking agreement without going
+    // through the host-side repacking.
     std::int32_t count = 0;
     ASSERT_EQ(cudaMemcpy(&count, device.count_, sizeof(std::int32_t), cudaMemcpyDeviceToHost),
               cudaSuccess);
@@ -286,10 +295,10 @@ TEST(DetectorTest, device_detections_needs_no_synchronization) {
     EXPECT_EQ(host.ids_[0], id);
 }
 
-// 正常系: workspace を frame ごとに確保し直さない。
+// Happy path: the workspace is not reallocated on every frame.
 TEST(DetectorTest, allocates_workspace_once) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     const DetectorConfig config = config_for(scene);
@@ -308,15 +317,15 @@ TEST(DetectorTest, allocates_workspace_once) {
     ASSERT_EQ(cudaStreamSynchronize(nullptr), cudaSuccess);
     EXPECT_EQ(detector.workspace_statistics().allocation_count_, after_initialize);
     EXPECT_EQ(detector.workspace_statistics().exhausted_count_, 0U);
-    std::printf("[detector] workspace %zu byte、確保 %zu 回\n",
+    std::printf("[detector] workspace %zu bytes, %zu allocations\n",
                 detector.workspace_statistics().capacity_bytes_,
                 detector.workspace_statistics().allocation_count_);
 }
 
-// 正常系: 複数のマーカーを検出できる。
+// Happy path: detects multiple markers.
 TEST(DetectorTest, detects_multiple_markers) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
@@ -342,16 +351,16 @@ TEST(DetectorTest, detects_multiple_markers) {
 
     std::vector<int> found(detections.ids_.begin(), detections.ids_.end());
     std::sort(found.begin(), found.end());
-    std::printf("[detector] %zu 件を検出\n", found.size());
+    std::printf("[detector] detected %zu markers\n", found.size());
     EXPECT_EQ(found, ids);
     EXPECT_EQ(detections.corners_.size(), found.size() * 8U);
     EXPECT_FALSE(detections.marker_overflow_);
 }
 
-// 境界値: 入力の寸法を変えても正しく検出できる。
+// Boundary: detection stays correct when the input dimensions change.
 TEST(DetectorTest, handles_changed_input_size) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat large = make_scene(1280, 720, cv::Point(400, 260));
     const cv::Mat small = make_scene(960, 540, cv::Point(300, 180));
@@ -375,16 +384,16 @@ TEST(DetectorTest, handles_changed_input_size) {
     ASSERT_EQ(detector.download(&detections, nullptr, &message), Status::kOk) << message;
     ASSERT_EQ(detections.ids_.size(), 1U);
     EXPECT_EQ(detections.ids_[0], kMarkerId);
-    // 小さい画像でも上限を確保し直していない。
+    // Even for the smaller image the capacity was not reallocated.
     EXPECT_EQ(detector.workspace_statistics().allocation_count_, 1U);
 
-    // もう一度大きい方へ戻しても壊れない。
+    // Switching back to the larger image does not break anything.
     ASSERT_EQ(detector.detect_async(large_image.view(), nullptr, &message), Status::kOk) << message;
     ASSERT_EQ(detector.download(&detections, nullptr, &message), Status::kOk) << message;
     EXPECT_EQ(detections.ids_.size(), 1U);
 }
 
-/// 明示的な stream を作り、必ず破棄する。
+/// Creates an explicit stream and always destroys it.
 class OwnedStream {
 public:
     OwnedStream() {
@@ -405,7 +414,7 @@ private:
     cudaStream_t stream_ = nullptr;
 };
 
-/// 検出結果を比較できる形へ落とす。
+/// Reduces a detection result to a comparable form.
 std::string digest_of(const HostDetections& detections) {
     std::ostringstream out;
     for (std::size_t i = 0; i < detections.ids_.size(); ++i) {
@@ -418,14 +427,15 @@ std::string digest_of(const HostDetections& detections) {
     return out.str();
 }
 
-// 正常系: 発行列を畳んでも結果が変わらない。
+// Happy path: folding the dispatch sequence does not change the result.
 //
-// 明示的な stream を渡すと発行列が CUDA Graph へ畳まれます。graph は kernel の
-// 引数を焼き込むため、危険は丸めではなく**参照の陳腐化**です。既定 stream
-// (畳まない経路) と同じ結果になることを直接比べます。
+// Passing an explicit stream folds the dispatch sequence into a CUDA graph.
+// Because a graph bakes in the kernel arguments, the hazard is not rounding but
+// **stale references**. We compare directly against the default stream (the
+// path that does not fold).
 TEST(DetectorTest, graph_path_agrees_with_direct_dispatch) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     const DetectorConfig config = config_for(scene);
@@ -445,7 +455,8 @@ TEST(DetectorTest, graph_path_agrees_with_direct_dispatch) {
     ASSERT_EQ(direct.download(&expected, nullptr, &message), Status::kOk) << message;
     ASSERT_EQ(expected.ids_.size(), 1U);
 
-    // 3 frame 流す。1 回目で捕らえ、2 回目以降は畳んだ列を起動する。
+    // Run three frames: the first captures, and the rest launch the folded
+    // sequence.
     for (int frame = 0; frame < 3; ++frame) {
         HostDetections actual;
         ASSERT_EQ(graph.detect_async(image.view(), stream.get(), &message), Status::kOk)
@@ -455,13 +466,15 @@ TEST(DetectorTest, graph_path_agrees_with_direct_dispatch) {
     }
 }
 
-// 境界値: 入力の寸法が変わったら発行列を捕らえ直す。
+// Boundary: the dispatch sequence is recaptured when the input dimensions
+// change.
 //
-// 捕らえた列は workspace の pointer を焼き込みます。寸法が変わると配置が
-// 組み直されるため、捕らえ直さないと**静かに古い pointer を叩きます**。
+// A captured sequence bakes in the workspace pointers. A change in dimensions
+// rebuilds the layout, so without a recapture the graph would **silently poke
+// at stale pointers**.
 TEST(DetectorTest, graph_is_rebuilt_when_layout_changes) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat large = make_scene(1280, 720, cv::Point(400, 260));
     const cv::Mat small = make_scene(960, 540, cv::Point(300, 180), 7);
@@ -473,7 +486,7 @@ TEST(DetectorTest, graph_is_rebuilt_when_layout_changes) {
     OwnedStream stream;
     ASSERT_NE(stream.get(), nullptr);
 
-    // 畳まない経路で期待値を作る。
+    // Produce the expected values through the non-folding path.
     Detector direct;
     std::string message;
     ASSERT_EQ(direct.initialize(table(), config, &message), Status::kOk) << message;
@@ -489,7 +502,7 @@ TEST(DetectorTest, graph_is_rebuilt_when_layout_changes) {
 
     Detector graph;
     ASSERT_EQ(graph.initialize(table(), config, &message), Status::kOk) << message;
-    // 大、小、大、小 と入れ替える。毎回捕らえ直しが起きる。
+    // Alternate large, small, large, small; a recapture happens every time.
     const std::vector<std::pair<const SceneImage*, const HostDetections*>> sequence = {
             {&large_image, &expected_large},
             {&small_image, &expected_small},
@@ -504,14 +517,14 @@ TEST(DetectorTest, graph_is_rebuilt_when_layout_changes) {
         ASSERT_EQ(graph.download(&actual, stream.get(), &message), Status::kOk) << message;
         EXPECT_EQ(digest_of(actual), digest_of(*sequence[step].second)) << "step " << step;
     }
-    // 配置の組み直しでも workspace を確保し直していない。
+    // Even across layout rebuilds the workspace was not reallocated.
     EXPECT_EQ(graph.workspace_statistics().allocation_count_, 1U);
 }
 
-// 境界値: stream を変えたら発行列を捕らえ直す。
+// Boundary: the dispatch sequence is recaptured when the stream changes.
 TEST(DetectorTest, graph_is_rebuilt_when_stream_changes) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     SceneImage image;
@@ -525,7 +538,8 @@ TEST(DetectorTest, graph_is_rebuilt_when_stream_changes) {
     std::string message;
     ASSERT_EQ(detector.initialize(table(), config_for(scene), &message), Status::kOk) << message;
 
-    // 1 本目、2 本目、既定 stream、1 本目 と渡し替える。
+    // Hand over the first stream, the second stream, the default stream, then
+    // the first stream again.
     const std::vector<cudaStream_t> streams = {first.get(), second.get(), nullptr, first.get()};
     for (std::size_t step = 0; step < streams.size(); ++step) {
         HostDetections actual;
@@ -537,10 +551,11 @@ TEST(DetectorTest, graph_is_rebuilt_when_stream_changes) {
     }
 }
 
-// 境界値: 設定を変えて初期化し直したら発行列を捨てる。
+// Boundary: reinitializing with a changed configuration discards the dispatch
+// sequence.
 TEST(DetectorTest, graph_is_rebuilt_after_reinitialize) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(1280, 720, cv::Point(400, 260));
     SceneImage image;
@@ -556,7 +571,8 @@ TEST(DetectorTest, graph_is_rebuilt_after_reinitialize) {
     ASSERT_EQ(detector.download(&first, stream.get(), &message), Status::kOk) << message;
     ASSERT_EQ(first.ids_.size(), 1U);
 
-    // 縮小をやめる設定へ変える。segmentation の寸法と pyramid の段数が変わる。
+    // Switch to a configuration without downscaling; the segmentation
+    // dimensions and the pyramid level count both change.
     DetectorConfig changed = config_for(scene);
     changed.min_marker_length_ratio_original_img_ = 0.0F;
     changed.min_side_length_canonical_img_px_ = 32;
@@ -566,16 +582,17 @@ TEST(DetectorTest, graph_is_rebuilt_after_reinitialize) {
     ASSERT_EQ(detector.download(&second, stream.get(), &message), Status::kOk) << message;
     ASSERT_EQ(second.ids_.size(), 1U);
     EXPECT_EQ(second.ids_[0], kMarkerId);
-    // 縮小しないので四隅は原寸のまま求まる。前の設定と同じ位置になるとは
-    // 限らないが、マーカーの位置から離れてはならない。
+    // Without downscaling the corners come out at full resolution. They are not
+    // guaranteed to land where the previous configuration put them, but they
+    // must not stray from the marker's position.
     EXPECT_NEAR(static_cast<double>(second.corners_[0]), 400.0, 3.0);
     EXPECT_NEAR(static_cast<double>(second.corners_[1]), 260.0, 3.0);
 }
 
-// 境界値: 検出上限を超えたら kMarkerOverflow を返す。
+// Boundary: exceeding the detection limit returns kMarkerOverflow.
 TEST(DetectorTest, reports_marker_overflow) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
@@ -602,7 +619,7 @@ TEST(DetectorTest, reports_marker_overflow) {
     EXPECT_EQ(detections.accepted_total_, 3);
 }
 
-// 異常系: 支持しない設定の組み合わせを拒否する。
+// Failure path: rejects unsupported configuration combinations.
 TEST(DetectorTest, rejects_unsupported_combinations) {
     DetectorConfig aruco3_without_refine;
     aruco3_without_refine.use_aruco3_detection_ = true;
@@ -620,14 +637,14 @@ TEST(DetectorTest, rejects_unsupported_combinations) {
     EXPECT_FALSE(second.initialized());
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: invalid arguments perform no work.
 TEST(DetectorTest, rejects_invalid_arguments) {
     Detector detector;
     std::string message;
     DeviceDetections device;
     HostDetections host;
 
-    // initialize 前。
+    // Before initialize.
     EXPECT_EQ(detector.device_detections(&device), Status::kNotInitialized);
     EXPECT_EQ(detector.download(&host, nullptr, &message), Status::kNotInitialized);
     aruco3cuda::ImageViewU8 empty;
@@ -650,7 +667,8 @@ TEST(DetectorTest, rejects_invalid_arguments) {
     EXPECT_EQ(detector.device_detections(nullptr), Status::kInvalidArgument);
     EXPECT_EQ(detector.download(nullptr, nullptr, &message), Status::kInvalidArgument);
 
-    // host memory の画像は受け取らない。kernel が直接読むためである。
+    // An image in host memory is not accepted, because the kernels read it
+    // directly.
     aruco3cuda::ImageViewU8 host_view;
     host_view.data_ = scene.data;
     host_view.width_px_ = scene.cols;
@@ -659,17 +677,17 @@ TEST(DetectorTest, rejects_invalid_arguments) {
     host_view.space_ = aruco3cuda::MemorySpace::kHostPageable;
     EXPECT_EQ(detector.detect_async(host_view, nullptr, &message), Status::kInvalidImage);
 
-    // 上限を超える寸法。
+    // Dimensions beyond the configured limits.
     const cv::Mat oversized = make_scene(1280, 720, cv::Point(400, 260));
     SceneImage big;
     ASSERT_TRUE(big.upload(oversized));
     EXPECT_EQ(detector.detect_async(big.view(), nullptr, &message), Status::kInvalidArgument);
 }
 
-// 正常系: move しても使える。
+// Happy path: still usable after a move.
 TEST(DetectorTest, supports_move) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat scene = make_scene(640, 480, cv::Point(200, 150));
     SceneImage image;
@@ -685,7 +703,7 @@ TEST(DetectorTest, supports_move) {
     ASSERT_EQ(moved.download(&detections, nullptr, &message), Status::kOk) << message;
     EXPECT_EQ(detections.ids_.size(), 1U);
 
-    // move 元は初期化前の状態として扱える。落ちてはならない。
+    // The moved-from object behaves as if uninitialized; it must not crash.
     // NOLINTNEXTLINE(bugprone-use-after-move)
     EXPECT_FALSE(source.initialized());
     // NOLINTNEXTLINE(bugprone-use-after-move)

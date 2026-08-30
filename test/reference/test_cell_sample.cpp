@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 射影変換とセル sampling を OpenCV と突き合わせる。
+// Cross-checks the perspective transform and cell sampling against OpenCV.
 //
-// canonical 画像の 1 画素の違いは、セル 16 画素中の 1 画素、すなわち比の
-// 0.0625 に相当する。判定の閾値近傍で ID が変わりうるため、byte 単位の
-// 一致を求める。
+// A single pixel of difference in the canonical image is one pixel out of the
+// 16 in a cell, i.e. 0.0625 of the ratio. Near the decision threshold that can
+// change the decoded ID, so we require a byte-for-byte match.
 //
-// ただし完全一致を常に求めることはできない。OpenCV の warpPerspective は
-// 経路が 3 つあり、aarch64 では NEON の v_muladd (積和融合) を使う SIMD 経路、
-// x86_64 では融合を持たない SSE4.1 経路が選ばれる。同じ入力に対する出力の
-// SHA256 が機種で異なることを実測で確認している。
+// An exact match cannot be demanded unconditionally, however. OpenCV's
+// warpPerspective has three code paths: on aarch64 it picks the NEON SIMD path
+// that uses v_muladd (fused multiply-add), while on x86_64 it picks the SSE4.1
+// path, which has no fusion. We have measured that the SHA256 of the output for
+// identical input differs between machines.
 //
-// 本実装は融合しない側 (scalar と SSE4.1 の意味論) に合わせている。x86_64 の
-// OpenCV とは完全に一致し、aarch64 では丸め境界のごく一部が異なる。実測では
-// 40960 画素中 1 画素であった。上限を置いて監視する。
+// This implementation follows the non-fused side (scalar and SSE4.1
+// semantics). It matches x86_64 OpenCV exactly; on aarch64 a very small number
+// of rounding-boundary pixels differ. Measured, that was 1 pixel out of 40960.
+// We cap and monitor that figure.
 #include "cell_sample.hpp"
 
 #include <gtest/gtest.h>
@@ -53,7 +55,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 決定的な試験画像。四角形の内側に模様を置く。
+/// Deterministic test image; places a pattern inside the quadrilateral.
 cv::Mat make_pattern(int width, int height, std::uint64_t seed) {
     cv::Mat image(height, width, CV_8UC1);
     std::mt19937_64 rng(seed);
@@ -67,10 +69,12 @@ cv::Mat make_pattern(int width, int height, std::uint64_t seed) {
     return image;
 }
 
-/// GPU 側の canonical 画像を作る。level 0 のみを使う単純な経路。
+/// Builds the canonical image on the GPU via the simple path that only uses
+/// level 0.
 ///
-/// pyramid の段数を 1 に固定し、ArUco3 を無効にして level 選択を外す。
-/// この test は射影変換と sampling だけを対象とする。
+/// The pyramid is pinned to a single level and ArUco3 is disabled so that level
+/// selection is taken out of the picture. This test targets only the
+/// perspective transform and the sampling.
 class CanonicalRun {
 public:
     CanonicalRun() = default;
@@ -198,7 +202,8 @@ private:
     std::vector<cv::Mat> images_;
 };
 
-/// OpenCV で同じ canonical 画像を作る。CPU 経路と同じ手順である。
+/// Builds the same canonical image with OpenCV, following the same steps as
+/// the CPU path.
 cv::Mat reference_canonical(const cv::Mat& source, const std::vector<cv::Point2f>& quad, int side) {
     std::vector<cv::Point2f> destination(4);
     destination[0] = cv::Point2f(0.0F, 0.0F);
@@ -211,7 +216,8 @@ cv::Mat reference_canonical(const cv::Mat& source, const std::vector<cv::Point2f
     return canonical;
 }
 
-/// 中心と辺長と回転から四隅を作る。座標は整数へ丸める。
+/// Builds the four corners from a center, a side length, and a rotation. The
+/// coordinates are rounded to integers.
 std::vector<cv::Point2f> square_quad(double cx, double cy, double side, double degrees) {
     const double radians = degrees * CV_PI / 180.0;
     const double half = side / 2.0;
@@ -226,19 +232,21 @@ std::vector<cv::Point2f> square_quad(double cx, double cy, double side, double d
     return quad;
 }
 
-/// 不一致の割合が、機種差として説明できる範囲に収まることを確かめる。
+/// Checks that the mismatch rate stays within what platform differences can
+/// explain.
 ///
-/// 積和の融合を使う機種では、丸め境界のごく一部が異なる。0 を要求すると
-/// aarch64 で常に落ちるため、実測に基づく上限を置く。上限を超えたら融合以外の
-/// 原因があるということであり、調べる価値がある。
+/// On machines that use fused multiply-add, a very small number of
+/// rounding-boundary pixels differ. Demanding zero would fail on aarch64 every
+/// time, so we impose a measured upper bound instead. Exceeding that bound
+/// means something other than fusion is at work, which is worth investigating.
 void expect_within_platform_tolerance(std::size_t mismatched, std::size_t total) {
-    // 実測は 40960 画素中 1 画素 (0.0024%)。10 倍の余裕を持たせる。
+    // Measured at 1 pixel out of 40960 (0.0024%); allow a 10x margin.
     constexpr double kMaxRatio = 0.0003;
     EXPECT_LE(static_cast<double>(mismatched), kMaxRatio * static_cast<double>(total))
-            << "不一致 " << mismatched << " / " << total;
+            << "mismatched " << mismatched << " / " << total;
 }
 
-/// 1 組を突き合わせ、不一致画素の数を返す。
+/// Compares one pair and returns the number of mismatched pixels.
 std::size_t compare(const cv::Mat& expected, const cv::Mat& actual) {
     EXPECT_EQ(expected.size(), actual.size());
     std::size_t mismatched = 0;
@@ -254,10 +262,10 @@ std::size_t compare(const cv::Mat& expected, const cv::Mat& actual) {
     return mismatched;
 }
 
-// 正常系: 回転した正方形で OpenCV と byte 単位で一致する。
+// Happy path: matches OpenCV byte for byte on rotated squares.
 TEST(CellSampleTest, matches_opencv_for_rotated_squares) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat source = make_pattern(640, 480, 20260828U);
     std::vector<std::vector<cv::Point2f>> quads;
@@ -274,15 +282,16 @@ TEST(CellSampleTest, matches_opencv_for_rotated_squares) {
         total += compare(expected, run.images()[i]);
     }
     const std::size_t pixels = quads.size() * static_cast<std::size_t>(32) * 32U;
-    std::printf("[cell] 回転 %zu 通りの不一致画素 %zu / %zu (%.4f%%)\n", quads.size(), total,
-                pixels, 100.0 * static_cast<double>(total) / static_cast<double>(pixels));
+    std::printf("[cell] mismatched pixels over %zu rotations: %zu / %zu (%.4f%%)\n", quads.size(),
+                total, pixels, 100.0 * static_cast<double>(total) / static_cast<double>(pixels));
     expect_within_platform_tolerance(total, pixels);
 }
 
-// 正常系: 射影で強く歪んだ四角形でも一致する。
+// Happy path: still matches on quadrilaterals with strong perspective
+// distortion.
 TEST(CellSampleTest, matches_opencv_for_perspective_quads) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat source = make_pattern(800, 600, 31415U);
     std::mt19937 rng(20260828U);
@@ -308,15 +317,18 @@ TEST(CellSampleTest, matches_opencv_for_perspective_quads) {
         worst = std::max(worst, mismatched);
     }
     const std::size_t pixels = quads.size() * static_cast<std::size_t>(32) * 32U;
-    std::printf("[cell] 射影歪み %zu 通りの不一致画素 %zu / %zu (最大 %zu / 1024)\n", quads.size(),
-                total, pixels, worst);
+    std::printf(
+            "[cell] mismatched pixels over %zu perspective distortions: %zu / %zu "
+            "(worst %zu / 1024)\n",
+            quads.size(), total, pixels, worst);
     expect_within_platform_tolerance(total, pixels);
 }
 
-// 境界値: 画像の外へはみ出す四角形では、範囲外が 0 になる。
+// Boundary: for a quadrilateral that extends past the image, out-of-range
+// samples read as 0.
 TEST(CellSampleTest, out_of_bounds_reads_zero) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat source = make_pattern(200, 200, 7U);
     const std::vector<std::vector<cv::Point2f>> quads = {square_quad(20.0, 20.0, 120.0, 0.0),
@@ -330,10 +342,10 @@ TEST(CellSampleTest, out_of_bounds_reads_zero) {
     }
 }
 
-// 境界値: cell 数と cell 辺長を変えても一致する。
+// Boundary: still matches when the cell count and cell side length change.
 TEST(CellSampleTest, matches_opencv_for_other_marker_sizes) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat source = make_pattern(500, 500, 99U);
     const std::vector<std::vector<cv::Point2f>> quads = {square_quad(250.0, 250.0, 200.0, 23.0)};
@@ -348,7 +360,7 @@ TEST(CellSampleTest, matches_opencv_for_other_marker_sizes) {
     }
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: invalid arguments perform no work.
 TEST(CellSampleTest, rejects_invalid_arguments) {
     Workspace workspace;
     const DetectorConfig config;
@@ -368,7 +380,7 @@ TEST(CellSampleTest, rejects_invalid_arguments) {
 
     EXPECT_EQ(aruco3cuda::detail::canonical_side_px(config, 0), 0);
     EXPECT_EQ(aruco3cuda::detail::canonical_workspace_bytes(config, 0), 0U);
-    // 既定設定と 36h12 では 32 になる。
+    // With the default configuration and 36h12 this comes out to 32.
     EXPECT_EQ(aruco3cuda::detail::canonical_side_px(config, 6), 32);
 }
 

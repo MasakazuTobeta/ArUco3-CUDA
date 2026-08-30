@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 候補の篩、詰め込み、上限超過を検証する。
+// Verifies candidate filtering, compaction, and capacity overflow.
 //
-// 篩は CPU 経路の判定へ写像したものであり、周長と四角形らしさの測り方が
-// 異なる。この違いが結果へどう出るかを、通す形と落とす形の両方で固定する。
-// 上限超過は無言で捨てず Status で示すことも合わせて確かめる。
+// The filter mirrors the decisions of the CPU route, but it measures the perimeter
+// and the squareness differently. How that difference shows up in the results is
+// pinned down here with both shapes that pass and shapes that are rejected. These
+// tests also confirm that an overflow is reported through a Status instead of being
+// silently discarded.
 #include "candidate_filter.hpp"
 
 #include <gtest/gtest.h>
@@ -40,14 +42,14 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 候補 1 つ分。
+/// A single candidate.
 struct HostCandidate {
     std::vector<cv::Point2f> corners_;
     int label_ = -1;
     int perimeter_ = 0;
 };
 
-/// 二値化画像から候補の詰め込みまでを一度に行う。
+/// Runs everything from the binary image through to candidate compaction.
 class CandidateRun {
 public:
     CandidateRun() = default;
@@ -59,7 +61,8 @@ public:
         }
     }
 
-    /// 処理して結果を取り出す。戻り値は read_candidate_count の Status。
+    /// Runs the pipeline and reads the results back. Returns the Status of
+    /// read_candidate_count.
     Status run(const cv::Mat& binary, const DetectorConfig& config) {
         const std::size_t pitch = static_cast<std::size_t>(binary.cols) + 32U;
         if (cudaMalloc(&this->binary_, pitch * static_cast<std::size_t>(binary.rows)) !=
@@ -130,8 +133,9 @@ private:
         if (count == 0U) {
             return true;
         }
-        // 確保数ではなく候補数だけを読む。候補数を超える範囲は書かれて
-        // おらず、読むと未初期化 memory を触ることになる。
+        // Read only as many entries as there are candidates, not the full capacity.
+        // Nothing beyond the candidate count has been written, so reading it would
+        // touch uninitialized memory.
         const auto capacity = static_cast<std::size_t>(candidates.capacity_);
         std::vector<std::int32_t> corner_x(count * kQuadCornerCount);
         std::vector<std::int32_t> corner_y(count * kQuadCornerCount);
@@ -174,7 +178,7 @@ private:
     int count_ = 0;
 };
 
-/// 中心と辺長と回転から正方形の四隅を作る。
+/// Builds the four corners of a square from a center, an edge length, and a rotation.
 std::vector<cv::Point2f> square_corners(double center_x, double center_y, double side,
                                         double degrees) {
     const double radians = degrees * CV_PI / 180.0;
@@ -192,7 +196,7 @@ std::vector<cv::Point2f> square_corners(double center_x, double center_y, double
     return corners;
 }
 
-/// 四隅を塗りつぶす。
+/// Fills the polygon described by the corners.
 void fill(cv::Mat& image, const std::vector<cv::Point2f>& corners, int value) {
     std::vector<cv::Point> points;
     points.reserve(corners.size());
@@ -202,7 +206,8 @@ void fill(cv::Mat& image, const std::vector<cv::Point2f>& corners, int value) {
     cv::fillConvexPoly(image, points, cv::Scalar(value), cv::LINE_8);
 }
 
-/// ArUco3 の下限を使わない設定。合成図形の大きさに合わせる。
+/// Configuration that disables the ArUco3 lower bounds, matching the size of the
+/// synthetic shapes.
 DetectorConfig plain_config() {
     DetectorConfig config;
     config.use_aruco3_detection_ = false;
@@ -211,10 +216,10 @@ DetectorConfig plain_config() {
     return config;
 }
 
-// 正常系: 四角形は通り、四隅が詰めて並ぶ。
+// Happy path: quadrilaterals pass, and their corners come back compacted.
 TEST(CandidateFilterTest, accepts_squares) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(320, 400, CV_8UC1, cv::Scalar(0));
     fill(binary, square_corners(90.0, 90.0, 70.0, 0.0), 255);
@@ -231,13 +236,14 @@ TEST(CandidateFilterTest, accepts_squares) {
     }
 }
 
-// 正常系: L 字は辺の裏付けの判定で落ちる。
+// Happy path: an L shape is rejected by the edge support check.
 //
-// 内側比は 0.94 で通ってしまう。極点から引いた辺が成分の外を通ることを
-// 別に見ないと落とせないことを実測で確かめている。
+// Its inside ratio is 0.94, which would pass. Measurement confirms that it can only
+// be rejected by separately checking that an edge drawn between the extreme points
+// runs outside the component.
 TEST(CandidateFilterTest, rejects_l_shape) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(200, 200, CV_8UC1, cv::Scalar(0));
     cv::rectangle(binary, cv::Rect(40, 40, 30, 110), cv::Scalar(255), cv::FILLED);
@@ -247,27 +253,28 @@ TEST(CandidateFilterTest, rejects_l_shape) {
     EXPECT_EQ(run.count(), 0);
 }
 
-// 境界値: 周長が下限を下回る四角形は落ちる。
+// Boundary case: a quadrilateral whose perimeter is below the lower bound is
+// rejected.
 TEST(CandidateFilterTest, rejects_small_quad) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
-    // 既定の min_marker_perimeter_rate は 0.03。長辺 400 なら chain code 長
-    // 12 が下限であり、辺 2 画素の四角形は届かない。
+    // The default min_marker_perimeter_rate is 0.03. With a long side of 400 the
+    // lower bound is a chain code length of 12, which a 2-pixel square cannot reach.
     fill(binary, square_corners(200.0, 200.0, 2.0, 0.0), 255);
     CandidateRun run;
     ASSERT_EQ(run.run(binary, plain_config()), Status::kOk);
     EXPECT_EQ(run.count(), 0);
 }
 
-// 境界値: 画像端に近すぎる四角形は落ちる。
+// Boundary case: a quadrilateral too close to the image border is rejected.
 TEST(CandidateFilterTest, rejects_quad_near_border) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(200, 200, CV_8UC1, cv::Scalar(0));
-    // 左上の角が (0, 0) に接する。既定の min_distance_to_border_px は 3。
+    // The top-left corner touches (0, 0). The default min_distance_to_border_px is 3.
     fill(binary,
          {cv::Point2f(0.0F, 0.0F), cv::Point2f(80.0F, 0.0F), cv::Point2f(80.0F, 80.0F),
           cv::Point2f(0.0F, 80.0F)},
@@ -277,10 +284,11 @@ TEST(CandidateFilterTest, rejects_quad_near_border) {
     EXPECT_EQ(run.count(), 0);
 }
 
-// 正常系: 穴を持つ枠は通る。マーカーの黒枠に対応する。
+// Happy path: a ring with a hole passes. This corresponds to the black border of a
+// marker.
 TEST(CandidateFilterTest, accepts_marker_like_ring) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(320, 320, CV_8UC1, cv::Scalar(0));
     fill(binary, square_corners(160.0, 160.0, 140.0, 19.0), 255);
@@ -288,14 +296,16 @@ TEST(CandidateFilterTest, accepts_marker_like_ring) {
     CandidateRun run;
     ASSERT_EQ(run.run(binary, plain_config()), Status::kOk);
     ASSERT_EQ(run.count(), 1);
-    // 枠の画素は全て推定四角形の内側にあるため、四角形らしさの判定を通る。
+    // Every pixel of the ring lies inside the estimated quadrilateral, so it passes
+    // the squareness check.
     EXPECT_GT(run.candidates()[0].perimeter_, 0);
 }
 
-// 異常系: 候補が上限を超えると打ち切り、kCandidateOverflow を返す。
+// Failure path: once the candidates exceed the capacity, the run is truncated and
+// kCandidateOverflow is returned.
 TEST(CandidateFilterTest, reports_overflow_and_truncates) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
     int drawn = 0;
@@ -311,7 +321,7 @@ TEST(CandidateFilterTest, reports_overflow_and_truncates) {
     config.max_candidates_ = 8;
     CandidateRun run;
     EXPECT_EQ(run.run(binary, config), Status::kCandidateOverflow);
-    // 打ち切っても、書けた分は正しく揃っている。
+    // Even when truncated, the entries that were written are complete and consistent.
     EXPECT_EQ(run.count(), 8);
     EXPECT_EQ(run.candidates().size(), 8U);
     for (const HostCandidate& item : run.candidates()) {
@@ -320,10 +330,10 @@ TEST(CandidateFilterTest, reports_overflow_and_truncates) {
     }
 }
 
-// 境界値: 上限ちょうどでは打ち切りにならない。
+// Boundary case: hitting the capacity exactly is not an overflow.
 TEST(CandidateFilterTest, exact_capacity_is_not_overflow) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(320, 400, CV_8UC1, cv::Scalar(0));
     fill(binary, square_corners(90.0, 90.0, 70.0, 0.0), 255);
@@ -337,10 +347,10 @@ TEST(CandidateFilterTest, exact_capacity_is_not_overflow) {
     EXPECT_EQ(run.count(), 3);
 }
 
-// 正常系: 候補の並びは label の昇順で、実行ごとに変わらない。
+// Happy path: candidates come out in ascending label order, identical across runs.
 TEST(CandidateFilterTest, order_is_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(320, 400, CV_8UC1, cv::Scalar(0));
     for (int i = 0; i < 6; ++i) {
@@ -361,10 +371,10 @@ TEST(CandidateFilterTest, order_is_deterministic) {
     }
 }
 
-// 境界値: 前景が無ければ候補も 0 件になる。
+// Boundary case: with no foreground there are no candidates either.
 TEST(CandidateFilterTest, empty_image_has_no_candidate) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const cv::Mat binary(120, 160, CV_8UC1, cv::Scalar(0));
     CandidateRun run;
@@ -372,7 +382,7 @@ TEST(CandidateFilterTest, empty_image_has_no_candidate) {
     EXPECT_EQ(run.count(), 0);
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: nothing runs when the arguments are invalid.
 TEST(CandidateFilterTest, rejects_invalid_arguments) {
     Workspace workspace;
     const DetectorConfig config;
@@ -404,17 +414,18 @@ TEST(CandidateFilterTest, rejects_invalid_arguments) {
     EXPECT_EQ(aruco3cuda::detail::candidate_workspace_bytes(zero_capacity, 4, 4), 0U);
 }
 
-// 正常系: 円、楕円、六角形は内側比の判定で落ちる。
+// Happy path: circles, ellipses, and hexagons are rejected by the inside ratio
+// check.
 TEST(CandidateFilterTest, rejects_round_shapes) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     {
         cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
         cv::circle(binary, cv::Point(200, 200), 120, cv::Scalar(255), cv::FILLED);
         CandidateRun run;
         ASSERT_EQ(run.run(binary, plain_config()), Status::kOk);
-        EXPECT_EQ(run.count(), 0) << "円";
+        EXPECT_EQ(run.count(), 0) << "circle";
     }
     {
         cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
@@ -422,7 +433,7 @@ TEST(CandidateFilterTest, rejects_round_shapes) {
                     cv::Scalar(255), cv::FILLED);
         CandidateRun run;
         ASSERT_EQ(run.run(binary, plain_config()), Status::kOk);
-        EXPECT_EQ(run.count(), 0) << "楕円";
+        EXPECT_EQ(run.count(), 0) << "ellipse";
     }
     {
         cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
@@ -435,14 +446,14 @@ TEST(CandidateFilterTest, rejects_round_shapes) {
         cv::fillConvexPoly(binary, hexagon, cv::Scalar(255));
         CandidateRun run;
         ASSERT_EQ(run.run(binary, plain_config()), Status::kOk);
-        EXPECT_EQ(run.count(), 0) << "六角形";
+        EXPECT_EQ(run.count(), 0) << "hexagon";
     }
 }
 
-// 正常系: 十字は辺の裏付けの判定で落ちる。
+// Happy path: a cross is rejected by the edge support check.
 TEST(CandidateFilterTest, rejects_cross_shape) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
     const std::vector<cv::Point> cross = {{170, 50},  {230, 50},  {230, 170}, {350, 170},
@@ -454,14 +465,15 @@ TEST(CandidateFilterTest, rejects_cross_shape) {
     EXPECT_EQ(run.count(), 0);
 }
 
-// 正常系: 三角形は落ちる。
+// Happy path: triangles are rejected.
 //
-// 極点探索では、直線 c0c2 が三角形の 1 辺に重なる向きが選ばれる。片側に
-// 点が残らないため四隅が定まらず、無効になる。向きを変えても同じである
-// ことを確かめる。
+// The extreme-point search picks an orientation in which the line c0c2 lies along one
+// edge of the triangle. No point is left on one side, so the four corners cannot be
+// determined and the candidate becomes invalid. This test confirms that the same
+// holds at other orientations.
 TEST(CandidateFilterTest, rejects_triangles) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<std::vector<cv::Point>> triangles = {{{60, 320}, {340, 320}, {200, 60}},
                                                            {{60, 60}, {340, 120}, {150, 330}},
@@ -472,36 +484,40 @@ TEST(CandidateFilterTest, rejects_triangles) {
         cv::fillConvexPoly(binary, triangles[i], cv::Scalar(255));
         CandidateRun run;
         ASSERT_EQ(run.run(binary, plain_config()), Status::kOk) << i;
-        EXPECT_EQ(run.count(), 0) << "三角形 " << i;
+        EXPECT_EQ(run.count(), 0) << "triangle " << i;
     }
 }
 
-// 既知の限界: 重なって 1 成分になった 2 枚は 1 つの四角形になる。
+// Known limitation: two markers that overlap into a single component become one
+// quadrilateral.
 //
-// CPU 経路では輪郭が 8 角形になり多角形近似で落ちる。案 A では外接する
-// 四角形として受け入れられ、2 枚とも取りこぼす。この差は候補抽出の比較
-// 対象であり、挙動を隠さず固定するためにこの test を置いている。
+// On the CPU route the contour becomes an octagon and is rejected by the polygon
+// approximation. Approach A accepts it as the enclosing quadrilateral, so both markers
+// are missed. This difference is part of what the candidate extraction comparison
+// measures; this test exists to pin the behavior down rather than hide it.
 TEST(CandidateFilterTest, known_limitation_overlapping_markers_merge) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
-    // 横に少し重ねる。連結成分としては 1 つになる。
+    // Overlap them slightly along x, so they form a single connected component.
     fill(binary, square_corners(160.0, 200.0, 120.0, 0.0), 255);
     fill(binary, square_corners(250.0, 200.0, 120.0, 0.0), 255);
     CandidateRun run;
     ASSERT_EQ(run.run(binary, plain_config()), Status::kOk);
-    // 2 枚ではなく 1 つの候補になる。
+    // The result is one candidate rather than two.
     EXPECT_EQ(run.count(), 1);
 }
 
-// 既知の限界: 縦にずらして重ねた 2 枚は、四角形でない形になり落ちる。
+// Known limitation: two markers overlapped with a vertical offset form a non-quad
+// shape and are rejected.
 //
-// 重なり方によって「1 つの四角形になる」か「落ちる」かが変わる。どちらも
-// 2 枚を取りこぼす点は同じであり、CPU 基準との差として数える。
+// Depending on how they overlap, the outcome switches between "becomes one
+// quadrilateral" and "is rejected". Either way both markers are missed, and that is
+// counted as a difference from the CPU reference.
 TEST(CandidateFilterTest, known_limitation_staggered_markers_are_lost) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     cv::Mat binary(400, 400, CV_8UC1, cv::Scalar(0));
     fill(binary, square_corners(150.0, 160.0, 120.0, 0.0), 255);

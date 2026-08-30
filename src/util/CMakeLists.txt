@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# util は CUDA にも OpenCV にも依存しない共通処理を提供する。
-# core、reference、tools のいずれからも利用できる。
+# util provides shared code that depends on neither CUDA nor OpenCV.
+# It can be used from core, reference, and tools alike.
 add_library(aruco3cuda_util
   sha256.cpp
   json_writer.cpp

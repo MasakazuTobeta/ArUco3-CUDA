@@ -1,116 +1,116 @@
-# Benchmark 報告: CPU / Hybrid / CUDA-Resident の比較
+# Benchmark Report: CPU / Hybrid / CUDA-Resident Comparison
 
-- 測定日: 2026-08-29
-- 対象: 入力画像の縮小・二値化から四隅の subpixel 補正までを GPU 常駐で処理する実装
-- 生の測定結果: `docs/measurements/`
+- Measurement date: 2026-08-29
+- Subject: an implementation that keeps everything from input image downscaling and thresholding through corner subpixel refinement resident on the GPU
+- Raw measurement results: `docs/measurements/`
 
-## 目的
+## Purpose
 
-CPU 基準実装、Hybrid 経路、CUDA-Resident 経路の 3 経路について、[評価計画](evaluation-plan.md) が定める crossover point (CPU と CUDA の優位が入れ替わる条件) を示します。どの条件でどの経路を選ぶべきかを、測定値から判断できる形で提示することが目的です。
+For the three routes — the CPU baseline implementation, the Hybrid route, and the CUDA-Resident route — this report gives the crossover point defined by the [evaluation plan](evaluation-plan.md) (the condition at which the advantage switches between CPU and CUDA). The goal is to present which route to choose under which conditions, in a form that can be judged from measured values.
 
-**CUDA が常に速いという前提は置きません。** CPU が勝つ条件を明示します。
+**We do not assume that CUDA is always faster.** We state explicitly the conditions under which the CPU wins.
 
-## 対象範囲
+## Scope
 
-| 経路 | 内容 | 測定区間 |
+| Route | Contents | Measured interval |
 | --- | --- | --- |
-| `CPU` | OpenCV ArUco3 (`detectMarkers`) | `cv::Mat` 入力から host の結果まで |
-| `Hybrid` | GPU で縮小と適応的二値化、CPU で候補抽出と decode | device の画像から host の結果まで |
-| `CUDA-Resident` | 縮小から四隅の subpixel 補正まで GPU 常駐 | `detect_async` の発行と stream の同期 |
-| `CUDA-E2E` | host 入力の完全 GPU 経路 | host からの転送、発行、同期、結果の取り出し |
+| `CPU` | OpenCV ArUco3 (`detectMarkers`) | From `cv::Mat` input to the result on the host |
+| `Hybrid` | Downscaling and adaptive thresholding on the GPU, candidate extraction and decode on the CPU | From the image on the device to the result on the host |
+| `CUDA-Resident` | GPU-resident from downscaling through corner subpixel refinement | Issuing `detect_async` and synchronizing the stream |
+| `CUDA-E2E` | The full GPU route with host input | Transfer from the host, issue, synchronization, and retrieval of the result |
 
-`CUDA-E2E` は入力 memory 種別の比較にだけ用います。3 経路の速度比較は `CPU`、`Hybrid`、`CUDA-Resident` で行います。
+`CUDA-E2E` is used only for comparing input memory types. The speed comparison of the three routes uses `CPU`, `Hybrid`, and `CUDA-Resident`.
 
-経路ごとの測定区間を図に示します。矢印は 1 frame ぶんのデータの流れです。
+The figure shows the measured interval for each route. The arrows are the data flow for one frame.
 
 ```mermaid
 flowchart TD
-    subgraph cpu["CPU 経路"]
-      c1["cv::Mat (host)"] --> c2["OpenCV ArUco3"] --> c3["host の検出結果"]
+    subgraph cpu["CPU route"]
+      c1["cv::Mat (host)"] --> c2["OpenCV ArUco3"] --> c3["detection result on the host"]
     end
-    subgraph hyb["Hybrid 経路"]
-      h1["device の画像"] --> h2["GPU: 縮小と適応的二値化"] --> h3["二値化画像を host へ"] --> h4["CPU: 輪郭追跡から decode と四隅補正"] --> h5["host の検出結果"]
+    subgraph hyb["Hybrid route"]
+      h1["image on the device"] --> h2["GPU: downscaling and adaptive thresholding"] --> h3["thresholded image to the host"] --> h4["CPU: contour tracing through decode and corner refinement"] --> h5["detection result on the host"]
     end
-    subgraph res["CUDA-Resident 経路"]
-      r1["device の画像"] --> r2["GPU: 縮小から四隅の subpixel 補正まで"] --> r3["device の検出結果"]
+    subgraph res["CUDA-Resident route"]
+      r1["image on the device"] --> r2["GPU: from downscaling through corner subpixel refinement"] --> r3["detection result on the device"]
     end
 ```
 
-Hybrid は二値化画像を host へ戻す点が費用の中心で、CUDA-Resident は host 同期を持たない点が特徴です。
+For Hybrid the center of the cost is returning the thresholded image to the host; what characterizes CUDA-Resident is that it has no host synchronization.
 
-**この報告の結論はすべて合成 corpus で得たものです。** 実画像 corpus は整備しておらず、実画像で境界が動く可能性があります。
+**All conclusions in this report were obtained on the synthetic corpus.** A real-image corpus has not been prepared, and the boundary may move on real images.
 
-## 測定条件
+## Measurement conditions
 
-| 項目 | 値 |
+| Item | Value |
 | --- | --- |
-| 測定区間 | **検出のみ。画像の読み込みと checksum は含まない** |
-| 反復 | 暖機 30 回、遅延 200 回、throughput 100 frame |
-| 起動の費用 | 別に測定。1 process 1 画像で 3 回 |
-| OpenCV thread | 1 |
-| ASLR | 有効。container の権限では `setarch -R` を使えない |
-| 独立実行 | 3 process。p50 の中央値を採り、実行間ばらつきを併記する |
-| 分位点 | nearest-rank。補間しないため返る値は必ず実測値 |
-| corpus | 合成 corpus の `full` preset から 28 場面 (解像度 4 種 x マーカー 0/1/4/16 枚 + blur / noise / combined 各 4 解像度) |
+| Measured interval | **Detection only. Image loading and checksums are not included** |
+| Repetitions | 30 warmup, 200 latency, 100 throughput frames |
+| Startup cost | Measured separately. One image per process, three times |
+| OpenCV threads | 1 |
+| ASLR | Enabled. The container's privileges do not allow `setarch -R` |
+| Independent runs | 3 processes. We take the median of the p50 values and report the run-to-run variance alongside |
+| Percentiles | nearest-rank. No interpolation, so the value returned is always an actually measured one |
+| corpus | 28 scenes from the `full` preset of the synthetic corpus (4 resolutions x 0/1/4/16 markers + blur / noise / combined at 4 resolutions each) |
 | Dictionary | `DICT_ARUCO_MIP_36h12` |
-| ArUco3 検出戦略 | 有効。`minSideLengthCanonicalImg` = 32、`minMarkerLengthRatioOriginalImg` = 0.05 |
+| ArUco3 detection strategy | Enabled. `minSideLengthCanonicalImg` = 32, `minMarkerLengthRatioOriginalImg` = 0.05 |
 
-測定区間に PNG の復号を含めません。実時間処理では PNG を復号しないうえ、1 反復ごとに読み込むと測定区間の大半が復号になり、検出の end-to-end 時間の比較として成立しないためです。結果 JSONL の `schema_version` は 4 で、異なる version の結果は同じ key が違う区間を指すため混ぜて集計しません。
+The measured interval does not include PNG decoding. Real-time processing does not decode PNG, and loading the image once per iteration would make decoding the bulk of the measured interval, which would not hold up as a comparison of end-to-end detection time. The `schema_version` of the result JSONL is 4; results from a different version are not aggregated together, because the same keys refer to different intervals.
 
-### 固定する CPU core
+### Pinning the CPU core
 
-**性能 core へ固定します。** 性能 core と効率 core が混在する機では、どちらで測るかで CPU 経路の値が約 2 倍変わります。効率 core で測ると GPU 側の優位が実際より大きく出ます。
+**We pin to a performance core.** On machines that mix performance and efficiency cores, the value for the CPU route changes by about a factor of 2 depending on which one is measured. Measuring on an efficiency core makes the GPU side's advantage look larger than it is.
 
-DGX Spark GB10 の core は交互に並びます。`lscpu` では CPU 0-4 と 10-14 が Cortex-A725 (最大 2808/2860 MHz)、**CPU 5-9 と 15-19 が Cortex-X925 (最大 3900/3978 MHz)** です。測定に使う CPU 5 は性能 core です。この対応は測定結果の `environment` 行の `cpu_topology` にも `Cortex-X925 x10 (cpu 5-9,15-19)` として記録しており、**どの core で測ったかを結果から検算できます**。
+The cores of the DGX Spark GB10 alternate. In `lscpu`, CPU 0-4 and 10-14 are Cortex-A725 (max 2808/2860 MHz), and **CPU 5-9 and 15-19 are Cortex-X925 (max 3900/3978 MHz)**. CPU 5, which is used for the measurements, is a performance core. This mapping is also recorded in `cpu_topology` in the `environment` row of the measurement results as `Cortex-X925 x10 (cpu 5-9,15-19)`, so **which core was measured can be verified from the results**.
 
-| 機体 | core 構成 | 測定に使う CPU |
+| Machine | Core configuration | CPU used for measurement |
 | --- | --- | --- |
-| DGX Spark GB10 | Cortex-A725 x10 (効率、cpu 0-4/10-14)、Cortex-X925 x10 (性能、cpu 5-9/15-19) | 5 (X925、性能) |
-| GeForce RTX 5070 Ti の機 | 4.80GHz x2、4.70GHz x6 (性能)、4.60GHz x12 (効率) | 2 (4.70GHz) |
-| Jetson AGX Orin | Cortex-A78AE x12 (均一) | 0 |
+| DGX Spark GB10 | Cortex-A725 x10 (efficiency, cpu 0-4/10-14), Cortex-X925 x10 (performance, cpu 5-9/15-19) | 5 (X925, performance) |
+| GeForce RTX 5070 Ti machine | 4.80GHz x2, 4.70GHz x6 (performance), 4.60GHz x12 (efficiency) | 2 (4.70GHz) |
+| Jetson AGX Orin | Cortex-A78AE x12 (uniform) | 0 |
 
-DGX Spark の CPU 0 は効率 core、GeForce RTX 5070 Ti の機の CPU 0 は性能 core です。**番号だけで揃えると別種の core を比べることになります。**
+CPU 0 on the DGX Spark is an efficiency core, while CPU 0 on the GeForce RTX 5070 Ti machine is a performance core. **Matching by number alone means comparing different kinds of core.**
 
-### 入力 memory 種別
+### Input memory types
 
-| 種別 | 入力 buffer | 測定区間で起きること |
+| Type | Input buffer | What happens in the measured interval |
 | --- | --- | --- |
-| `M-Device` | device 常駐 | 転送は測定区間の外。上流が GPU 上にある場合 |
-| `M-Pageable` | `cv::Mat` の通常 memory | driver が中継へ写してから DMA する |
-| `M-Pinned` | page-locked な host memory | DMA が直接読む。**写しは測定区間の外で 1 度だけ行う** |
-| `M-Managed` | managed memory | **明示的な copy は無い。** device が触った時点で page が移送される |
+| `M-Device` | Device-resident | The transfer is outside the measured interval. For when the upstream is on the GPU |
+| `M-Pageable` | The ordinary memory of a `cv::Mat` | The driver copies into a staging area, then DMAs |
+| `M-Pinned` | Page-locked host memory | DMA reads it directly. **The copy is done once, outside the measured interval** |
+| `M-Managed` | Managed memory | **There is no explicit copy.** Pages migrate the moment the device touches them |
 
-`M-Pinned` の写しを測定区間の外へ出すのは、評価計画の軸が「**入力 buffer** の memory 種別」だからです。毎 frame 写すと、種別の差ではなく写しの費用を測ることになります。
+We move the `M-Pinned` copy outside the measured interval because the evaluation plan's axis is "the memory type of the **input buffer**". Copying every frame would measure the cost of the copy rather than the difference between types.
 
-### 対象機
+### Target machines
 
-| 機体 | GPU | CC | GPU 種別 | CPU | CUDA |
+| Machine | GPU | CC | GPU type | CPU | CUDA |
 | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | NVIDIA GB10 | 12.1 | 統合 | Cortex-X925 / A725 | 13.0 |
-| Jetson AGX Orin | Orin | 8.7 | 統合 | Cortex-A78AE (MAXN) | 11.4 |
-| GeForce RTX 5070 Ti | GeForce RTX 5070 Ti | 12.0 | **単体** | Intel Core Ultra 7 265 | 13.0 |
+| DGX Spark GB10 | NVIDIA GB10 | 12.1 | integrated | Cortex-X925 / A725 | 13.0 |
+| Jetson AGX Orin | Orin | 8.7 | integrated | Cortex-A78AE (MAXN) | 11.4 |
+| GeForce RTX 5070 Ti | GeForce RTX 5070 Ti | 12.0 | **discrete** | Intel Core Ultra 7 265 | 13.0 |
 
-統合 GPU 2 機と単体 GPU 1 機という構成は、統合 GPU に固有の結果と一般に成り立つ結果を切り分けるためのものです。
+The configuration of two integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
 
-## 現状
+## Current state
 
-### 結果の要約
+### Summary of results
 
-1. **3 経路は同じ検出結果を出します。** 28 場面 x 3 経路 x 3 機の全 252 組で検出数が一致します。座標の一致度は [正確性評価の結果](accuracy-report.md) にあります。
-2. **CPU が CUDA-Resident を上回るのは、輪郭点数が少ない小さな場面です。** 28 場面のうち DGX Spark で 5 場面、GeForce RTX 5070 Ti で 4 場面、Jetson AGX Orin で 1 場面です。**解像度だけでは決まりません。** 同じ 640x480 でも `noise_640x480` は輪郭点が多く、DGX Spark で CPU 1.406 ms に対し CUDA-Resident 0.612 ms と GPU が 2.3 倍速くなります。逆に DGX Spark の 5 場面には 1280x720 の場面が 1 つ含まれます。
-3. **ただしこれは経路を CUDA-Resident に固定した場合の話です。** DGX Spark と GeForce RTX 5070 Ti では、**CPU が Hybrid を上回る場面は 28 場面中 1 つもありません。** 場面ごとに速い方の GPU 経路を選べるなら、この 2 機で CPU が勝つ場面は無くなります。Jetson AGX Orin だけは、CPU が両経路を同時に上回る場面が 1 つあります (`clean_640x480_n1_s128`、CPU 0.870 ms に対し GPU の最良が 0.896 ms)。
-4. **境界を決めるのは解像度でも候補数でもなく、二値化後の輪郭点数です。** 輪郭点 1e5 あたりの係数は CPU 2.48 から 5.35 ms、Hybrid 2.54 から 5.48 ms に対し、CUDA-Resident は 0.041 から 0.278 ms です。
-5. **Hybrid の輪郭点係数は CPU とほぼ同じです。** 輪郭抽出から先を host で行うためで、ここが Hybrid と CUDA-Resident の本質的な違いです。
-6. **CUDA-Resident の価値は「遅い場面が無い」ことです。** 場面による振れ幅は 3.4 から 4.1 倍で、CPU の 11.6 から 20.8 倍、Hybrid の 10.0 から 43.7 倍と比べて小さく収まります。
-7. **単発の検出では CPU が桁違いに速いままです。** 1 枚目の結果が出るまで CPU は 2.2 から 6.1 ms、GPU 経路は 57.6 から 174.0 ms です。相殺には Hybrid で約 100 から 420 frame、CUDA-Resident で約 110 から 350 frame を要します。
-8. **入力に managed memory を選んではいけません。** 単体 GPU で 6.4 から 30 倍遅くなります。統合 GPU では 1.01 から 1.22 倍にとどまりますが、速くはなりません。
-9. **GPU 経路の実行間ばらつきは CPU 経路より 1 桁大きくなります。** 1 回だけ測った値で判断できません。
+1. **The three routes produce the same detection results.** The detection counts agree across all 252 combinations of 28 scenes x 3 routes x 3 machines. The degree of agreement in the coordinates is in [the accuracy evaluation results](accuracy-report.md).
+2. **The CPU beats CUDA-Resident in small scenes with a low contour point count.** That is 5 of the 28 scenes on the DGX Spark, 4 on the GeForce RTX 5070 Ti, and 1 on the Jetson AGX Orin. **Resolution alone does not determine it.** Even at the same 640x480, `noise_640x480` has many contour points, and on the DGX Spark the CPU takes 1.406 ms against 0.612 ms for CUDA-Resident, making the GPU 2.3 times faster. Conversely, the 5 scenes on the DGX Spark include one 1280x720 scene.
+3. **This, however, applies when the route is fixed to CUDA-Resident.** On the DGX Spark and the GeForce RTX 5070 Ti, **there is not a single scene out of the 28 where the CPU beats Hybrid.** If the faster GPU route can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on the Jetson AGX Orin is there one scene where the CPU beats both routes at once (`clean_640x480_n1_s128`, CPU 0.870 ms against the best GPU result of 0.896 ms).
+4. **What sets the boundary is neither resolution nor candidate count, but the contour point count after thresholding.** The coefficient per 1e5 contour points is 2.48 to 5.35 ms for the CPU and 2.54 to 5.48 ms for Hybrid, against 0.041 to 0.278 ms for CUDA-Resident.
+5. **The contour point coefficient of Hybrid is nearly the same as the CPU's.** That is because everything from contour extraction onward runs on the host, and this is the essential difference between Hybrid and CUDA-Resident.
+6. **The value of CUDA-Resident is that it has no slow scenes.** The spread across scenes is 3.4 to 4.1 times, which stays small compared with 11.6 to 20.8 times for the CPU and 10.0 to 43.7 times for Hybrid.
+7. **For a single detection the CPU remains faster by an order of magnitude.** Time until the first image's result is 2.2 to 6.1 ms for the CPU and 57.6 to 174.0 ms for the GPU routes. Breaking even takes roughly 100 to 420 frames with Hybrid and roughly 110 to 350 frames with CUDA-Resident.
+8. **Do not choose managed memory for input.** On a discrete GPU it is 6.4 to 30 times slower. On integrated GPUs it stays at 1.01 to 1.22 times, but it is never faster.
+9. **The run-to-run variance of the GPU routes is an order of magnitude larger than that of the CPU route.** A single measurement is not enough to judge.
 
-### どの経路がいつ速いか
+### Which route is faster when
 
-CPU 経路が CUDA-Resident を上回る、または同着になる場面は次のとおりです。比は CPU を 1 とし、1 より大きいと CPU が速いことを示します。
+The scenes where the CPU route beats CUDA-Resident, or ties with it, are as follows. The ratio takes the CPU as 1; a value greater than 1 means the CPU is faster.
 
-| 機体 | 場面 | 検出 | CPU | CUDA-Resident | 比 |
+| Machine | Scene | Detections | CPU | CUDA-Resident | Ratio |
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | clean_640x480_n16_s64 | 1 | 0.539 ms | 0.744 ms | **1.38** |
 | DGX Spark GB10 | clean_640x480_n1_s128 | 1 | 0.416 ms | 0.568 ms | **1.36** |
@@ -123,71 +123,71 @@ CPU 経路が CUDA-Resident を上回る、または同着になる場面は次�
 | GeForce RTX 5070 Ti | clean_640x480_n4_s128 | 4 | 0.376 ms | 0.470 ms | **1.25** |
 | GeForce RTX 5070 Ti | blur_640x480 | 4 | 0.360 ms | 0.431 ms | **1.20** |
 
-**CPU が上回るのは輪郭点数が少ない場面です。** 640x480 でも `noise_640x480` と `combined_640x480` は輪郭点が多く CUDA-Resident が上回ります。1280x720 以上では、マーカー 1 枚の同着 1 件を除きすべて CUDA-Resident が上回ります。
+**The CPU wins in scenes with a low contour point count.** Even at 640x480, `noise_640x480` and `combined_640x480` have many contour points and CUDA-Resident wins. At 1280x720 and above, CUDA-Resident wins everywhere except the single tie with one marker.
 
-理由は、GPU が固定費を持ち仕事量に対して平坦であるのに対し、CPU が仕事量に比例するためです。仕事量が最も小さい 640x480 の検出あり場面では、GPU の固定費を仕事量が上回りません。
+The reason is that the GPU has a fixed cost and is flat with respect to the amount of work, while the CPU scales with the amount of work. In the 640x480 scenes with detections, where the amount of work is smallest, the amount of work does not exceed the GPU's fixed cost.
 
-**この境界は合成 corpus 限定です。** 実画像では輪郭点数が合成 corpus より多い可能性が高く、その場合 crossover point は CPU に不利な側 (より小さい画像でも GPU が勝つ側) へ動きます。まだ確かめていません。
+**This boundary is limited to the synthetic corpus.** Real images are likely to have more contour points than the synthetic corpus, in which case the crossover point moves toward the side unfavorable to the CPU (the side where the GPU wins even on smaller images). We have not confirmed this yet.
 
-### 境界を決める量は輪郭点数
+### The quantity that sets the boundary is the contour point count
 
-原寸の解像度は説明変数になりません。ArUco3 検出戦略は `fxfy = 32 / (32 + 0.05 x 長辺)` で縮小するため、**原寸が 27 倍変わっても segmentation 面は 2.2 倍しか変わりません**。
+Native resolution is not an explanatory variable. Since the ArUco3 detection strategy downscales by `fxfy = 32 / (32 + 0.05 x long side)`, **a 27-fold change in native resolution changes the segmentation area by only 2.2 times**.
 
-| 原寸 | segmentation | 画素数 |
+| Native | segmentation | Pixels |
 | --- | --- | --- |
 | 640x480 | 320x240 | 76,800 |
 | 1280x720 | 427x240 | 102,480 |
 | 1920x1080 | 480x270 | 129,600 |
 | 3840x2160 | 549x309 | 169,641 |
 
-四角形の候補数も説明変数になりません。`noise_1280x720` は**検出 0 件**でありながら、CPU 経路で最も重い場面の 1 つです。
+The number of quadrilateral candidates is not an explanatory variable either. `noise_1280x720` has **zero detections** and yet is one of the heaviest scenes for the CPU route.
 
-効いているのは **二値化後の輪郭点数**です。`noise_1280x720` は 99,074 点、`clean_1280x720_n4` は 6,390 点で 15 倍違います。
+What matters is the **contour point count after thresholding**. `noise_1280x720` has 99,074 points and `clean_1280x720_n4` has 6,390, a 15-fold difference.
 
-#### 輪郭点数の数え方
+#### How the contour points are counted
 
-輪郭点数は corpus 画像から次の手順で求めた値であり、測定 harness の出力には含まれません。**再現するにはこの手順を自分で実行する必要があります。**
+The contour point count is a value derived from the corpus images by the following procedure; it is not part of the measurement harness output. **To reproduce it you must run this procedure yourself.**
 
-1. corpus 画像へ ArUco3 の縮小率 `fxfy = S / (S + max(W,H) * tau)` を適用して segmentation 画像を作る。
-2. `cv::adaptiveThreshold` を window 3、13、23 (`ADAPTIVE_THRESH_MEAN_C`、`THRESH_BINARY_INV`、定数 7) の 3 通りで適用する。
-3. 各二値化画像へ `cv::findContours` を `RETR_LIST`、`CHAIN_APPROX_NONE` で適用し、全輪郭の点数を合計する。
-4. 3 つの window の合計を、その場面の輪郭点数とする。
+1. Apply the ArUco3 downscale factor `fxfy = S / (S + max(W,H) * tau)` to the corpus image to produce the segmentation image.
+2. Apply `cv::adaptiveThreshold` in three variants, with window 3, 13, and 23 (`ADAPTIVE_THRESH_MEAN_C`, `THRESH_BINARY_INV`, constant 7).
+3. Apply `cv::findContours` to each thresholded image with `RETR_LIST` and `CHAIN_APPROX_NONE`, and sum the point counts of all contours.
+4. Take the sum over the three windows as the contour point count for that scene.
 
-OpenCV の検出器が内部で行う処理と同じ設定です。**この数え方は本 repository の code には入っていません。** 回帰の入力 data も `docs/measurements/` には含めていないため、上の R2 と係数を読者がそのまま検算することはできません。
+These are the same settings the OpenCV detector uses internally. **This counting procedure is not part of the code in this repository.** The regression input data is not included in `docs/measurements/` either, so a reader cannot verify the R2 values and coefficients above directly.
 
-#### 回帰の結果
+#### Regression results
 
-`時間 = b0 + b1 x segMpx + b2 x Mpx + b3 x [検出あり] + b4 x 検出数 + b5 x (輪郭点 / 1e5)` を 28 場面へ当てはめました。R2 は CPU 0.977 から 0.988、Hybrid 0.965 から 0.980、CUDA-Resident 0.894 から 0.973 です。
+We fit `time = b0 + b1 x segMpx + b2 x Mpx + b3 x [has detections] + b4 x detection count + b5 x (contour points / 1e5)` to the 28 scenes. R2 is 0.977 to 0.988 for the CPU, 0.965 to 0.980 for Hybrid, and 0.894 to 0.973 for CUDA-Resident.
 
-**輪郭点 1e5 あたりの係数**が経路を分けます。
+**The coefficient per 1e5 contour points** is what separates the routes.
 
-| 機体 | CPU | Hybrid | CUDA-Resident | 比 (CPU / Resident) |
+| Machine | CPU | Hybrid | CUDA-Resident | Ratio (CPU / Resident) |
 | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | 2.56 ms | 2.70 ms | **0.077 ms** | 33 倍 |
-| Jetson AGX Orin | 5.35 ms | 5.48 ms | **0.278 ms** | 19 倍 |
-| GeForce RTX 5070 Ti | 2.48 ms | 2.54 ms | **0.041 ms** | 60 倍 |
+| DGX Spark GB10 | 2.56 ms | 2.70 ms | **0.077 ms** | 33x |
+| Jetson AGX Orin | 5.35 ms | 5.48 ms | **0.278 ms** | 19x |
+| GeForce RTX 5070 Ti | 2.48 ms | 2.54 ms | **0.041 ms** | 60x |
 
-**Hybrid の係数は CPU とほぼ同じです。** Hybrid は前処理と二値化だけを GPU で行い、輪郭抽出から先を host で行うためです。CUDA-Resident だけが 19 から 60 倍小さく、これが 3 経路の本質的な違いです。
+**Hybrid's coefficient is nearly the same as the CPU's.** Hybrid runs only preprocessing and thresholding on the GPU and everything from contour extraction onward on the host. Only CUDA-Resident is 19 to 60 times smaller, and this is the essential difference between the three routes.
 
-検出の有無による段差は CUDA-Resident にだけ現れます (+0.25 から +0.38 ms)。四隅の subpixel 補正と decode が検出 1 件目で立ち上がるためです。CPU と Hybrid では段差がほぼ 0 で、代わりに検出 1 件あたり 0.026 から 0.074 ms 増えます。
+A step from the presence of detections appears only in CUDA-Resident (+0.25 to +0.38 ms), because corner subpixel refinement and decode start up at the first detection. In CPU and Hybrid the step is nearly 0; instead, each detection adds 0.026 to 0.074 ms.
 
-### 経路ごとの振れ幅
+### Spread per route
 
-28 場面の最小と最大です。
+The minimum and maximum over the 28 scenes.
 
-| 機体 | CPU | Hybrid | CUDA-Resident |
+| Machine | CPU | Hybrid | CUDA-Resident |
 | --- | --- | --- | --- |
-| DGX Spark GB10 | 0.416 から 4.846 ms (**11.6 倍**) | 0.131 から 4.054 ms (**31.0 倍**) | 0.185 から 0.744 ms (**4.0 倍**) |
-| Jetson AGX Orin | 0.832 から 12.123 ms (**14.6 倍**) | 0.870 から 8.712 ms (**10.0 倍**) | 0.483 から 1.630 ms (**3.4 倍**) |
-| GeForce RTX 5070 Ti | 0.226 から 4.696 ms (**20.8 倍**) | 0.088 から 3.832 ms (**43.7 倍**) | 0.126 から 0.516 ms (**4.1 倍**) |
+| DGX Spark GB10 | 0.416 to 4.846 ms (**11.6x**) | 0.131 to 4.054 ms (**31.0x**) | 0.185 to 0.744 ms (**4.0x**) |
+| Jetson AGX Orin | 0.832 to 12.123 ms (**14.6x**) | 0.870 to 8.712 ms (**10.0x**) | 0.483 to 1.630 ms (**3.4x**) |
+| GeForce RTX 5070 Ti | 0.226 to 4.696 ms (**20.8x**) | 0.088 to 3.832 ms (**43.7x**) | 0.126 to 0.516 ms (**4.1x**) |
 
-**CUDA-Resident は 3.4 から 4.1 倍しか振れません。** CPU は 11.6 から 20.8 倍、Hybrid は 10.0 から 43.7 倍振れます。最良時間ではなく最悪時間で設計する用途では、これが最大の利点になります。
+**CUDA-Resident varies by only 3.4 to 4.1 times.** The CPU varies by 11.6 to 20.8 times and Hybrid by 10.0 to 43.7 times. For applications designed around worst-case rather than best-case time, this is its greatest advantage.
 
-### Hybrid と CUDA-Resident の切り替え
+### Switching between Hybrid and CUDA-Resident
 
-輪郭点数の少ない順に並べると、勝つ経路が切り替わる位置がはっきり出ます。括弧内は CUDA-Resident / Hybrid の比で、1 未満なら CUDA-Resident が速いことを示します。
+Sorted by ascending contour point count, the position where the winning route switches stands out clearly. The value in parentheses is the ratio of CUDA-Resident to Hybrid; below 1 means CUDA-Resident is faster.
 
-| 場面 | 輪郭点 | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
+| Scene | Contour points | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
 | --- | --- | --- | --- | --- |
 | clean_640x480_n0_s16 | 0 | Hybrid (1.42) | **Resident** (0.41) | Hybrid (1.44) |
 | clean_1280x720_n0_s16 | 0 | Hybrid (1.97) | **Resident** (0.67) | **Resident** (0.94) |
@@ -218,273 +218,273 @@ OpenCV の検出器が内部で行う処理と同じ設定です。**この数�
 | noise_1280x720 | 99,074 | **Resident** (0.14) | **Resident** (0.16) | **Resident** (0.09) |
 | noise_3840x2160 | 127,319 | **Resident** (0.14) | **Resident** (0.19) | **Resident** (0.07) |
 
-**DGX Spark と GeForce RTX 5070 Ti では、輪郭点が約 20,000 点を超えると CUDA-Resident が勝ちます。** それ以下では Hybrid が速く、きれいな 640x480 では 2 から 3 倍の差がつきます。
+**On the DGX Spark and the GeForce RTX 5070 Ti, CUDA-Resident wins once the contour points exceed roughly 20,000.** Below that Hybrid is faster, and on clean 640x480 the gap reaches 2 to 3 times.
 
-**Jetson AGX Orin では全 28 場面で CUDA-Resident が勝ちます。** 3 機の中で CPU が最も弱いため、Hybrid の CPU 段が常に不利になります。
+**On the Jetson AGX Orin, CUDA-Resident wins in all 28 scenes.** Its CPU is the weakest of the three machines, so Hybrid's CPU stage is always at a disadvantage.
 
-### 起動費用と相殺 frame 数
+### Startup cost and break-even frames
 
-暖機後の分位点には現れない費用です。1 process 1 枚で測りました (1 process で複数枚を回すと 2 枚目以降は暖まった文脈を使うため、起動の費用が現れません)。1280x720 マーカー 4 枚、`M-Device` です。
+This is a cost that does not appear in the post-warmup percentiles. We measured it with one image per process (running several images in one process would let the second image onward use a warmed context, so the startup cost would not appear). 1280x720 with 4 markers, `M-Device`.
 
-| 機体 | 経路 | 1 枚目まで | 定常 | 相殺 frame |
+| Machine | Route | To the first image | Steady state | Break-even frames |
 | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | CPU | 3.3 ms | 0.699 ms | - |
-| DGX Spark GB10 | Hybrid | 171.0 ms | 0.301 ms | 約 420 |
-| DGX Spark GB10 | CUDA-Resident | 174.0 ms | 0.696 ms | **算出できない** |
+| DGX Spark GB10 | Hybrid | 171.0 ms | 0.301 ms | about 420 |
+| DGX Spark GB10 | CUDA-Resident | 174.0 ms | 0.696 ms | **cannot be computed** |
 | Jetson AGX Orin | CPU | 6.1 ms | 1.676 ms | - |
-| Jetson AGX Orin | Hybrid | 57.6 ms | 1.144 ms | 約 100 |
-| Jetson AGX Orin | CUDA-Resident | 69.8 ms | 1.077 ms | 約 110 |
+| Jetson AGX Orin | Hybrid | 57.6 ms | 1.144 ms | about 100 |
+| Jetson AGX Orin | CUDA-Resident | 69.8 ms | 1.077 ms | about 110 |
 | GeForce RTX 5070 Ti | CPU | 2.2 ms | 0.614 ms | - |
-| GeForce RTX 5070 Ti | Hybrid | 66.1 ms | 0.295 ms | 約 200 |
-| GeForce RTX 5070 Ti | CUDA-Resident | 70.0 ms | 0.421 ms | 約 350 |
+| GeForce RTX 5070 Ti | Hybrid | 66.1 ms | 0.295 ms | about 200 |
+| GeForce RTX 5070 Ti | CUDA-Resident | 70.0 ms | 0.421 ms | about 350 |
 
-**単発の検出や短い burst では CPU 経路が桁違いに速くなります。** 30 fps の連続処理なら数秒から十数秒で相殺しますが、1 枚だけ処理する用途では比べものになりません。
+**For a single detection or a short burst, the CPU route is faster by an order of magnitude.** Continuous processing at 30 fps breaks even within a few to a dozen or so seconds, but for applications that process only one image there is no comparison.
 
-DGX Spark の CUDA-Resident で相殺 frame 数を出せないのは、この場面の定常が CPU とほぼ同じ (0.696 ms と 0.699 ms) だからです。**差が小さいときの相殺 frame 数は、割り算の分母が 0 に近づくため意味を持ちません。** 同じ機の 28 場面 sweep では 0.626 ms と 0.702 ms になり、約 2300 frame と出ます。この場面は DGX Spark にとって境界そのものです。
+The reason no break-even frame count can be given for CUDA-Resident on the DGX Spark is that the steady state in this scene is almost the same as the CPU's (0.696 ms against 0.699 ms). **When the difference is small, the break-even frame count is meaningless, because the denominator of the division approaches 0.** In the 28-scene sweep on the same machine the values are 0.626 ms and 0.702 ms, which gives about 2300 frames. This scene is the boundary itself for the DGX Spark.
 
-起動費用の内訳は機体で異なります。CUDA の文脈生成そのものは、測定結果の `environment` 行に記録した `cuda_context_ms` の中央値で DGX Spark 16.5 ms、Jetson AGX Orin 9.0 ms、GeForce RTX 5070 Ti 67.9 ms です (機体あたり 27 回)。ばらつきが大きく、Jetson AGX Orin は 6.3 ms から 116.2 ms、GeForce RTX 5070 Ti は 65.5 ms から 212.8 ms の幅があります。process の 1 本目は暖まっていないため大きく出ます。文脈生成は実装側から減らせません。
+The breakdown of the startup cost differs by machine. CUDA context creation itself, taken as the median of `cuda_context_ms` recorded in the `environment` row of the measurement results, is 16.5 ms on the DGX Spark, 9.0 ms on the Jetson AGX Orin, and 67.9 ms on the GeForce RTX 5070 Ti (27 runs per machine). The variance is large: the Jetson AGX Orin ranges from 6.3 ms to 116.2 ms and the GeForce RTX 5070 Ti from 65.5 ms to 212.8 ms. The first process is not warmed up, so its value comes out large. Context creation cannot be reduced from the implementation side.
 
-### 入力 memory 種別の比較
+### Comparison of input memory types
 
-`CUDA-E2E` 経路で 3 種を測りました。`M-Pageable` を 1 とする比を括弧に示します。
+We measured the three types on the `CUDA-E2E` route. The parentheses give the ratio with `M-Pageable` as 1.
 
-| 機体 | 場面 | M-Pageable | M-Pinned | M-Managed |
+| Machine | Scene | M-Pageable | M-Pinned | M-Managed |
 | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | 1280x720 マーカー 4 | 0.895 ms | 0.973 ms (1.09x) | 0.905 ms (1.01x) |
-| DGX Spark GB10 | 3840x2160 マーカー 4 | 1.099 ms | 1.267 ms (1.15x) | **1.345 ms** (1.22x) |
-| Jetson AGX Orin | 1280x720 マーカー 4 | 1.508 ms | 1.490 ms (0.99x) | 1.686 ms (1.12x) |
-| Jetson AGX Orin | 3840x2160 マーカー 4 | 3.311 ms | **2.389 ms** (0.72x) | 3.449 ms (1.04x) |
-| GeForce RTX 5070 Ti | 1280x720 マーカー 4 | 0.505 ms | 0.521 ms (1.03x) | **3.217 ms** (6.37x) |
-| GeForce RTX 5070 Ti | 3840x2160 マーカー 4 | 0.812 ms | **0.715 ms** (0.88x) | **24.773 ms** (30.52x) |
+| DGX Spark GB10 | 1280x720, 4 markers | 0.895 ms | 0.973 ms (1.09x) | 0.905 ms (1.01x) |
+| DGX Spark GB10 | 3840x2160, 4 markers | 1.099 ms | 1.267 ms (1.15x) | **1.345 ms** (1.22x) |
+| Jetson AGX Orin | 1280x720, 4 markers | 1.508 ms | 1.490 ms (0.99x) | 1.686 ms (1.12x) |
+| Jetson AGX Orin | 3840x2160, 4 markers | 3.311 ms | **2.389 ms** (0.72x) | 3.449 ms (1.04x) |
+| GeForce RTX 5070 Ti | 1280x720, 4 markers | 0.505 ms | 0.521 ms (1.03x) | **3.217 ms** (6.37x) |
+| GeForce RTX 5070 Ti | 3840x2160, 4 markers | 0.812 ms | **0.715 ms** (0.88x) | **24.773 ms** (30.52x) |
 
-**managed は単体 GPU で使ってはいけません。** GeForce RTX 5070 Ti では 6.4 倍から **30 倍**遅くなります。device が触るたびに page が host から移送されるためです。3840x2160 では 24.8 ms かかり、pageable の 0.812 ms と比べものになりません。
+**Managed must not be used on a discrete GPU.** On the GeForce RTX 5070 Ti it is 6.4 times to **30 times** slower, because pages migrate from the host every time the device touches them. At 3840x2160 it takes 24.8 ms, which is no comparison to the 0.812 ms of pageable.
 
-統合 GPU では managed の不利が小さくなります (DGX Spark で 1.01 から 1.22 倍、Jetson AGX Orin で 1.04 から 1.12 倍)。**それでも pageable より速くはなりません。**
+On integrated GPUs the disadvantage of managed is smaller (1.01 to 1.22 times on the DGX Spark, 1.04 to 1.12 times on the Jetson AGX Orin). **Even so, it is never faster than pageable.**
 
-**pinned は大きい画像でだけ効きます。** 3840x2160 で Jetson AGX Orin が 0.72 倍、GeForce RTX 5070 Ti が 0.88 倍になります。1280x720 では 3 機とも差がありません (0.99 から 1.09 倍)。転送量が小さいうちは、DMA が直接読める利点が検出そのものの時間に埋もれます。
+**Pinned helps only on large images.** At 3840x2160 the Jetson AGX Orin reaches 0.72x and the GeForce RTX 5070 Ti 0.88x. At 1280x720 there is no difference on any of the three machines (0.99 to 1.09 times). While the transfer volume is small, the advantage of DMA reading directly is buried in the detection time itself.
 
-DGX Spark では pinned が**遅くなります** (1.09 から 1.15 倍)。統合 GPU で PCIe を渡らないため DMA の利点が無く、page-locked な領域では CPU 側の cache の扱いが変わるためと見ています (未検証)。
+On the DGX Spark, pinned is **slower** (1.09 to 1.15 times). We believe this is because an integrated GPU does not cross PCIe, so there is no DMA advantage, and because page-locked regions change how the CPU-side cache is handled (unverified).
 
-| 状況 | 選ぶ種別 |
+| Situation | Type to choose |
 | --- | --- |
-| 上流が GPU 上にある | `M-Device` (`CUDA-Resident` 経路) |
-| host から毎 frame 送る。1280x720 程度 | `M-Pageable` |
-| host から毎 frame 送る。3840x2160 で単体 GPU か Jetson AGX Orin | `M-Pinned` |
-| 単体 GPU | **`M-Managed` を選ばない** |
+| The upstream is on the GPU | `M-Device` (the `CUDA-Resident` route) |
+| Sending every frame from the host, around 1280x720 | `M-Pageable` |
+| Sending every frame from the host, 3840x2160 on a discrete GPU or the Jetson AGX Orin | `M-Pinned` |
+| Discrete GPU | **Do not choose `M-Managed`** |
 
-この向きは、結果を device から host へ渡す方向の測定 ([host と device の間の memory 受け渡し](design/memory-transfer.md)) と一致します。入力方向では差がさらに大きく出ました。
+This direction agrees with the measurements in the direction of passing results from the device to the host ([memory handoff between host and device](design/memory-transfer.md)). In the input direction the differences came out even larger.
 
-**統合か単体かで分かれるのはこの軸だけです。** 速度の順位は統合か単体かではなく GPU の絶対性能で決まり、3 機とも同じ形の回帰式に乗ります。ただし機体が 3 台しかないため、一般化の可否は断定できません。
+**This is the only axis on which integrated and discrete split.** The ranking of speed is determined by the absolute performance of the GPU rather than by integrated versus discrete, and all three machines fit the same form of regression equation. With only three machines, however, we cannot state whether this generalizes.
 
-### 実行間のばらつきと測定上の注意
+### Run-to-run variance and measurement caveats
 
-独立した 3 process の p50 の幅です。
+The spread of the p50 values across three independent processes.
 
-| 機体 | CPU | Hybrid | CUDA-Resident |
+| Machine | CPU | Hybrid | CUDA-Resident |
 | --- | --- | --- | --- |
-| DGX Spark GB10 | 0.6% (最大 2.6%) | **17.7%** (最大 50.3%) | **14.1%** (最大 69.2%) |
-| Jetson AGX Orin | 0.4% (最大 1.7%) | 3.5% (最大 29.1%) | 0.5% (最大 38.5%) |
-| GeForce RTX 5070 Ti | 0.5% (最大 2.2%) | 0.4% (最大 6.3%) | 0.0% (最大 0.5%) |
+| DGX Spark GB10 | 0.6% (max 2.6%) | **17.7%** (max 50.3%) | **14.1%** (max 69.2%) |
+| Jetson AGX Orin | 0.4% (max 1.7%) | 3.5% (max 29.1%) | 0.5% (max 38.5%) |
+| GeForce RTX 5070 Ti | 0.5% (max 2.2%) | 0.4% (max 6.3%) | 0.0% (max 0.5%) |
 
-**GPU 経路のばらつきは CPU 経路より 1 桁大きくなります。** とくに DGX Spark で顕著です。GPU の動作周波数を固定していないためと見ています (未検証)。
+**The variance of the GPU routes is an order of magnitude larger than that of the CPU route.** It is especially pronounced on the DGX Spark. We believe this is because the GPU clock is not locked (unverified).
 
-ここから、測定するときの規則が 2 つ導かれます。
+Two rules for measuring follow from this.
 
-- **1 回だけ測った値で判断してはいけません。** 独立した 3 process 以上の中央値を使います。この報告の値は、断りが無い限り 3 process の中央値です。
-- **1 割程度の差は、版を分けた測定では判定できません。** ばらつきの幅がその差より広いためです。実装の前後を比べるときは、同一 session で交互に測ります。
+- **Do not judge from a single measurement.** Use the median of three or more independent processes. Unless noted otherwise, the values in this report are medians over three processes.
+- **A difference of around 10% cannot be decided by measurements taken in separate sessions.** The spread of the variance is wider than that difference. When comparing before and after an implementation change, measure them alternately within the same session.
 
-Jetson AGX Orin の GPU 段は 0.64 から 2.54 ms と幅が大きく、同じ 1280x720 でもマーカー 1 枚で 0.914 ms、4 枚で 1.456 ms になります。他 2 機は 3840x2160 を除けば DGX Spark 0.12 から 0.27 ms、GeForce RTX 5070 Ti 0.07 から 0.20 ms に収まります。Jetson AGX Orin のこの不安定さの原因は特定できていません。
+The GPU stage of the Jetson AGX Orin has a wide range of 0.64 to 2.54 ms; even at the same 1280x720 it is 0.914 ms with 1 marker and 1.456 ms with 4. Excluding 3840x2160, the other two machines stay within 0.12 to 0.27 ms on the DGX Spark and 0.07 to 0.20 ms on the GeForce RTX 5070 Ti. The cause of this instability on the Jetson AGX Orin has not been identified.
 
-### 最適化の前後
+### Before and after optimization
 
-現在の実装は、次の 3 つの変更を経ています。比較は同一 session で交互に測った 9 場面の set によるもので、上の 28 場面 sweep とは別の測定 set です。同じ場面でも数 % 異なります。
+The current implementation has been through the following three changes. The comparison uses a set of 9 scenes measured alternately within the same session, a different measurement set from the 28-scene sweep above. Even the same scene differs by a few percent.
 
-| 段階 | 内容 |
+| Stage | Contents |
 | --- | --- |
-| Step 1 | 四隅の subpixel 補正を「1 thread が 1 隅」から「1 block が 1 隅、要素ごとに並列」へ |
-| Step 2 | Otsu を 3 相に分け、逐次でなければならない漸化式だけを thread 0 に残す |
-| Step 3 | 1 frame の発行列 (kernel 124 起動 + memset 1 個) を CUDA Graph へ畳む |
+| Step 1 | Corner subpixel refinement changed from "one thread per corner" to "one block per corner, parallel over elements" |
+| Step 2 | Otsu split into 3 phases, leaving on thread 0 only the recurrence that must be sequential |
+| Step 3 | The issue sequence for one frame (124 kernel launches + 1 memset) folded into a CUDA Graph |
 
-#### CUDA-Resident の end-to-end 時間 (最適化前 → 最適化後)
+#### CUDA-Resident end-to-end time (before optimization → after optimization)
 
-| 場面 | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
+| Scene | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
 | --- | --- | --- | --- |
-| 640x480 マーカー 4 | 1.234 → **0.730** ms | 1.684 → **1.106** ms | 0.698 → **0.470** ms |
-| 1280x720 マーカー 1 | 1.339 → **0.637** ms | 1.692 → **1.027** ms | 0.779 → **0.395** ms |
-| 1280x720 マーカー 4 | 1.351 → **0.687** ms | 1.820 → **1.111** ms | 0.808 → **0.417** ms |
-| 1280x720 マーカー 16 | 1.491 → **0.811** ms | 2.176 → **1.383** ms | 0.938 → **0.518** ms |
-| 1920x1080 マーカー 4 | 1.473 → **0.778** ms | 2.081 → **1.348** ms | 0.895 → **0.495** ms |
-| 3840x2160 マーカー 4 | 1.672 → **0.757** ms | 2.677 → **1.753** ms | 1.043 → **0.490** ms |
-| blur (検出 0) | 0.572 → **0.438** ms | 1.053 → **0.755** ms | 0.211 → **0.194** ms |
-| noise (検出 0) | 0.700 → **0.492** ms | 1.250 → **0.945** ms | 0.224 → **0.208** ms |
+| 640x480, 4 markers | 1.234 → **0.730** ms | 1.684 → **1.106** ms | 0.698 → **0.470** ms |
+| 1280x720, 1 marker | 1.339 → **0.637** ms | 1.692 → **1.027** ms | 0.779 → **0.395** ms |
+| 1280x720, 4 markers | 1.351 → **0.687** ms | 1.820 → **1.111** ms | 0.808 → **0.417** ms |
+| 1280x720, 16 markers | 1.491 → **0.811** ms | 2.176 → **1.383** ms | 0.938 → **0.518** ms |
+| 1920x1080, 4 markers | 1.473 → **0.778** ms | 2.081 → **1.348** ms | 0.895 → **0.495** ms |
+| 3840x2160, 4 markers | 1.672 → **0.757** ms | 2.677 → **1.753** ms | 1.043 → **0.490** ms |
+| blur (0 detections) | 0.572 → **0.438** ms | 1.053 → **0.755** ms | 0.211 → **0.194** ms |
+| noise (0 detections) | 0.700 → **0.492** ms | 1.250 → **0.945** ms | 0.224 → **0.208** ms |
 
-#### CPU に対する比 (最適化前 → 最適化後、1 未満なら GPU が速い)
+#### Ratio against the CPU (before optimization → after optimization; below 1 means the GPU is faster)
 
-| 場面 | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
+| Scene | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
 | --- | --- | --- | --- |
-| 640x480 マーカー 4 | 2.23 → **1.32** | 1.32 → **0.87** | 1.86 → **1.25** |
-| 1280x720 マーカー 1 | 2.23 → **1.06** | 1.21 → **0.73** | 1.52 → **0.77** |
-| 1280x720 マーカー 4 | 1.94 → **0.98** | 1.08 → **0.66** | 1.32 → **0.68** |
-| 1280x720 マーカー 16 | 1.28 → **0.69** | 0.70 → **0.45** | 0.81 → **0.45** |
-| 1920x1080 マーカー 4 | 1.50 → **0.79** | 0.79 → **0.51** | 0.99 → **0.55** |
-| 3840x2160 マーカー 4 | 0.99 → **0.45** | 0.46 → **0.30** | 0.60 → **0.28** |
-| blur (検出 0) | 0.98 → **0.75** | 0.79 → **0.57** | 0.43 → **0.40** |
-| noise (検出 0) | 0.26 → **0.18** | 0.21 → **0.16** | 0.08 → **0.08** |
+| 640x480, 4 markers | 2.23 → **1.32** | 1.32 → **0.87** | 1.86 → **1.25** |
+| 1280x720, 1 marker | 2.23 → **1.06** | 1.21 → **0.73** | 1.52 → **0.77** |
+| 1280x720, 4 markers | 1.94 → **0.98** | 1.08 → **0.66** | 1.32 → **0.68** |
+| 1280x720, 16 markers | 1.28 → **0.69** | 0.70 → **0.45** | 0.81 → **0.45** |
+| 1920x1080, 4 markers | 1.50 → **0.79** | 0.79 → **0.51** | 0.99 → **0.55** |
+| 3840x2160, 4 markers | 0.99 → **0.45** | 0.46 → **0.30** | 0.60 → **0.28** |
+| blur (0 detections) | 0.98 → **0.75** | 0.79 → **0.57** | 0.43 → **0.40** |
+| noise (0 detections) | 0.26 → **0.18** | 0.21 → **0.16** | 0.08 → **0.08** |
 
-**640x480 を除く場面で GPU が CPU を上回ります。** 640x480 マーカー 4 枚では DGX Spark 1.32、GeForce RTX 5070 Ti 1.25 で **CPU が速いまま**です (Jetson AGX Orin は 0.87 で GPU が上回ります)。最も仕事量が少ない場面であり、GPU の固定費を仕事量が上回りません。
+**The GPU beats the CPU in every scene except 640x480.** At 640x480 with 4 markers it is 1.32 on the DGX Spark and 1.25 on the GeForce RTX 5070 Ti, so **the CPU remains faster** (on the Jetson AGX Orin it is 0.87 and the GPU wins). This is the scene with the least work, and the amount of work does not exceed the GPU's fixed cost.
 
-#### 段階ごとの内訳 (1280x720 マーカー 4 枚)
+#### Breakdown by stage (1280x720, 4 markers)
 
-| 段階 | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
+| Stage | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
 | --- | --- | --- | --- |
-| 最適化前 | 1.351 ms | 1.820 ms | 0.808 ms |
-| Step 1 (四隅補正) | 1.046 ms | 1.630 ms | 0.550 ms |
+| Before optimization | 1.351 ms | 1.820 ms | 0.808 ms |
+| Step 1 (corner refinement) | 1.046 ms | 1.630 ms | 0.550 ms |
 | Step 2 (Otsu) | 0.937 ms | 1.467 ms | 0.436 ms |
 | Step 3 (CUDA Graph) | 0.687 ms | 1.111 ms | 0.417 ms |
 
-**丸めは 1 bit も変わっていません。** 四隅補正は逐語 oracle との bit 一致、Otsu は `cv::threshold` が返す閾値との整数一致 (256 件)、CUDA Graph は畳まない経路との結果一致で担保しています。段ごとの根拠は [検出パイプライン設計](design/detector-pipeline.md) にあります。
+**Not a single bit of rounding has changed.** Corner refinement is guaranteed by bit-exact agreement with a verbatim oracle, Otsu by integer agreement with the threshold that `cv::threshold` returns (256 cases), and the CUDA Graph by agreement of results with the unfolded route. The rationale for each stage is in [the detection pipeline design](design/detector-pipeline.md).
 
-#### 何を最適化の対象にしたか
+#### What was targeted for optimization
 
-最適化前に、検出 1 件目で立ち上がる固定費を段別に切り分けました (DGX Spark、最小値基準の増分 783 us)。
+Before optimizing, we separated by stage the fixed cost that starts up at the first detection (DGX Spark, an increment of 783 us over the minimum).
 
-| 段 | 実測 | 増分に占める割合 |
+| Stage | Measured | Share of the increment |
 | --- | --- | --- |
-| 四隅の subpixel 補正 | 335 us | **43%** |
-| Otsu と border 検証 | 307 us | **39%** |
-| 射影変換 (8x8 の LU を thread 0 が解く) | 18 us | 2% |
-| decode の各段と統合 | 5 から 10 us | 1% |
-| 説明できた小計 | 665 から 670 us | 85% |
-| 説明できない残り | 113 から 118 us | 15% |
+| Corner subpixel refinement | 335 us | **43%** |
+| Otsu and border verification | 307 us | **39%** |
+| Projective transform (thread 0 solves an 8x8 LU) | 18 us | 2% |
+| Each decode stage and integration | 5 to 10 us | 1% |
+| Subtotal explained | 665 to 670 us | 85% |
+| Unexplained remainder | 113 to 118 us | 15% |
 
-**四隅補正と Otsu がほぼ半々です。** 片方だけ直しても立ち上がりは半分しか消えません。待ち時間を決めているのは反復回数ではなく、**1 反復あたりの逐次な倍精度命令の数**です (実測の反復回数は 1 隅 1 段あたり 1.9 から 3.3 回で、上限 30 回の 10 分の 1)。四隅補正の逐次連鎖は 1 反復あたり 2299 命令 (121 要素 x 19 命令) からおよそ 140 命令へ、Otsu は 1 反復あたりの倍精度除算が 2 回から 1 回へ縮みました。
+**Corner refinement and Otsu are roughly half and half.** Fixing only one of them removes only half of the startup. What determines the wait is not the iteration count but **the number of sequential double-precision instructions per iteration** (the measured iteration count is 1.9 to 3.3 per corner per stage, a tenth of the limit of 30). The sequential chain of corner refinement shrank from 2299 instructions per iteration (121 elements x 19 instructions) to roughly 140, and in Otsu the double-precision divisions per iteration shrank from 2 to 1.
 
-検出 0 件の場面では、残るのはほぼ kernel 起動の費用です。DGX Spark で 1 起動あたり **1.888 us**、124 起動で 234 us になり、**検出 0 件の最小値 427 us の 55%** に当たります。残る 193 us のうち名前を付けられるのは 110 us (縮小 pyramid の 1 段目 26 us、resize 9 us、適応的二値化 6 個で計 30 us 程度、ほか) で、**残り約 110 個の kernel は 1 個 2 から 7 us と 1 起動の費用と同じ桁です。この粒度では「起動の費用」と「実際の仕事」を分離できません。** GeForce RTX 5070 Ti の 1 起動あたりの費用は測っていません。
+In scenes with 0 detections, what remains is almost entirely kernel launch cost. On the DGX Spark it is **1.888 us** per launch, or 234 us for 124 launches, which amounts to **55% of the 427 us minimum for 0 detections**. Of the remaining 193 us, 110 us can be named (26 us for the first stage of the downscale pyramid, 9 us for resize, roughly 30 us in total for 6 adaptive thresholdings, and others), and **the remaining roughly 110 kernels take 2 to 7 us each, the same order as the cost of one launch. At this granularity we cannot separate "launch cost" from "actual work".** The per-launch cost on the GeForce RTX 5070 Ti has not been measured.
 
-CUDA Graph へ畳んだ結果、host 側の発行時間は **0.241 ms から 0.023 ms** へ落ちました。端から端では 0.18 から 0.30 ms 縮んでいます。同じ kernel を同じ引数で同じ順に起動するだけなので、丸めが変わる余地は原理的にありません。危険は丸めではなく焼き込んだ参照の陳腐化で、入力の寸法・pitch・pointer が変わったときは graph を破棄します。**既定 stream (`nullptr`) は CUDA が捕獲を許さない**ため、その場合は 1 段ずつ発行します。
+As a result of folding into a CUDA Graph, the host-side issue time fell from **0.241 ms to 0.023 ms**. End to end it shrank by 0.18 to 0.30 ms. Since it only launches the same kernels with the same arguments in the same order, there is in principle no room for the rounding to change. The danger is not rounding but staleness of the baked-in references: when the input dimensions, pitch, or pointers change, the graph is discarded. **CUDA does not allow capture on the default stream (`nullptr`)**, so in that case we issue one stage at a time.
 
-共有 memory を使う kernel では、**block 数を隅の上限ではなく SM 数から導きます**。上限をそのまま使うと 1 SM に載る block が限られ、起動が波に分かれます。3 機のうち Jetson AGX Orin でのみ大きく悪化する形の劣化であり、1 機だけでは気付けません。
+For kernels that use shared memory, **the block count is derived from the SM count rather than from the upper bound on corners**. Using the upper bound directly limits how many blocks fit on one SM, splitting the launch into waves. This is a form of degradation that appears badly only on the Jetson AGX Orin out of the three machines, and a single machine would not reveal it.
 
-#### Hybrid 経路の転送最適化
+#### Transfer optimization on the Hybrid route
 
-Hybrid では、8 回の同期転送を stream 上の非同期転送へ変え、受け取り先を pinned memory にしました。GPU 段は DGX Spark で 0.461 ms から 0.206 ms、GeForce RTX 5070 Ti で 0.386 ms から 0.116 ms へ下がりました。複製そのものより、8 回の blocking 呼び出しの費用 (1 回あたり約 25 us) が効いていました。
+In Hybrid, 8 synchronous transfers were changed to asynchronous transfers on a stream, and the destination was made pinned memory. The GPU stage fell from 0.461 ms to 0.206 ms on the DGX Spark and from 0.386 ms to 0.116 ms on the GeForce RTX 5070 Ti. What mattered was not the copies themselves but the cost of the 8 blocking calls (about 25 us each).
 
-最適化後も GPU 段の約半分は転送です (DGX Spark で kernel 実行 0.099 ms、GPU 段全体 0.206 ms)。managed memory を使えば明示的な copy は消えますが、上の測定のとおり統合 GPU でも速くはなりません。
+Even after optimization, about half of the GPU stage is transfers (on the DGX Spark, 0.099 ms of kernel execution against 0.206 ms for the whole GPU stage). Using managed memory would remove the explicit copies, but as the measurements above show, it is not faster even on an integrated GPU.
 
-### Hybrid 経路の内訳 (9 場面)
+### Hybrid route breakdown (9 scenes)
 
-Hybrid の GPU 段と CPU 段の内訳です。上の 28 場面 sweep とは別の測定 set で、比は CPU を 1 とし 1 未満なら Hybrid が速いことを示します。
+A breakdown of the GPU stage and the CPU stage of Hybrid. This is a different measurement set from the 28-scene sweep above; the ratio takes the CPU as 1, and below 1 means Hybrid is faster.
 
 #### DGX Spark GB10
 
-| 場面 | CPU | Hybrid M-Device | 内 GPU 段 | 内 CPU 段 | 比 | M-Pageable | 比 |
+| Scene | CPU | Hybrid M-Device | of which GPU stage | of which CPU stage | Ratio | M-Pageable | Ratio |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 640x480 マーカー 4 | 0.555 | 0.341 | 0.121 | 0.203 | 0.62 | 0.462 | 0.83 |
-| 1280x720 マーカー 1 | 0.603 | 0.285 | 0.216 | 0.071 | **0.47** | 0.321 | 0.53 |
-| 1280x720 マーカー 4 | 0.698 | 0.376 | 0.206 | 0.167 | 0.54 | 0.531 | 0.76 |
-| 1280x720 マーカー 16 | 1.169 | 0.909 | 0.226 | 0.672 | 0.78 | 1.009 | 0.86 |
-| 1920x1080 マーカー 4 | 0.979 | 0.497 | 0.268 | 0.239 | 0.51 | 0.701 | 0.72 |
-| 3840x2160 マーカー 4 | 1.717 | 0.884 | 0.588 | 0.292 | 0.52 | 1.115 | 0.65 |
-| ぼけ | 0.585 | 0.266 | 0.214 | 0.052 | **0.46** | 0.395 | 0.68 |
+| 640x480, 4 markers | 0.555 | 0.341 | 0.121 | 0.203 | 0.62 | 0.462 | 0.83 |
+| 1280x720, 1 marker | 0.603 | 0.285 | 0.216 | 0.071 | **0.47** | 0.321 | 0.53 |
+| 1280x720, 4 markers | 0.698 | 0.376 | 0.206 | 0.167 | 0.54 | 0.531 | 0.76 |
+| 1280x720, 16 markers | 1.169 | 0.909 | 0.226 | 0.672 | 0.78 | 1.009 | 0.86 |
+| 1920x1080, 4 markers | 0.979 | 0.497 | 0.268 | 0.239 | 0.51 | 0.701 | 0.72 |
+| 3840x2160, 4 markers | 1.717 | 0.884 | 0.588 | 0.292 | 0.52 | 1.115 | 0.65 |
+| blur | 0.585 | 0.266 | 0.214 | 0.052 | **0.46** | 0.395 | 0.68 |
 | noise | 2.702 | 2.437 | 0.225 | 2.227 | 0.90 | 2.743 | 1.02 |
-| 複合劣化 | 1.571 | 1.323 | 0.234 | 1.079 | 0.84 | 1.479 | 0.94 |
+| combined degradation | 1.571 | 1.323 | 0.234 | 1.079 | 0.84 | 1.479 | 0.94 |
 
 #### GeForce RTX 5070 Ti
 
-| 場面 | CPU | Hybrid M-Device | 内 GPU 段 | 内 CPU 段 | 比 | M-Pageable | 比 |
+| Scene | CPU | Hybrid M-Device | of which GPU stage | of which CPU stage | Ratio | M-Pageable | Ratio |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 640x480 マーカー 4 | 0.375 | 0.275 | 0.066 | 0.209 | 0.73 | 0.292 | 0.78 |
-| 1280x720 マーカー 1 | 0.514 | 0.188 | 0.116 | 0.071 | 0.37 | 0.227 | 0.44 |
-| 1280x720 マーカー 4 | 0.610 | 0.295 | 0.116 | 0.179 | 0.48 | 0.335 | 0.55 |
-| 1280x720 マーカー 16 | 1.147 | 0.874 | 0.117 | 0.758 | 0.76 | 0.899 | 0.78 |
-| 1920x1080 マーカー 4 | 0.897 | 0.437 | 0.195 | 0.241 | 0.49 | 0.515 | 0.57 |
-| 3840x2160 マーカー 4 | 1.736 | 0.823 | 0.599 | 0.223 | 0.47 | 1.116 | 0.64 |
-| ぼけ | 0.489 | 0.159 | 0.116 | 0.043 | **0.32** | 0.198 | 0.40 |
+| 640x480, 4 markers | 0.375 | 0.275 | 0.066 | 0.209 | 0.73 | 0.292 | 0.78 |
+| 1280x720, 1 marker | 0.514 | 0.188 | 0.116 | 0.071 | 0.37 | 0.227 | 0.44 |
+| 1280x720, 4 markers | 0.610 | 0.295 | 0.116 | 0.179 | 0.48 | 0.335 | 0.55 |
+| 1280x720, 16 markers | 1.147 | 0.874 | 0.117 | 0.758 | 0.76 | 0.899 | 0.78 |
+| 1920x1080, 4 markers | 0.897 | 0.437 | 0.195 | 0.241 | 0.49 | 0.515 | 0.57 |
+| 3840x2160, 4 markers | 1.736 | 0.823 | 0.599 | 0.223 | 0.47 | 1.116 | 0.64 |
+| blur | 0.489 | 0.159 | 0.116 | 0.043 | **0.32** | 0.198 | 0.40 |
 | noise | 2.656 | 2.425 | 0.197 | 2.227 | 0.91 | 2.441 | 0.92 |
-| 複合劣化 | 1.431 | 1.121 | 0.136 | 0.985 | 0.78 | 1.171 | 0.82 |
+| combined degradation | 1.431 | 1.121 | 0.136 | 0.985 | 0.78 | 1.171 | 0.82 |
 
 #### Jetson AGX Orin
 
-| 場面 | CPU | Hybrid M-Device | 内 GPU 段 | 内 CPU 段 | 比 | M-Pageable | 比 |
+| Scene | CPU | Hybrid M-Device | of which GPU stage | of which CPU stage | Ratio | M-Pageable | Ratio |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 640x480 マーカー 4 | 1.267 | 2.092 | 1.438 | 0.650 | 1.65 | 1.442 | 1.14 |
-| 1280x720 マーカー 1 | 1.394 | 1.200 | 0.914 | 0.274 | 0.86 | 1.373 | 0.99 |
-| 1280x720 マーカー 4 | 1.680 | 2.053 | 1.456 | 0.585 | 1.22 | 1.747 | 1.04 |
-| 1280x720 マーカー 16 | 3.094 | 2.848 | 0.876 | 1.972 | 0.92 | 3.081 | 1.00 |
-| 1920x1080 マーカー 4 | 2.622 | 2.592 | 1.632 | 0.819 | 0.99 | 2.431 | 0.93 |
-| 3840x2160 マーカー 4 | 5.749 | 3.658 | 2.538 | 0.905 | **0.64** | 4.820 | 0.84 |
-| ぼけ | 1.321 | 0.846 | 0.640 | 0.191 | **0.64** | 1.319 | 1.00 |
+| 640x480, 4 markers | 1.267 | 2.092 | 1.438 | 0.650 | 1.65 | 1.442 | 1.14 |
+| 1280x720, 1 marker | 1.394 | 1.200 | 0.914 | 0.274 | 0.86 | 1.373 | 0.99 |
+| 1280x720, 4 markers | 1.680 | 2.053 | 1.456 | 0.585 | 1.22 | 1.747 | 1.04 |
+| 1280x720, 16 markers | 3.094 | 2.848 | 0.876 | 1.972 | 0.92 | 3.081 | 1.00 |
+| 1920x1080, 4 markers | 2.622 | 2.592 | 1.632 | 0.819 | 0.99 | 2.431 | 0.93 |
+| 3840x2160, 4 markers | 5.749 | 3.658 | 2.538 | 0.905 | **0.64** | 4.820 | 0.84 |
+| blur | 1.321 | 0.846 | 0.640 | 0.191 | **0.64** | 1.319 | 1.00 |
 | noise | 5.842 | 5.659 | 0.770 | 4.857 | 0.97 | 6.013 | 1.03 |
-| 複合劣化 | 3.393 | 3.146 | 0.758 | 2.388 | 0.93 | 3.521 | 1.04 |
+| combined degradation | 3.393 | 3.146 | 0.758 | 2.388 | 0.93 | 3.521 | 1.04 |
 
-Hybrid の CPU 段は場面の内容に強く依存します (0.04 から 2.2 ms)。GPU 段が比較的安定しているため、CPU 段が小さい場面ほど比が下がります。逆に候補が多い noise では CPU 段が 2.2 ms を占め、比は 0.90 前後にとどまります。ここが CUDA-Resident との分かれ目です。
+The CPU stage of Hybrid depends strongly on the content of the scene (0.04 to 2.2 ms). Because the GPU stage is comparatively stable, the smaller the CPU stage in a scene, the lower the ratio. Conversely, in noise, which has many candidates, the CPU stage accounts for 2.2 ms and the ratio stays around 0.90. This is the dividing line against CUDA-Resident.
 
-単体 GPU でも `M-Device` と `M-Pageable` の差は小さく、GeForce RTX 5070 Ti で 1280x720 の差は 0.040 ms、3840x2160 で 0.293 ms です。統合 GPU の DGX Spark ではむしろ 1280x720 で 0.155 ms と大きく出ます。理由は特定できていません。
+Even on a discrete GPU the difference between `M-Device` and `M-Pageable` is small: on the GeForce RTX 5070 Ti it is 0.040 ms at 1280x720 and 0.293 ms at 3840x2160. On the integrated-GPU DGX Spark it comes out larger instead, 0.155 ms at 1280x720. The reason has not been identified.
 
-### 3 経路の使い分け
+### Choosing among the three routes
 
-**「常に最速の経路」はありません。** 場面によって 3 経路の順位が入れ替わります。
+**There is no "always fastest route".** The ranking of the three routes changes with the scene.
 
-| 条件 | 選ぶ経路 | 根拠 |
+| Condition | Route to choose | Rationale |
 | --- | --- | --- |
-| 単発の検出 (1 枚だけ) | **CPU** | 1 枚目の結果まで CPU 2.2 から 6.1 ms、GPU 経路 57.6 から 174.0 ms |
-| 640x480 できれいな場面 (検出あり) | **CPU** | CPU 比 1.18 から 1.72 |
-| Jetson AGX Orin での連続処理 | **CUDA-Resident** | 全 28 場面で Hybrid より速い |
-| 輪郭が多い場面 (noise、複合劣化) | **CUDA-Resident** | 輪郭点 1e5 あたりの係数が CPU の 1/19 から 1/60 |
-| きれいな場面かつ輪郭点 20,000 点未満 (DGX Spark、GeForce RTX 5070 Ti) | **Hybrid** | 640x480 で 2 から 3 倍速い |
-| 最悪時間を抑えたい | **CUDA-Resident** | 場面による振れ幅が 3.4 から 4.1 倍。CPU は 11.6 から 20.8 倍 |
+| A single detection (one image only) | **CPU** | Time to the first result: CPU 2.2 to 6.1 ms, GPU routes 57.6 to 174.0 ms |
+| A clean scene at 640x480 (with detections) | **CPU** | CPU ratio 1.18 to 1.72 |
+| Continuous processing on the Jetson AGX Orin | **CUDA-Resident** | Faster than Hybrid in all 28 scenes |
+| Scenes with many contours (noise, combined degradation) | **CUDA-Resident** | The coefficient per 1e5 contour points is 1/19 to 1/60 of the CPU's |
+| Clean scenes with fewer than 20,000 contour points (DGX Spark, GeForce RTX 5070 Ti) | **Hybrid** | 2 to 3 times faster at 640x480 |
+| Wanting to bound the worst-case time | **CUDA-Resident** | The spread across scenes is 3.4 to 4.1 times; the CPU is 11.6 to 20.8 times |
 
-判断の流れを図に示します。連続処理を前提とし、輪郭点数は二値化後の値です。
+The figure shows the decision flow. It assumes continuous processing, and the contour point count is the value after thresholding.
 
 ```mermaid
 flowchart TD
-    S{"1 枚だけ処理するか"} -->|はい| CPU1["CPU"]
-    S -->|いいえ| Q640{"640x480 できれいな場面か"}
-    Q640 -->|はい| CPU2["CPU"]
-    Q640 -->|いいえ| M{"Jetson AGX Orin か"}
-    M -->|はい| R1["CUDA-Resident"]
-    M -->|いいえ| W{"最悪時間を抑えたいか"}
-    W -->|はい| R2["CUDA-Resident"]
-    W -->|いいえ| K{"輪郭点が約 20,000 点を超えるか"}
-    K -->|はい| R3["CUDA-Resident"]
-    K -->|いいえ| H["Hybrid"]
+    S{"Processing only one image?"} -->|Yes| CPU1["CPU"]
+    S -->|No| Q640{"A clean scene at 640x480?"}
+    Q640 -->|Yes| CPU2["CPU"]
+    Q640 -->|No| M{"Jetson AGX Orin?"}
+    M -->|Yes| R1["CUDA-Resident"]
+    M -->|No| W{"Want to bound the worst-case time?"}
+    W -->|Yes| R2["CUDA-Resident"]
+    W -->|No| K{"Contour points above about 20,000?"}
+    K -->|Yes| R3["CUDA-Resident"]
+    K -->|No| H["Hybrid"]
 ```
 
-輪郭点数を事前に知れない用途では、CUDA-Resident を既定にすると最悪時間が抑えられます。
+For applications where the contour point count cannot be known in advance, making CUDA-Resident the default keeps the worst-case time bounded.
 
-## 目標
+## Goals
 
-- 実画像 corpus で同じ 28 場面相当の測定を行い、crossover point が合成 corpus とどれだけ違うかを示す。
-- CUDA event で段ごとの kernel 時間を記録し、host 同期を含む wall-clock と分離する。
-- 起動費用を減らせるかを確かめる。CUDA の文脈生成は減らせないが、対象 architecture を 1 つに絞る、または cubin を事前に読み込むことで kernel の読み込みを短縮できる可能性がある。
-- 640x480 より小さい場面を corpus へ加え、crossover point の内側を確かめる。
-- 3840x2160 を超える解像度で、Jetson AGX Orin の Hybrid と CUDA-Resident の関係が変わるかを確かめる。
+- Run the equivalent of the same 28 scenes on a real-image corpus and show how far the crossover point differs from the synthetic corpus.
+- Record per-stage kernel time with CUDA events and separate it from the wall-clock time that includes host synchronization.
+- Determine whether the startup cost can be reduced. CUDA context creation cannot be reduced, but narrowing the target architecture to one, or preloading the cubin, may shorten kernel loading.
+- Add scenes smaller than 640x480 to the corpus and examine the inside of the crossover point.
+- Determine whether the relationship between Hybrid and CUDA-Resident on the Jetson AGX Orin changes at resolutions above 3840x2160.
 
-## 未確定事項
+## Open questions
 
-- GPU の動作周波数を固定して測るか、既定のまま測るか。DGX Spark の GPU 経路の実行間ばらつき (中央 14 から 18%) はこれで説明できる可能性があるが未検証。固定するなら `nvidia-smi --lock-gpu-clocks` の可否を機種ごとに確かめる必要がある。
-- crossover point が corpus の下端 (640x480) にあるため、境界の内側を確かめられていない。
-- 実画像では輪郭点数が合成 corpus より多い可能性が高く、その場合 crossover point は CPU に不利な側へ動く。今回の境界は合成 corpus 限定である。
-- Jetson AGX Orin の GPU 段のばらつき (0.64 から 2.54 ms) の原因。
-- DGX Spark で pinned が pageable より遅くなる理由。
-- 単体 GPU の GeForce RTX 5070 Ti より統合 GPU の DGX Spark の方が `M-Device` と `M-Pageable` の差が大きく出る理由。
-- Jetson AGX Orin の CUDA Toolkit は 11.4、他 2 機は 13.0 であり、toolkit version の影響を切り分けていない。
-- GeForce RTX 5070 Ti の 1 kernel 起動あたりの費用は測っていない。
-- 機体が 3 台であり、統合 GPU と単体 GPU の一般化の可否を断定できない。
-- 輪郭点数を数える処理が本 repository に無く、回帰の入力 data も残していないため、R2 と係数を読者が検算できない。数え方は上に記したが、道具として提供していない。
+- Whether to measure with the GPU clock locked or left at the default. The run-to-run variance of the GPU routes on the DGX Spark (14 to 18% median) may be explained by this, but it is unverified. Locking would require checking per machine whether `nvidia-smi --lock-gpu-clocks` is possible.
+- Because the crossover point sits at the bottom end of the corpus (640x480), the inside of the boundary has not been examined.
+- Real images are likely to have more contour points than the synthetic corpus, in which case the crossover point moves toward the side unfavorable to the CPU. The boundary found here is limited to the synthetic corpus.
+- The cause of the variance in the GPU stage of the Jetson AGX Orin (0.64 to 2.54 ms).
+- The reason pinned is slower than pageable on the DGX Spark.
+- The reason the difference between `M-Device` and `M-Pageable` comes out larger on the integrated-GPU DGX Spark than on the discrete-GPU GeForce RTX 5070 Ti.
+- The CUDA Toolkit on the Jetson AGX Orin is 11.4 while the other two machines are on 13.0, and the influence of the toolkit version has not been separated out.
+- The per-kernel-launch cost on the GeForce RTX 5070 Ti has not been measured.
+- There are only three machines, so we cannot state whether the integrated-versus-discrete GPU results generalize.
+- The processing that counts contour points is not in this repository, and the regression input data was not kept, so a reader cannot verify the R2 values and coefficients. The counting procedure is described above, but is not provided as a tool.
 
-## 測定の再現
+## Reproducing the measurements
 
 ```
-# container 内で実行する。<preset> は dgx-spark / jetson-orin / rtx-blackwell のいずれか。
-# <cpu> は性能 core の番号。
-#   DGX Spark GB10 -> 5   GeForce RTX 5070 Ti の機 -> 2   Jetson AGX Orin -> 0
+# Run inside the container. <preset> is one of dgx-spark / jetson-orin / rtx-blackwell.
+# <cpu> is the number of a performance core.
+#   DGX Spark GB10 -> 5   GeForce RTX 5070 Ti host -> 2   Jetson AGX Orin -> 0
 ./build/<preset>/tools/corpusgen/aruco3cuda_corpusgen --preset full --seed 20260827 \
   --output-dir /tmp/benchcorpus --manifest /tmp/benchcorpus/manifest.json
 
 B=./build/<preset>/bench/aruco3cuda_bench
 COMMON="--warmup 30 --latency-iterations 200 --throughput-frames 100 --cpu-list <cpu> --threads 1"
-# 28 場面。解像度 4 種 x マーカー 0/1/4/16 枚 + blur / noise / combined 各 4 解像度。
+# 28 scenes: 4 resolutions x 0/1/4/16 markers, plus blur / noise / combined at each of the 4 resolutions.
 IMGS=""
 for res in 640x480 1280x720 1920x1080 3840x2160; do
   for n in n0_s16 n1_s128 n4_s128 n16_s64; do
@@ -501,7 +501,7 @@ for run in 1 2 3; do
   taskset -c <cpu> $B $IMGS $COMMON --route CUDA-Resident --memory-mode M-Device   >> results.jsonl
 done
 
-# 入力 memory 種別の比較は CUDA-E2E 経路で行う。
+# The input memory type comparison is done on the CUDA-E2E route.
 for run in 1 2 3; do
   for m in M-Pageable M-Pinned M-Managed; do
     taskset -c <cpu> $B $IMGS $COMMON --route CUDA-E2E --memory-mode $m >> results.jsonl
@@ -510,23 +510,23 @@ done
 python3 bench/aggregate.py results.jsonl
 ```
 
-**測定の前に、次の 2 つを確かめてください。**
+**Before measuring, confirm the following two things.**
 
-1. 同じ機で Compute Sanitizer が走っていないこと。同時に走らせると測定値が大きく張り付き、経路の比較が成立しません。`nvidia-smi --query-compute-apps=pid,name --format=csv` で他 process が無いことを確認します。
-2. page cache を落とすこと。
+1. That Compute Sanitizer is not running on the same machine. Running it at the same time pins the measured values high and invalidates the comparison of routes. Confirm that there are no other processes with `nvidia-smi --query-compute-apps=pid,name --format=csv`.
+2. That the page cache is dropped.
 
 ```
 sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
 ```
 
-統合 GPU では device memory が host memory と同じものです。`cudaMemGetInfo` が返す「空き」は `MemFree` 相当であり、回収可能な page cache を含みません。page cache が育つと確保が失敗するだけでなく、測定値も揺れます。詳細は [host と device の間の memory 受け渡し](design/memory-transfer.md) にあります。
+On an integrated GPU, device memory is the same thing as host memory. The "free" that `cudaMemGetInfo` returns corresponds to `MemFree` and does not include reclaimable page cache. When the page cache grows, not only can allocation fail, but the measured values also fluctuate. Details are in [memory handoff between host and device](design/memory-transfer.md).
 
-## 関連
+## See also
 
-- [評価計画](evaluation-plan.md)
-- [正確性評価の結果](accuracy-report.md)
-- [検出パイプライン設計](design/detector-pipeline.md)
-- [host と device の間の memory 受け渡し](design/memory-transfer.md)
-- [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
-- [ADR-0003: 四角形候補抽出は案 A (連結成分と極点探索) を主案とする](adr/0003-candidate-extraction-approach.md)
-- [測定 harness](../bench/benchmark_harness.md)
+- [Evaluation plan](evaluation-plan.md)
+- [Accuracy evaluation results](accuracy-report.md)
+- [Detection pipeline design](design/detector-pipeline.md)
+- [Memory handoff between host and device](design/memory-transfer.md)
+- [ADR-0002: Fix the build infrastructure and target environment baseline](adr/0002-toolchain-and-target-baseline.md)
+- [ADR-0003: Adopt approach A (connected components and extreme point search) as the primary plan for quadrilateral candidate extraction](adr/0003-candidate-extraction-approach.md)
+- [Measurement harness](../bench/benchmark_harness.md)

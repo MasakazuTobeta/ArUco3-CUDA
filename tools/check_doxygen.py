@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""公開ヘッダの宣言ごとに、規約が要求する Doxygen 要素の有無を検査する。
+"""Check every declaration in the public headers for the Doxygen elements the
+convention requires.
 
-規約: public class と関数には、目的、引数、戻り値、所有権、同期動作、入力例、出力例を記載する。
+Convention: a public class or function documents its purpose, parameters, return
+value, ownership, synchronization behavior, an example input, and an example output.
 
-所有権と同期動作が class 全体で共通する場合は、class の Doxygen へ
-「全ての public member 関数に適用される」と明記することで member 側の記載に代える。
-同一の記述を member ごとに複写すると、規約が避けよと定める「処理の言い換え」に
-近い冗長さを生み、可読性を損なうためである。
+When ownership and synchronization are the same across the whole class, stating
+"applies to all public member functions" in the class Doxygen stands in for
+repeating them on each member. Copying identical text onto every member produces
+the same kind of redundancy as the "restating the code" the convention tells us to
+avoid, and it hurts readability.
 
-使用方法:
+Usage:
     python3 tools/check_doxygen.py
-    欠落があれば一覧を表示し、終了コード 1 を返す。
+    Prints a list of what is missing and returns exit code 1 if anything is.
 """
 import re, sys, pathlib
 
-# 対象は自動で探索する。一覧を手で保つと、新しい header を追加したときに
-# 検査から漏れ、欠落があっても合格に見えてしまう。
+# The targets are discovered automatically. A hand-maintained list would leave a
+# newly added header out of the check, so missing documentation would still pass.
 HEADER_ROOTS = ["include", "reference", "tools", "bench", "src", "hybrid"]
 
 
@@ -36,7 +39,7 @@ DECL = re.compile(r'^\s{0,4}(?:(?:const\s+)?[\w:]+[\w:<>,\s*&]*?)\s(\w+)\s*\(([^
 CLASS = re.compile(r'^\s*(?:class|struct)\s+(\w+)\s*(?:final)?\s*[{:]')
 
 def comment_block(lines, index):
-    """宣言の直前に連なる /// コメント行を返す。"""
+    """Return the run of /// comment lines immediately above the declaration."""
     out, i = [], index - 1
     while i >= 0:
         st = lines[i].strip()
@@ -76,8 +79,8 @@ for path in HEADERS:
     if not f.exists(): continue
     lines = f.read_text().splitlines()
     in_private = False
-    # class doc が「全ての public member 関数に適用される」と明記していれば、
-    # その項目は member 関数側で満たされているものとして扱う。
+    # If the class doc states "applies to all public member functions", treat those
+    # items as already satisfied for each member function.
     class_covers = set()
     current_class = None
     for i, line in enumerate(lines):
@@ -92,12 +95,13 @@ for path in HEADERS:
             doc = comment_block(lines, i)
             class_covers = set()
             current_class = mc.group(1)
-            if "member 関数に適用される" in doc:
-                if "所有権" in doc: class_covers.add("所有権")
-                if "同期動作" in doc: class_covers.add("同期動作")
-            missing = [k for k, pat in (("目的", r'///\s*\S'), ("所有権", r'所有権'),
-                                        ("同期動作", r'同期動作'), ("入力例", r'入力例'),
-                                        ("出力例", r'出力例')) if not re.search(pat, doc)]
+            if "applies to all public member functions" in doc:
+                if "Ownership" in doc: class_covers.add("Ownership")
+                if "Synchronization" in doc: class_covers.add("Synchronization")
+            missing = [k for k, pat in (("purpose", r'///\s*\S'), ("Ownership", r'Ownership'),
+                                        ("Synchronization", r'Synchronization'),
+                                        ("Example input", r'Example input'),
+                                        ("Example output", r'Example output')) if not re.search(pat, doc)]
             if missing and not mc.group(1).endswith(("Result", "Record", "Config", "Spec",
                                                      "Table", "Match", "Detection", "Detections",
                                                      "Environment", "Scene", "GroundTruth",
@@ -109,7 +113,7 @@ for path in HEADERS:
         if not md: continue
         name, sig = md.group(1), md.group(2)
         if name in ("if", "for", "while", "switch", "return", "sizeof", "static_cast"): continue
-        # 複数行にまたがる宣言は引数を連結する
+        # Join the parameters of a declaration that spans several lines.
         if ")" not in line.split("(", 1)[1]:
             j, buf = i, line
             while j + 1 < len(lines) and ")" not in buf.split("(", 1)[1]:
@@ -117,26 +121,26 @@ for path in HEADERS:
             sig = buf.split("(", 1)[1].rsplit(")", 1)[0]
         doc = comment_block(lines, i)
         if not doc:
-            problems.append((path, i + 1, name, ["Doxygen 全体"])); continue
+            problems.append((path, i + 1, name, ["the whole Doxygen block"])); continue
         missing = []
         for p in params_of(sig):
             if not re.search(r'@param\s+' + re.escape(p) + r'\b', doc): missing.append(f"@param {p}")
-        # constructor と destructor は戻り値を持たない。
+        # Constructors and destructors have no return value.
         is_ctor = (name == current_class) or name.startswith("~")
         returns_void = (bool(re.match(r'^\s*(?:inline\s+)?void\s', line))
                         or name == "operator()" or is_ctor)
         if not returns_void and "@return" not in doc: missing.append("@return")
-        if "所有権" not in doc and "所有権" not in class_covers: missing.append("所有権")
-        if "同期動作" not in doc and "同期動作" not in class_covers: missing.append("同期動作")
-        if "入力例" not in doc: missing.append("入力例")
-        if "出力例" not in doc: missing.append("出力例")
+        if "Ownership" not in doc and "Ownership" not in class_covers: missing.append("Ownership")
+        if "Synchronization" not in doc and "Synchronization" not in class_covers: missing.append("Synchronization")
+        if "Example input" not in doc: missing.append("Example input")
+        if "Example output" not in doc: missing.append("Example output")
         if missing: problems.append((path, i + 1, name, missing))
 
-print(f"検査対象 {len(HEADERS)} header")
+print(f"checking {len(HEADERS)} headers")
 cur = None
 for path, line, name, missing in problems:
     if path != cur:
         print(f"\n=== {path} ===" ); cur = path
-    print(f"  {line:4d} {name:32s} 欠落: {', '.join(missing)}")
-print(f"\n合計 {len(problems)} 件の宣言に欠落あり")
+    print(f"  {line:4d} {name:32s} missing: {', '.join(missing)}")
+print(f"\n{len(problems)} declarations have missing elements in total")
 sys.exit(1 if problems else 0)

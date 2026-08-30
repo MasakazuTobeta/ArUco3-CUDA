@@ -1,120 +1,120 @@
-# host と device の間の memory 受け渡し
+# Passing memory between host and device
 
-## 目的
+## Purpose
 
-対象 3 機で host と device がどう memory を共有するかを実測し、どの方式を選ぶべきかを記録します。「統合 GPU だから転送は不要」という直感が成り立つ条件と成り立たない条件を、device の性質と実測値で示します。
+This document measures how host and device share memory on the three target machines and records which method to choose. It shows, using device properties and measured values, the conditions under which the intuition that "transfers are unnecessary on an integrated GPU" holds and the conditions under which it does not.
 
-## 対象範囲
+## Scope
 
-kernel が書いた結果を host が読むまでの経路を対象とします。host から device への入力転送も同じ性質に従いますが、測定は結果の取り出しで行っています。
+The scope is the route from a kernel writing a result to the host reading it. Input transfers from host to device follow the same properties, but the measurements were made on the result readback.
 
-## なぜ統合 GPU でも転送が発生するのか
+## Why transfers still occur on an integrated GPU
 
-統合 GPU では host と device が同一の物理 memory を使います。それでも `cudaMalloc` で確保した領域と host の通常 memory は**別の割り当て**であり、`cudaMemcpy` は実際に複製します。同じ DRAM の中で複製するだけですが、費用は発生します。
+On an integrated GPU, host and device use the same physical memory. Even so, a region allocated with `cudaMalloc` and ordinary host memory are **separate allocations**, and `cudaMemcpy` really does copy. It is only a copy within the same DRAM, but it still costs something.
 
-転送を省くには、host と device の双方から同じ領域を参照できる確保方法を使う必要があります。
+To skip the transfer, you must use an allocation method through which host and device can both reference the same region.
 
-| 方式 | 確保 | 性質 |
+| Method | Allocation | Property |
 | --- | --- | --- |
-| A. device memory + 明示的な複製 | `cudaMalloc` + `cudaMemcpy` | 常に複製が発生する |
-| B. managed memory | `cudaMallocManaged` | 同一の pointer を双方から参照する。移送の有無は device の性質による |
-| C. mapped host memory | `cudaHostAlloc(cudaHostAllocMapped)` | host memory を device から直接参照する |
+| A. Device memory + explicit copy | `cudaMalloc` + `cudaMemcpy` | A copy always occurs |
+| B. Managed memory | `cudaMallocManaged` | Both sides reference the same pointer. Whether migration occurs depends on the device's properties |
+| C. Mapped host memory | `cudaHostAlloc(cudaHostAllocMapped)` | The device references host memory directly |
 
-## 対象機の性質
+## Properties of the target machines
 
-`cudaGetDeviceProperties` の実測値です。
+These are measured values from `cudaGetDeviceProperties`.
 
-| 機体 | `integrated` | `canMapHostMemory` | `managedMemory` | `concurrentManagedAccess` | `pageableMemoryAccess` |
+| Machine | `integrated` | `canMapHostMemory` | `managedMemory` | `concurrentManagedAccess` | `pageableMemoryAccess` |
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | 1 | 1 | 1 | **1** | **1** |
 | Jetson AGX Orin | 1 | 1 | 1 | **0** | **0** |
 | GeForce RTX 5070 Ti | 0 | 1 | 1 | 1 | 1 |
 
-**`integrated` だけでは判断できません。** Jetson Orin は統合 GPU でありながら `concurrentManagedAccess` が 0 です。この場合 managed memory は device 側へ attach され、host が触ると移送が起きます。同じ物理 memory を共有していても、driver の管理単位が分かれているためです。
+**`integrated` alone is not enough to decide.** The Jetson Orin is an integrated GPU, yet its `concurrentManagedAccess` is 0. In that case managed memory is attached to the device side, and migration occurs when the host touches it. Even though the same physical memory is shared, the driver's unit of management is separate.
 
-DGX Spark GB10 は `pageableMemoryAccess` が 1 であり、通常の host memory へ device から直接 access できます。
+On the DGX Spark GB10, `pageableMemoryAccess` is 1, so the device can access ordinary host memory directly.
 
-## 実測
+## Measurements
 
-1.46 MB を kernel が書き、host が**全 byte を読み終える**までの時間です。中央値、暖機 30 回のあと 170 回。
+These are the times for a kernel to write 1.46 MB and for the host to **finish reading every byte**. Median over 170 runs after 30 warmup runs.
 
-| 機体 | A. 複製 | B. managed | C. mapped |
+| Machine | A. Copy | B. Managed | C. Mapped |
 | --- | --- | --- | --- |
 | DGX Spark GB10 | 0.170 ms | **0.110 ms** | 0.128 ms |
 | Jetson AGX Orin | 2.430 ms | 2.156 ms | **2.065 ms** |
 | GeForce RTX 5070 Ti | 0.402 ms | **4.831 ms** | 0.396 ms |
 
-この値は host 側が 1.46 MB を走査する時間を含みます。どの方式でも host は結果を読むため、その分は共通の下限です。方式の差は「読めるようにするまで」の部分に現れます。
+These values include the time for the host to scan 1.46 MB. The host reads the results under every method, so that portion is a shared lower bound. The difference between the methods appears in the part that gets the data ready to read.
 
-複製の段階だけを分けて測ると、DGX Spark で次のようになります。
+Measuring the copy stage alone gives the following on the DGX Spark.
 
-| 段階 | 時間 |
+| Stage | Time |
 | --- | --- |
-| kernel + 同期のみ (B と C はここで host が読める) | 0.048 ms |
+| Kernel + synchronization only (with B and C the host can read at this point) | 0.048 ms |
 | + `cudaMemcpy` (A) | 0.120 ms |
 
-**複製そのものが 0.071 ms** であり、統合 GPU では B か C でこれを丸ごと省けます。
+**The copy itself is 0.071 ms**, and on an integrated GPU B or C eliminates it entirely.
 
-## 機体ごとの選択
+## Choice per machine
 
-| 機体 | 推奨 | 理由 |
+| Machine | Recommendation | Reason |
 | --- | --- | --- |
-| DGX Spark GB10 | B (managed) | 移送が起きず複製も不要。`pageableMemoryAccess` が 1 のため通常 memory も使える |
-| Jetson AGX Orin | C (mapped) | `concurrentManagedAccess` が 0 のため managed は移送を伴う。zero copy なら避けられる |
-| GeForce RTX 5070 Ti | A または C | 単体 GPU のため無償の共有は無い。**B は 12 倍遅くなる** |
+| DGX Spark GB10 | B (managed) | No migration occurs and no copy is needed. `pageableMemoryAccess` is 1, so ordinary memory can be used as well |
+| Jetson AGX Orin | C (mapped) | `concurrentManagedAccess` is 0, so managed memory involves migration. Zero copy avoids it |
+| GeForce RTX 5070 Ti | A or C | A discrete GPU, so there is no free sharing. **B is 12x slower** |
 
-RTX 5070 Ti で B が極端に遅いのは、host が読むたびに page が device から host へ移送されるためです。単体 GPU で managed memory を「便利だから」と選ぶと、明示的な複製より大幅に遅くなります。
+B is extremely slow on the RTX 5070 Ti because pages migrate from device to host every time the host reads. Choosing managed memory on a discrete GPU because it "is convenient" is substantially slower than an explicit copy.
 
-## 現在の実装との差
+## Difference from the current implementation
 
-案 C のハイブリッド経路は方式 A を使い、毎 frame 1499 KB を 8 回の同期転送で戻しています (pyramid 5 level と二値化画像 3 枚)。DGX Spark での実測は 0.269 ms でした。
+The hybrid route of plan C uses method A and returns 1499 KB per frame through 8 synchronous transfers (5 pyramid levels and 3 thresholded images). The measured time on the DGX Spark was 0.269 ms.
 
-単発の複製として測った 0.071 ms との差は、**8 回それぞれの呼び出し費用** (1 回あたり約 25 µs) です。改善の余地は 2 つあります。
+The gap against the 0.071 ms measured for a single copy is **the per-call cost of each of the 8 calls** (about 25 µs each). There are two opportunities for improvement.
 
-1. 統合 GPU で B か C を使い、複製自体を省く
-2. 8 回の blocking 呼び出しを stream へ載せ、非同期にまとめる
+1. Use B or C on an integrated GPU and eliminate the copy itself
+2. Put the 8 blocking calls on a stream and batch them asynchronously
 
-## 測定上の落とし穴
+## Measurement pitfalls
 
-**managed memory の測定では、確保した領域を全て読む必要があります。**
+**When measuring managed memory, you must read the entire allocated region.**
 
-最初の測定で 1 byte だけ読んだところ、RTX 5070 Ti の managed が複製より 21 倍速いという結果になりました。managed memory は必要な page だけを遅延移送するため、1 byte の読み出しでは 1 page しか移送されていませんでした。全 byte を読む形へ直すと、逆に 12 倍遅いことが分かりました。
+In the first measurement only 1 byte was read, and managed came out 21x faster than the copy on the RTX 5070 Ti. Managed memory migrates only the pages it needs, lazily, so reading 1 byte migrated only 1 page. Once corrected to read every byte, it turned out to be 12x slower instead.
 
-同じ理由で、`cudaMemPrefetchAsync` を使わない managed memory の測定は、host 側の access pattern に強く依存します。比較する場合は、実際の利用と同じだけ読むこと。
+For the same reason, measuring managed memory without `cudaMemPrefetchAsync` depends strongly on the host-side access pattern. When comparing, read as much as the actual use does.
 
-## 未確定事項
+## Open questions
 
-- 入力 (host から device) についても同じ比較を行うか。現在は結果の取り出しのみ測定している。
-- `cudaMemPrefetchAsync` を併用した場合の managed memory の挙動。単体 GPU で改善するかは未測定。
-- Jetson で mapped host memory を使った場合、kernel 側の access が遅くなる度合い。zero copy は kernel から見ると host memory への access になる。
-- 統合 GPU で `pageableMemoryAccess` が 1 の場合、`cv::Mat` の buffer をそのまま device へ渡せるか。DGX Spark では原理的に可能だが未検証。
+- Whether to run the same comparison for input (host to device). Only the result readback is currently measured.
+- The behavior of managed memory when combined with `cudaMemPrefetchAsync`. Whether it improves on a discrete GPU is unmeasured.
+- How much slower kernel-side access becomes when mapped host memory is used on the Jetson. Zero copy is, from the kernel's point of view, access to host memory.
+- Whether a `cv::Mat` buffer can be handed to the device as is when `pageableMemoryAccess` is 1 on an integrated GPU. It is possible in principle on the DGX Spark, but unverified.
 
-## 統合 GPU では page cache が「device の空き」を食う
+## On an integrated GPU the page cache eats into the "device's free memory"
 
-DGX Spark GB10 で `ctest -j 8` が断続的に落ちるようになりました。15 回中 5 回、毎回違う test が `out of memory` で失敗します。原因は**実装ではなく環境**でした。
+On the DGX Spark GB10, `ctest -j 8` began failing intermittently. In 5 out of 15 runs, a different test each time failed with `out of memory`. The cause was **the environment, not the implementation**.
 
 ```
-GPU:  空き 3513.6 MiB / 全体 122572.2 MiB
+GPU:  free 3513.6 MiB / total 122572.2 MiB
 host: MemTotal 119 GB / MemFree 5 GB / MemAvailable 107 GB / Cached 100 GB
 ```
 
-統合 GPU では device memory が host memory と同じものです。`cudaMemGetInfo` が返す「空き」は **`MemFree` に相当し、`MemAvailable` ではありません**。page cache は回収可能ですが、CUDA の確保はそれを待たずに失敗します。
+On an integrated GPU, device memory is the same memory as host memory. The "free" figure returned by `cudaMemGetInfo` **corresponds to `MemFree`, not `MemAvailable`**. The page cache is reclaimable, but a CUDA allocation fails without waiting for that reclamation.
 
-長い作業 session では build 出力、corpus、docker layer で page cache が 100 GB まで育ちます。そうなると 1 process でも 3.5 GB しか確保できず、`ctest -j 8` のように process を並べると簡単に枯渇します。
+Over a long working session, the page cache grows to 100 GB from build output, corpora, and docker layers. At that point even a single process can allocate only 3.5 GB, and lining up processes as `ctest -j 8` does exhausts it easily.
 
-回収すれば戻ります。
+Reclaiming it brings the memory back.
 
 ```
 sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
 ```
 
-実測では 3.5 GB から **108.9 GB** へ戻り、`ctest -j 8` を 10 回続けて全て通りました。
+In measurement it went from 3.5 GB back to **108.9 GB**, and `ctest -j 8` passed 10 times in a row.
 
-**測定の前には page cache を落とすこと。** 落とさずに測ると、確保の失敗だけでなく、host 側の memory 帯域の奪い合いで測定値そのものが揺れます。
+**Drop the page cache before measuring.** Measuring without doing so causes not only allocation failures but also fluctuation in the measured values themselves, from contention over host-side memory bandwidth.
 
-## 関連
+## See also
 
-- [検出パイプライン設計](detector-pipeline.md)
-- [評価計画](../evaluation-plan.md)
-- [Benchmark 報告](../benchmark-report.md)
-- [アーキテクチャ](../architecture.md)
+- [Detection pipeline design](detector-pipeline.md)
+- [Evaluation plan](../evaluation-plan.md)
+- [Benchmark report](../benchmark-report.md)
+- [Architecture](../architecture.md)

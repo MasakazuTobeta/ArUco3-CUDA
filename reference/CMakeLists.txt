@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# CPU 基準 runner。OpenCV の ArUco 検出を固定設定で実行し結果を JSON で保存する。
-# core とは独立した target とし、core へ OpenCV 依存を持ち込まない。
+# CPU baseline runner. Runs OpenCV ArUco detection with a fixed configuration
+# and stores the results as JSON.
+# Kept as a target independent of core so that no OpenCV dependency leaks into core.
 add_library(aruco3cuda_reference STATIC reference_runner.cpp)
 add_library(aruco3cuda::reference ALIAS aruco3cuda_reference)
 

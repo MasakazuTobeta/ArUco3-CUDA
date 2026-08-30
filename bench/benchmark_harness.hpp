@@ -13,104 +13,120 @@
 
 namespace aruco3cuda::bench {
 
-/// 評価計画が定める比較経路。
+/// The comparison routes defined by the evaluation plan.
 ///
-/// 4 経路すべてを測定できる。指定と実際の処理が食い違わないよう、扱えない
-/// 組合せは CPU へ読み替えず失敗させる。読み替えると、記録された route と
-/// 実際に測った処理が食い違い、結果を後から読み解けなくなる。
+/// All four routes can be measured. So that the requested route and the
+/// processing actually performed never disagree, an unsupported combination
+/// fails instead of being substituted with CPU. Substituting would make the
+/// recorded route disagree with what was measured, and the results could no
+/// longer be interpreted afterwards.
 enum class Route : int {
-    kCpu = 0,        ///< OpenCV ArUco3。cv::Mat 入力から結果取得まで
-    kCudaEndToEnd,   ///< host 入力 CUDA。upload、検出、download、同期を含む
-    kCudaResident,   ///< device 入力 CUDA。GPU 常駐画像から device 結果まで
-    kHybrid,         ///< CUDA と CPU の組み合わせ
+    kCpu = 0,        ///< OpenCV ArUco3. From a cv::Mat input to the results
+    /// CUDA with host input. Includes upload, detection, download and synchronization
+    kCudaEndToEnd,
+    kCudaResident,   ///< CUDA with device input. From a GPU-resident image to the device results
+    kHybrid,         ///< A combination of CUDA and CPU
 };
 
-/// 入力 buffer の memory 種別。
+/// Memory type of the input buffer.
 ///
-/// DGX Spark と Jetson Orin はいずれも統合 GPU であり、明示的な copy の費用が
-/// discrete GPU と大きく異なる。経路と独立した測定軸として記録する。
+/// DGX Spark and Jetson Orin are both integrated GPUs, where the cost of an
+/// explicit copy differs greatly from a discrete GPU. It is recorded as a
+/// measurement axis independent of the route.
 enum class MemoryMode : int {
-    kNotApplicable = 0, ///< CPU 経路
-    /// host の通常 memory。測定区間に device への転送を含む。
+    kNotApplicable = 0, ///< CPU route
+    /// Ordinary host memory. The measured interval includes the transfer to the device.
     kHostPageable,
     kHostPinned,
     kManaged,
-    /// device 常駐。転送は測定区間の外で 1 度だけ行う。
+    /// Device resident. The transfer happens once, outside the measured interval.
     kDevice,
 };
 
-/// Route を評価計画の表記へ変換する。結果 JSONL の識別子に使用する。
+/// Convert a Route to the notation of the evaluation plan. Used as the
+/// identifier in the result JSONL.
 ///
-/// @param route 変換対象。列挙に無い値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。
+/// @param route The value to convert. Never returns nullptr, even for a value
+///              outside the enumeration.
+/// @return A string with static storage duration.
 ///
-/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the return value points to static storage. The caller neither
+///            frees nor modifies it.
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: Route::kCudaEndToEnd
-/// 出力例: "CUDA-E2E"
+/// Example input: Route::kCudaEndToEnd
+/// Example output: "CUDA-E2E"
 const char* to_string(Route route);
 
-/// MemoryMode を評価計画の表記へ変換する。
+/// Convert a MemoryMode to the notation of the evaluation plan.
 ///
-/// @param mode 変換対象。列挙に無い値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。
+/// @param mode The value to convert. Never returns nullptr, even for a value
+///             outside the enumeration.
+/// @return A string with static storage duration.
 ///
-/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the return value points to static storage. The caller neither
+///            frees nor modifies it.
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: MemoryMode::kHostPinned
-/// 出力例: "M-Pinned"
+/// Example input: MemoryMode::kHostPinned
+/// Example output: "M-Pinned"
 const char* to_string(MemoryMode mode);
 
-/// 測定条件。
+/// Measurement conditions.
 struct BenchmarkConfig {
     Route route_ = Route::kCpu;
     MemoryMode memory_mode_ = MemoryMode::kNotApplicable;
 
-    /// 測定区間へ含めない準備実行の回数。
+    /// Number of preparatory runs excluded from the measured interval.
     int warmup_iterations_ = 20;
-    /// 単一フレーム遅延の測定回数。
+    /// Number of single-frame latency measurements.
     int latency_iterations_ = 200;
-    /// throughput 測定で連続処理するフレーム数。0 で測定しない。
+    /// Number of frames processed back to back for the throughput measurement.
+    /// 0 skips the measurement.
     int throughput_frames_ = 100;
-    /// 全標本を結果へ含めるか。分布を保存する必要がある場合に使用する。
+    /// Whether to include every sample in the results. Used when the
+    /// distribution itself has to be saved.
     bool save_all_samples_ = false;
 
-    /// 測定に使用する CPU 番号の一覧。空なら OS の割り当てに任せる。
+    /// List of CPU numbers to measure on. Empty leaves the assignment to the OS.
     ///
-    /// DGX Spark GB10 のように性能 core と効率 core が混在する機では、
-    /// 割り当て先の core 種別で CPU 基準値が 1.6 倍変わる。core を固定しないと
-    /// 測定値が実行ごとに二極化し、crossover point の判断を誤る。
+    /// On a machine that mixes performance and efficiency cores, such as the DGX
+    /// Spark GB10, the core type a run lands on changes the CPU baseline by a
+    /// factor of 1.6. Without pinning the core, the measured values become
+    /// bimodal from run to run and the crossover point is judged wrongly.
     std::vector<int> cpu_affinity_;
 
     aruco3cuda::reference::ReferenceConfig detector_;
 
-    /// CUDA 経路の検出設定。CPU 経路では使用しない。
+    /// Detection settings for the CUDA routes. Unused on the CPU route.
     ///
-    /// detector_ と別に持つのは、CUDA 側に CPU 基準へ存在しない項目
-    /// (候補の上限、四角形らしさの下限、block 寸法) があるためである。
-    /// 共通の項目は cuda_config_from_reference() で detector_ から写す。
+    /// It is kept separate from detector_ because the CUDA side has items the
+    /// CPU baseline does not have (the candidate limit, the lower bound on
+    /// squareness, the block dimensions). The shared items are copied from
+    /// detector_ by cuda_config_from_reference().
     aruco3cuda::DetectorConfig cuda_detector_;
 };
 
-/// CPU 基準の設定から CUDA 経路の設定へ、共通項目を写す。
+/// Copy the shared items from the CPU baseline settings into the CUDA route settings.
 ///
-/// 両経路で条件を揃えるために使う。既定構築のままにすると
-/// use_aruco3_detection_ や縮小率が食い違い、別の条件を比べることになる。
+/// Used to keep the conditions aligned across the two routes. Leaving the
+/// default-constructed value in place would let use_aruco3_detection_ and the
+/// downscale ratio diverge, so that two different conditions were being
+/// compared.
 ///
-/// @param config CPU 基準の設定。
-/// @return 共通項目を写した CUDA 経路の設定。他の項目は既定値。
+/// @param config The CPU baseline settings.
+/// @return The CUDA route settings with the shared items copied in. All other
+///         items keep their default values.
 ///
-/// 所有権: 引数を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: does not retain the arguments.
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: use_aruco3_detection_ = true、min_side_length_canonical_img_px_ = 32
-/// 出力例: 同じ値が入った DetectorConfig
+/// Example input: use_aruco3_detection_ = true, min_side_length_canonical_img_px_ = 32
+/// Example output: a DetectorConfig holding the same values
 aruco3cuda::DetectorConfig cuda_config_from_reference(
         const aruco3cuda::reference::ReferenceConfig& config);
 
-/// 1 つの入力に対する測定結果。
+/// Measurement result for a single input.
 struct MeasurementRecord {
     std::string image_path_;
     std::string image_sha256_;
@@ -118,49 +134,54 @@ struct MeasurementRecord {
     int height_px_ = 0;
     std::size_t detection_count_ = 0;
 
-    /// ArUco3 の実効縮小率。測定条件として必ず記録する。
+    /// Effective ArUco3 downscale ratio. Always recorded as a measurement condition.
     double fxfy_effective_ = 1.0;
 
-    /// 入力準備から host 結果取得までの wall-clock。単位は ms。
+    /// Wall-clock from preparing the input to obtaining the host results, in ms.
     aruco3cuda::util::SampleStatistics end_to_end_ms_;
-    /// CUDA event で測定する検出処理時間。現時点ではどの経路でも未測定とする。
+    /// Detection time measured with CUDA events. Currently unmeasured on every route.
     ///
-    /// wall-clock との分離は評価計画が求めているが、まだ実装していない。
-    /// ここを段階時間で埋めると、記録された値が CUDA event 由来かどうかを
-    /// 後から区別できなくなるため、埋めない。
+    /// The evaluation plan asks for it to be separated from wall-clock, but that
+    /// is not implemented yet. Filling this in with stage times would make it
+    /// impossible to tell afterwards whether a recorded value came from CUDA
+    /// events, so it is left empty.
     bool kernel_time_available_ = false;
     aruco3cuda::util::SampleStatistics kernel_ms_;
 
-    /// 経路内の段階ごとの wall-clock。CPU 経路では未測定とする。
+    /// Per-stage wall-clock within the route. Unmeasured on the CPU route.
     ///
-    /// hybrid では GPU 側 (前処理、二値化、host への転送) と CPU 側
-    /// (候補抽出から decode まで) を分けて記録する。両者の和は
-    /// end_to_end_ms_ より小さい。差は入力の転送と呼び出しの費用である。
+    /// For hybrid, the GPU side (preprocessing, thresholding, transfer to the
+    /// host) and the CPU side (candidate extraction through decoding) are
+    /// recorded separately. Their sum is smaller than end_to_end_ms_; the
+    /// difference is the cost of transferring the input and of the calls.
     bool stage_times_available_ = false;
     aruco3cuda::util::SampleStatistics gpu_stage_ms_;
     aruco3cuda::util::SampleStatistics cpu_stage_ms_;
 
-    /// 画像が用意できた時点から 1 枚目の検出結果が出るまで。単位は ms。
+    /// From the moment the image is ready until the first detection result is
+    /// available, in ms.
     ///
-    /// 経路の準備と 1 枚目の検出を含む。CUDA 経路では文脈の生成と kernel の
-    /// 読み込みがここへ入り、定常状態の数百倍になる。warm-up 後の分位点だけを
-    /// 見ると、この費用が結果に現れない。単発の検出や短い burst では、
-    /// 定常状態の差より起動の費用が支配する。
+    /// Includes preparing the route and detecting the first image. On the CUDA
+    /// routes, context creation and kernel loading fall in here and make it
+    /// hundreds of times the steady state. Looking only at the percentiles after
+    /// warm-up hides this cost from the results. For a one-shot detection or a
+    /// short burst, the startup cost dominates the steady-state difference.
     double time_to_first_result_ms_ = 0.0;
-    /// 1 枚目の検出だけにかかった時間。単位は ms。
+    /// Time spent on the detection of the first image alone, in ms.
     ///
-    /// time_to_first_result_ms_ との差が経路の準備にあたる。
+    /// The difference from time_to_first_result_ms_ is the preparation of the route.
     double first_frame_ms_ = 0.0;
 
-    /// 連続処理時の frame/s。throughput_frames_ が 0 の場合は未測定。
+    /// Frames per second under continuous processing. Unmeasured when
+    /// throughput_frames_ is 0.
     bool throughput_available_ = false;
     double throughput_fps_ = 0.0;
 
-    /// save_all_samples_ が true の場合のみ格納する。
+    /// Stored only when save_all_samples_ is true.
     std::vector<double> end_to_end_samples_ms_;
 };
 
-/// 実行環境の記録。
+/// Record of the execution environment.
 struct EnvironmentRecord {
     std::string hostname_;
     std::string os_;
@@ -172,105 +193,121 @@ struct EnvironmentRecord {
     std::string gpu_name_;
     std::string gpu_compute_capability_;
     std::string driver_version_;
-    /// Jetson の L4T release。Jetson には nvidia-smi が無く driver version を
-    /// 取得できないため、対応する情報としてこちらを記録する。
+    /// L4T release of a Jetson. A Jetson has no nvidia-smi and therefore no
+    /// driver version, so this is recorded as the corresponding information.
     std::string platform_release_;
-    /// 基板名。device tree から取得する。
+    /// Board name. Obtained from the device tree.
     std::string platform_model_;
-    /// 電力モード。評価計画が測定条件として記録を要求する。
+    /// Power mode. The evaluation plan requires it to be recorded as a
+    /// measurement condition.
     std::string power_mode_;
-    /// CPU の core 構成。性能 core と効率 core が混在する機では、
-    /// どの種別で測ったかが分からないと測定値を比較できない。
+    /// CPU core configuration. On a machine that mixes performance and
+    /// efficiency cores, measured values cannot be compared without knowing
+    /// which type they were taken on.
     std::string cpu_topology_;
-    /// 実際に使用した CPU 番号。固定しなかった場合は "unpinned"。
+    /// The CPU numbers actually used. "unpinned" when no pinning was applied.
     std::string cpu_affinity_;
-    /// address space 配置の無作為化 (ASLR) の状態。
+    /// State of address space layout randomization (ASLR).
     ///
-    /// 全解像度の CPU 経路では、ASLR による memory 配置の違いだけで
-    /// p50 が 9% 変動する。無効化すると実行間で完全に一致する。
-    /// どちらで測ったかが分からないと測定値を比較できない。
+    /// On the CPU route at every resolution, differences in memory layout caused
+    /// by ASLR alone move p50 by 9%. Disabling it makes runs match exactly.
+    /// Measured values cannot be compared without knowing which of the two they
+    /// were taken under.
     std::string address_randomization_;
-    /// GPU の最大 clock (MHz)。取得できない場合は 0 ではなく未設定とする。
+    /// Maximum GPU clock (MHz). When it cannot be obtained it is left unset
+    /// rather than 0.
     bool gpu_clock_available_ = false;
     int gpu_max_clock_mhz_ = 0;
     int gpu_current_clock_mhz_ = 0;
     bool gpu_integrated_ = false;
-    /// CUDA の文脈生成にかかった時間。単位は ms。CUDA device が無い場合は 0。
+    /// Time spent creating the CUDA context, in ms. 0 when there is no CUDA device.
     ///
-    /// process ごとに 1 度だけ発生する。最初の CUDA API 呼び出しで暗黙に
-    /// 起きるため、経路ごとの測定には現れない。単発の検出では、この費用が
-    /// 検出そのものの数百倍になる。
+    /// It happens once per process. Because it is triggered implicitly by the
+    /// first CUDA API call, it does not show up in the per-route measurements.
+    /// For a one-shot detection this cost is hundreds of times the detection itself.
     double cuda_context_ms_ = 0.0;
     int cpu_online_cores_ = 0;
-    /// GPU 情報を取得できなかった場合の理由。空なら取得に成功している。
-    /// 無言で項目が欠けることを防ぎ、後から原因を追えるようにする。
+    /// Reason the GPU information could not be obtained. Empty when it succeeded.
+    /// Prevents items from going missing silently and keeps the cause traceable
+    /// afterwards.
     std::string gpu_probe_error_;
 };
 
-/// 実行環境の情報を収集する。
+/// Collect information about the execution environment.
 ///
-/// GPU 情報は CUDA device が利用できる場合のみ埋まる。取得できない項目は
-/// 空文字列のままとし、推測で埋めない。
+/// The GPU information is filled in only when a CUDA device is available. Items
+/// that cannot be obtained are left as empty strings and are never filled in by
+/// guesswork.
 ///
-/// @param config 検出設定。OpenCV の thread 数の設定にのみ使用する。
-/// @return 収集した環境情報。取得できなかった項目は空文字列または未設定を示す flag を持つ。
+/// @param config Detection settings. Only used for the OpenCV thread count.
+/// @return The collected environment information. Items that could not be
+///         obtained hold an empty string or a flag indicating "unset".
 ///
-/// 所有権: 戻り値は値であり、内部の資源を参照しない。
-/// 同期動作: CUDA device の性質取得で CUDA runtime を呼ぶが device 同期は行わない。
-///           power mode と driver version の取得のため外部 command を起動する。
+/// Ownership: the return value is a value and references no internal resource.
+/// Synchronization: calls the CUDA runtime to query the device properties, but
+///                  performs no device synchronization. Launches external
+///                  commands to obtain the power mode and the driver version.
 ///
-/// 副作用: config.detector_.num_threads_ が 1 以上なら cv::setNumThreads() を呼び、
-///         以降の OpenCV 処理の thread 数を変更する。測定条件を固定するための意図的な副作用である。
+/// Side effects: when config.detector_.num_threads_ is 1 or more, calls
+///               cv::setNumThreads() and thereby changes the thread count of all
+///               subsequent OpenCV processing. This is a deliberate side effect
+///               that keeps the measurement conditions fixed.
 ///
-/// 入力例: 既定の BenchmarkConfig
-/// 出力例: opencv_version_ = "4.14.0"、gpu_name_ = "Orin"、power_mode_ = "MAXN (0)"
+/// Example input: a default BenchmarkConfig
+/// Example output: opencv_version_ = "4.14.0", gpu_name_ = "Orin", power_mode_ = "MAXN (0)"
 EnvironmentRecord collect_environment(const BenchmarkConfig& config);
 
-/// 1 つの画像を測定する。
+/// Measure a single image.
 ///
-/// @param image_path 対象画像。
-/// @param config 測定条件。
-/// @param out_record 成功時に結果を格納する。
-/// @param out_error 失敗時に理由を格納する。
-/// @return 成功した場合は true。
+/// @param image_path The image to measure.
+/// @param config Measurement conditions.
+/// @param out_record Receives the result on success.
+/// @param out_error Receives the reason on failure.
+/// @return true on success.
 ///
-/// 備考:
-///   現時点で実装があるのは CPU 経路のみである。他の経路を指定した場合は
-///   未実装であることを明示して失敗する。無言で CPU 経路へ読み替えない。
+/// Notes:
+///   Only the CPU route is implemented at present. Specifying any other route
+///   fails, stating explicitly that it is unimplemented. It is never silently
+///   substituted with the CPU route.
 bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
                    MeasurementRecord* out_record, std::string* out_error);
 
-/// 環境情報を JSONL の 1 行として書き出す。
+/// Write the environment information as one JSONL line.
 ///
-/// 末尾へ改行を 1 つ書く。JSONL は 1 行 1 record であり、この行が結果 file の先頭になる。
+/// Writes a single trailing newline. JSONL holds one record per line, and this
+/// line becomes the first line of the result file.
 ///
-/// @param out 出力先。所有権は呼出側が保持し、この関数は解放も flush も行わない。
-///            書き込み失敗の確認は呼出側の責務である。
-/// @param environment 書き出す環境情報。取得できなかった clock は 0 ではなく null になる。
-/// @return 無し。
+/// @param out Destination. Ownership stays with the caller; this function
+///            neither closes nor flushes it. Checking for write failure is the
+///            caller's responsibility.
+/// @param environment The environment information to write. A clock that could
+///                    not be obtained becomes null rather than 0.
+/// @return Nothing.
 ///
-/// 同期動作: host 専用であり同期点を持たない。
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: collect_environment() の戻り値
-/// 出力例: {"type":"environment","schema_version":3,...}
+/// Example input: the return value of collect_environment()
+/// Example output: {"type":"environment","schema_version":3,...}
 void write_environment_line(std::ostream& out, const EnvironmentRecord& environment);
 
-/// 測定結果を JSONL の 1 行として書き出す。
+/// Write a measurement result as one JSONL line.
 ///
-/// 末尾へ改行を 1 つ書く。CPU 経路には kernel 時間が存在しないため、
-/// kernel_time_available_ が false の場合は 0 で埋めず null を出力する。
-/// 0 を書くと集計時に「非常に速い kernel」と誤読されるためである。
+/// Writes a single trailing newline. The CPU route has no kernel time, so when
+/// kernel_time_available_ is false the output is null rather than a 0 fill.
+/// Writing 0 would be misread during aggregation as "a very fast kernel".
 ///
-/// @param out 出力先。所有権は呼出側が保持し、この関数は解放も flush も行わない。
-///            書き込み失敗の確認は呼出側の責務である。
-/// @param config 測定条件。経路、memory 種別、検出設定を条件として記録する。
-/// @param record 測定結果。
-/// @return 無し。
+/// @param out Destination. Ownership stays with the caller; this function
+///            neither closes nor flushes it. Checking for write failure is the
+///            caller's responsibility.
+/// @param config Measurement conditions. The route, the memory type and the
+///               detection settings are recorded as conditions.
+/// @param record The measurement result.
+/// @return Nothing.
 ///
-/// 同期動作: host 専用であり同期点を持たない。
+/// Synchronization: host only, with no synchronization point.
 ///
-/// 入力例: measure_image() の戻り値と、その測定に使用した BenchmarkConfig
-/// 出力例: {"type":"measurement","route":"CPU",...,"kernel":null,...}
+/// Example input: the return value of measure_image() and the BenchmarkConfig used for it
+/// Example output: {"type":"measurement","route":"CPU",...,"kernel":null,...}
 void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
                             const MeasurementRecord& record);
 

@@ -16,124 +16,127 @@
 
 namespace aruco3cuda::detail {
 
-/// device 上の Dictionary。
+/// A dictionary residing on the device.
 ///
-/// DictionaryTable の codes_ は host の静的記憶域を指すため、そのままでは
-/// kernel から読めない。同じ内容を device へ写した参照を持つ。
+/// The codes_ member of DictionaryTable points into host static storage, which a kernel cannot
+/// read as is, so this structure references a device-side copy of the same content.
 ///
-/// 所有権: codes_ が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照であり同期点を持たない。
+/// Ownership: the workspace owns the region codes_ points to.
+/// Synchronization: this is only a reference and holds no synchronization point.
 ///
-/// 入力例: DICT_ARUCO_MIP_36h12 の table
-/// 出力例: marker_size_ = 6、code_count_ = 250、codes_ が 1000 要素
+/// Example input: the DICT_ARUCO_MIP_36h12 table
+/// Example output: marker_size_ = 6, code_count_ = 250, codes_ holding 1000 elements
 struct DeviceDictionary {
-    /// [code_count_ * 4]。添字は id * 4 + rotation。host 側の並びと同じ。
+    /// [code_count_ * 4]. The index is id * 4 + rotation, the same layout as on the host.
     const MarkerCode* codes_ = nullptr;
     int marker_size_ = 0;
     int code_count_ = 0;
     int max_correction_bits_ = 0;
 };
 
-/// 候補ごとの照合結果。
+/// Per-candidate matching result.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: the workspace owns every region these pointers refer to.
+/// Synchronization: this is only a bundle of references and holds no synchronization point.
 ///
-/// 入力例: 候補上限 4096
-/// 出力例: ids_ が 4096 要素
+/// Example input: candidate cap 4096
+/// Example output: ids_ holding 4096 elements
 struct MatchBuffers {
-    /// 一致した ID。一致しなければ -1。
+    /// The matched ID, or -1 when nothing matched.
     std::int32_t* ids_ = nullptr;
-    /// 一致した回転。0 から 3。一致しなければ 0。
+    /// The matched rotation, 0 to 3. 0 when nothing matched.
     std::int32_t* rotations_ = nullptr;
-    /// 採用した ID の距離。一致しなければ全 ID を通した最小距離。border 検証で
-    /// 落ちた候補は照合しないため marker_size の 2 乗に 1 を足した値が入る。
+    /// Distance of the selected ID, or the smallest distance across all IDs when nothing
+    /// matched. A candidate rejected by the border check is never matched, so it stores the
+    /// square of marker_size plus one.
     std::int32_t* distances_ = nullptr;
     int capacity_ = 0;
 };
 
-/// device 上の Dictionary に必要な workspace の大きさを返す。
+/// Returns the workspace size required by the device-side dictionary.
 ///
-/// @param table 対象 Dictionary。
-/// @return 必要な byte 数。table が不正なら 0。
+/// @param table Dictionary to size.
+/// @return Required number of bytes, or 0 when the table is invalid.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: host only, holds no synchronization point. Calls no CUDA API.
 ///
-/// 入力例: DICT_ARUCO_MIP_36h12 の table
-/// 出力例: 8192
+/// Example input: the DICT_ARUCO_MIP_36h12 table
+/// Example output: 8192
 std::size_t device_dictionary_workspace_bytes(const DictionaryTable& table);
 
-/// Dictionary を device へ写す領域を確保し、内容を転送する。
+/// Allocates the region that holds the dictionary on the device and transfers its content.
 ///
-/// 転送元は host の静的記憶域であり pageable である。初期化時に 1 度だけ
-/// 呼ぶことを想定しており、毎 frame の経路には現れない。
+/// The source is host static storage and therefore pageable. This is meant to be called once
+/// during initialization and never appears on the per-frame path.
 ///
-/// @param table 対象 Dictionary。
-/// @param workspace device 空間の workspace。
-/// @param out 成功時に device 側の参照を格納する。領域の所有権は呼出側にある。
-/// @param stream 転送を発行する stream。
-/// @return kOk。引数が不正なら kInvalidArgument、容量不足なら
-///         容量不足なら kInvalidConfig、転送に失敗したら kCudaError。
+/// @param table Dictionary to upload.
+/// @param workspace Workspace in device space.
+/// @param out Receives the device-side reference on success. The caller owns the region.
+/// @param stream Stream the transfer is issued on.
+/// @return kOk, kInvalidArgument when an argument is invalid, kInvalidConfig when the capacity is
+///         insufficient, kCudaError when the transfer fails.
 ///
-/// 所有権: table が指す codes_ は転送元として読むだけで保持しない。
-/// 同期動作: 転送は stream 上で非同期に発行する。呼出側が同期するまで
-///           内容は確定しない。
+/// Ownership: codes_ of table is only read as the transfer source and is not retained.
+/// Synchronization: the transfer is issued asynchronously on the stream. The content is not final
+///           until the caller synchronizes.
 ///
-/// 入力例: DICT_ARUCO_MIP_36h12 の table、空きのある workspace
-/// 出力例: kOk。out->code_count_ = 250
+/// Example input: the DICT_ARUCO_MIP_36h12 table and a workspace with room left
+/// Example output: kOk, out->code_count_ = 250
 Status upload_dictionary(const DictionaryTable& table, Workspace& workspace, DeviceDictionary* out,
                          cudaStream_t stream);
 
-/// 照合結果に必要な workspace の大きさを返す。
+/// Returns the workspace size required by the matching results.
 ///
-/// @param config 候補上限を含む設定。
-/// @return 必要な byte 数。config が不正なら 0。
+/// @param config Configuration containing the candidate cap.
+/// @return Required number of bytes, or 0 when the configuration is invalid.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: host only, holds no synchronization point. Calls no CUDA API.
 ///
-/// 入力例: max_candidates_ = 4096 の設定
-/// 出力例: 49152
+/// Example input: a configuration with max_candidates_ = 4096
+/// Example output: 49152
 std::size_t match_workspace_bytes(const DetectorConfig& config);
 
-/// 照合結果の領域を確保する。
+/// Allocates the regions that hold the matching results.
 ///
-/// @param config 候補上限を含む設定。
-/// @param workspace device 空間の workspace。
-/// @param out 成功時に buffer 群を格納する。領域の所有権は呼出側にある。
-/// @return kOk。引数が不正なら kInvalidArgument、容量不足なら kInvalidConfig。
+/// @param config Configuration containing the candidate cap.
+/// @param workspace Workspace in device space.
+/// @param out Receives the buffers on success. The caller owns the regions.
+/// @return kOk, kInvalidArgument when an argument is invalid, kInvalidConfig when the capacity is
+///         insufficient.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: host only, holds no synchronization point.
 ///
-/// 入力例: max_candidates_ = 4096 の設定、空きのある workspace
-/// 出力例: kOk。out->capacity_ = 4096
+/// Example input: a configuration with max_candidates_ = 4096 and a workspace with room left
+/// Example output: kOk, out->capacity_ = 4096
 Status reserve_matches(const DetectorConfig& config, Workspace& workspace, MatchBuffers* out);
 
-/// 候補のセル比を Dictionary と照合する。
+/// Matches the cell ratios of the candidates against the dictionary.
 ///
-/// OpenCV の `Dictionary::identify` と同じ規則で判定する。セル比を
-/// 「黒ではない」「白ではない」の 2 つの mask へ振り分け、ID の昇順に見て
-/// 許容距離を満たした最初の ID を採る。最小距離の ID ではない。
+/// The decision follows the same rules as OpenCV's `Dictionary::identify`. The cell ratios are
+/// split into two masks, "not black" and "not white", and the IDs are visited in ascending order;
+/// the first ID within the allowed distance is taken. That is not the ID with the smallest
+/// distance.
 ///
-/// border 検証を通らなかった候補は照合しない。ids_ に -1 を入れる。
+/// Candidates that failed the border check are not matched at all and receive -1 in ids_.
 ///
-/// @param ratios セル比と border 検証の結果。
-/// @param candidates 候補数を持つ buffer。
-/// @param dictionary device 側の Dictionary。
-/// @param config 閾値と誤り訂正率を含む設定。
-/// @param matches 出力先。
-/// @param stream kernel を発行する stream。
-/// @return kOk。引数が不正なら kInvalidArgument、設定が不整合なら
-///         kInvalidConfig、kernel 起動に失敗したら kCudaError。
+/// @param ratios Cell ratios and the result of the border check.
+/// @param candidates Buffer holding the candidate count.
+/// @param dictionary Device-side dictionary.
+/// @param config Configuration containing the thresholds and the error-correction rate.
+/// @param matches Destination of the results.
+/// @param stream Stream the kernel is issued on.
+/// @return kOk, kInvalidArgument when an argument is invalid, kInvalidConfig when the
+///         configuration is inconsistent, kCudaError when the kernel launch fails.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: kernel を stream 上で非同期に発行する。呼出側が同期するまで
-///           結果は確定しない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: the kernel is issued asynchronously on the stream. The results are not final
+///           until the caller synchronizes.
 ///
-/// 入力例: 4 候補分のセル比、DICT_ARUCO_MIP_36h12
-/// 出力例: kOk。ids_ に 4 件の ID か -1 が入る
+/// Example input: cell ratios for four candidates and DICT_ARUCO_MIP_36h12
+/// Example output: kOk, with four IDs or -1 entries in ids_
 Status match_candidates_async(const CellRatioBuffers& ratios, const DeviceCandidates& candidates,
                               const DeviceDictionary& dictionary, const DetectorConfig& config,
                               MatchBuffers* matches, cudaStream_t stream);

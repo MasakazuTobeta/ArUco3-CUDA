@@ -8,37 +8,38 @@
 
 namespace aruco3cuda::detail {
 
-/// CUDA API の戻り値を検査し、失敗時に文脈付きで記録する。
+/// Checks the return value of a CUDA API call and records the context on failure.
 ///
-/// 失敗を無言で継続させないため、全ての CUDA API 呼び出しをこの関数へ通す。
-/// 記録内容は last_cuda_error_message() から取得できる。
+/// Every CUDA API call goes through this function so that no failure is silently ignored.
+/// The recorded text can be retrieved with last_cuda_error_message().
 ///
-/// MISRA C++ 2023 は function-like macro を避ける方針であるため、
-/// 呼出位置の情報は macro ではなく明示的な引数として渡す。
+/// MISRA C++ 2023 discourages function-like macros, so the call-site information is passed as
+/// explicit arguments instead of being captured by a macro.
 ///
-/// @param error CUDA API の戻り値。
-/// @param api_name 呼び出した CUDA API 名。静的記憶域を持つ文字列を渡す。
-/// @param stage 処理段階。どの kernel または手順で失敗したかを示す。
-/// @param device_index 対象 device。不明な場合は -1 を渡す。
-/// @param stream 対象 stream。既定 stream または stream を伴わない API では nullptr を渡す。
-/// @return error が cudaSuccess なら Status::kOk、それ以外は Status::kCudaError。
+/// @param error Return value of the CUDA API call.
+/// @param api_name Name of the CUDA API that was called. Pass a string with static storage.
+/// @param stage Processing stage. Identifies which kernel or step failed.
+/// @param device_index Target device. Pass -1 when it is unknown.
+/// @param stream Target stream. Pass nullptr for the default stream or for APIs without a stream.
+/// @return Status::kOk when error is cudaSuccess, otherwise Status::kCudaError.
 ///
-/// 入力例: check_cuda(cudaErrorInvalidValue, "cudaMemcpyAsync", "upload", 0, stream)
-/// 出力例: Status::kCudaError。last_cuda_error_message() が
-///         "api=cudaMemcpyAsync stage=upload device=0 stream=0x... error=..." を返す
+/// Example input: check_cuda(cudaErrorInvalidValue, "cudaMemcpyAsync", "upload", 0, stream)
+/// Example output: Status::kCudaError, with last_cuda_error_message() returning
+///         "api=cudaMemcpyAsync stage=upload device=0 stream=0x... error=..."
 Status check_cuda(cudaError_t error, const char* api_name, const char* stage, int device_index,
                   cudaStream_t stream = nullptr);
 
-/// 直近の kernel 起動の失敗を検査する。
+/// Checks whether the most recent kernel launch failed.
 ///
-/// kernel 起動は非同期であるため、起動自体の失敗と実行中の失敗を分けて確認する。
-/// synchronize が true の場合は同期して実行中の失敗も検出する。
+/// A kernel launch is asynchronous, so a failure of the launch itself and a failure during
+/// execution are checked separately. When synchronize is true, the call also synchronizes and
+/// detects failures that occur during execution.
 ///
-/// @param stage 処理段階。
-/// @param device_index 対象 device。
-/// @param synchronize 同期して実行時エラーまで検出するか。
-/// @param stream 対象 stream。既定 stream の場合は nullptr を渡す。
-/// @return kOk または kCudaError。
+/// @param stage Processing stage.
+/// @param device_index Target device.
+/// @param synchronize Whether to synchronize and detect runtime errors as well.
+/// @param stream Target stream. Pass nullptr for the default stream.
+/// @return kOk or kCudaError.
 Status check_kernel_launch(const char* stage, int device_index, bool synchronize,
                            cudaStream_t stream = nullptr);
 

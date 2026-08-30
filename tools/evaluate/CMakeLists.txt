@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 正確性評価 tool。合成 corpus の ground truth に対し CPU 基準、hybrid、CUDA の
-# 3 経路を走らせ、precision と recall、四隅の RMSE を条件別に報告する。
+# Accuracy evaluation tool. Runs the three routes (CPU baseline, hybrid, CUDA)
+# against the ground truth of the synthetic corpus and reports precision, recall,
+# and four-corner RMSE broken down by condition.
 add_library(aruco3cuda_evaluate STATIC accuracy.cpp)
 add_library(aruco3cuda::evaluate ALIAS aruco3cuda_evaluate)
 

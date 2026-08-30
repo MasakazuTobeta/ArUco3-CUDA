@@ -4,47 +4,52 @@
 
 namespace aruco3cuda {
 
-/// 公開 API の結果状態。
+/// Result state of the public API.
 ///
-/// core は例外を送出しない。destructor、CUDA callback、device code から
-/// 例外が伝播する構成を避けるため、失敗は全てこの値で通知する。
+/// The core never throws. Failures are all reported through this value so that
+/// no configuration lets an exception propagate out of a destructor, a CUDA
+/// callback, or device code.
 enum class Status : int {
     kOk = 0,
-    kInvalidArgument,        ///< pointer、寸法、index 等が範囲外
-    kInvalidImage,           ///< 画像 view の pointer、寸法、stride、memory 空間が不正
-    kInvalidConfig,          ///< 設定値が範囲外、または相互に矛盾
-    kUnsupportedDictionary,  ///< 未対応の Dictionary
-    kCandidateOverflow,      ///< 候補数が上限を超えた。結果は打ち切られている
-    kMarkerOverflow,         ///< 検出数が上限を超えた。結果は打ち切られている
-    kCudaError,              ///< CUDA API または kernel 起動の失敗
-    kNotInitialized,         ///< 初期化前に呼び出された
+    kInvalidArgument,        ///< A pointer, size, index, or similar is out of range
+    kInvalidImage,           ///< Image view pointer, size, stride, or memory space is invalid
+    kInvalidConfig,          ///< A setting is out of range or contradicts another one
+    kUnsupportedDictionary,  ///< Unsupported dictionary
+    kCandidateOverflow,      ///< The candidate limit was exceeded; results are truncated
+    kMarkerOverflow,         ///< The detection limit was exceeded; results are truncated
+    kCudaError,              ///< A CUDA API call or a kernel launch failed
+    kNotInitialized,         ///< Called before initialization
 };
 
-/// Status を識別子文字列へ変換する。log と test の判定に使用する。
+/// Converts a Status into its identifier string. Used for logging and test assertions.
 ///
-/// @param status 変換対象。未知の値でも nullptr を返さない。
-/// @return 静的記憶域を持つ文字列。
+/// @param status Value to convert. Never returns nullptr, even for an unknown value.
+/// @return A string with static storage duration.
 ///
-/// 所有権: 戻り値は静的記憶域を指す。呼出側は解放も変更もしない。
-/// 同期動作: host 専用であり同期点を持たない。再入可能である。
+/// Ownership: the return value points into static storage. The caller neither frees
+///            nor modifies it.
+/// Synchronization: host only, with no synchronization point. Reentrant.
 ///
-/// 入力例: Status::kCudaError
-/// 出力例: "kCudaError"
+/// Example input: Status::kCudaError
+/// Example output: "kCudaError"
 const char* to_string(Status status);
 
-/// 直近に記録された CUDA エラーの説明を返す。
+/// Returns a description of the most recently recorded CUDA error.
 ///
-/// CUDA API 名、device、処理段階、CUDA 側の error 文字列を含む。
-/// thread ごとに独立して保持する。まだ記録が無い場合は空文字列を返す。
+/// The description carries the CUDA API name, the device, the processing stage, and
+/// the error string reported by CUDA. It is held per thread. If nothing has been
+/// recorded yet, an empty string is returned.
 ///
-/// @return thread_local な記憶域を指す文字列。次の CUDA エラー記録まで有効。
+/// @return A string pointing into thread_local storage, valid until the next CUDA
+///         error is recorded.
 ///
-/// 所有権: 戻り値は library 側の記憶域を指す。呼出側は解放しない。
-///         内容は同じ thread で次に CUDA エラーが記録されると上書きされる。
-/// 同期動作: host 専用であり同期点を持たない。thread ごとに独立する。
+/// Ownership: the return value points into storage owned by the library. The caller
+///            does not free it. The contents are overwritten when the next CUDA error
+///            is recorded on the same thread.
+/// Synchronization: host only, with no synchronization point. Independent per thread.
 ///
-/// 入力例: cudaMalloc の失敗を check_cuda が記録した直後に呼ぶ
-/// 出力例: "api=cudaMalloc stage=run_device_self_test device=0 stream=(nil) error=..."
+/// Example input: called right after check_cuda recorded a cudaMalloc failure
+/// Example output: "api=cudaMalloc stage=run_device_self_test device=0 stream=(nil) error=..."
 const char* last_cuda_error_message();
 
 }  // namespace aruco3cuda

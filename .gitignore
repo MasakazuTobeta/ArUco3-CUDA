@@ -1,13 +1,13 @@
-# build 生成物
+# Build artifacts
 /build/
 /out/
 **/build/
 compile_commands.json
 
-# container の環境依存設定
+# Environment-specific container settings
 docker/.env
 
-# 測定結果と大容量データ。manifest だけを commit する。
+# Measurement results and bulk data. Only the manifest is committed.
 /data/**
 !/data/manifest/
 !/data/manifest/**

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 差分レポート tool。CPU 基準と評価対象の検出結果を突き合わせ、差異を
-# 未検出・過検出・ID 不一致・rotation 不一致・四隅ずれへ分類する。
+# Difference report tool. Compares the detections of the CPU baseline against the
+# route under evaluation and classifies each difference as a miss, a false positive,
+# an ID mismatch, a rotation mismatch, or a corner displacement.
 add_library(aruco3cuda_report STATIC report_diff.cpp)
 add_library(aruco3cuda::report ALIAS aruco3cuda_report)
 

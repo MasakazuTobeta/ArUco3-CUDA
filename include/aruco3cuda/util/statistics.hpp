@@ -7,55 +7,57 @@
 
 namespace aruco3cuda::util {
 
-/// 測定標本の要約統計。
+/// Summary statistics of a measurement sample.
 ///
-/// 評価計画は平均値だけでなく中央値と裾の分位点を求める。外れ値は除去せず、
-/// 全標本から算出する。
+/// The evaluation plan asks for the median and the tail percentiles, not just the mean.
+/// Outliers are not removed; every statistic is computed over all samples.
 struct SampleStatistics {
     std::size_t count_ = 0;
     double min_ = 0.0;
     double max_ = 0.0;
     double mean_ = 0.0;
-    /// 標本標準偏差。count_ が 1 の場合は 0 とする。
+    /// Sample standard deviation. It is 0 when count_ is 1.
     double stddev_ = 0.0;
     double p50_ = 0.0;
     double p95_ = 0.0;
     double p99_ = 0.0;
 };
 
-/// 分位点を nearest-rank 法で求める。
+/// Computes a percentile by the nearest-rank method.
 ///
-/// 昇順に並べた標本に対し、順位 ceil(percentile / 100 * count) の値を返す。
-/// 補間を行わないため、返る値は必ず実測値のいずれかである。集計方法を
-/// 実装依存にしないよう、この方法を本 project の標準とする。
+/// Returns the value at rank ceil(percentile / 100 * count) of the samples sorted in
+/// ascending order. No interpolation is performed, so the value returned is always one
+/// of the measured values. This method is the project-wide standard so that the way
+/// results are aggregated does not depend on the implementation.
 ///
-/// @param sorted_samples 昇順に並んだ標本。空であってはならない。
-///                       参照するだけで複製も保持もしない。
-/// @param percentile 0 より大きく 100 以下。範囲外なら 0 を返す。
-/// @return 対応する標本値。引数が不正な場合は 0 を返す。
+/// @param sorted_samples The samples in ascending order. Must not be empty. They are
+///                       only read, never copied or retained.
+/// @param percentile Greater than 0 and at most 100. Out of range returns 0.
+/// @return The corresponding sample value, or 0 if an argument is invalid.
 ///
-/// 所有権: 引数の領域を保持しない。戻り値は値である。
-/// 同期動作: host 専用であり同期点を持たない。再入可能である。
+/// Ownership: does not retain the memory behind the arguments. The return value is a value.
+/// Synchronization: host only, with no synchronization point. Reentrant.
 ///
-/// 入力例: {1, 2, 3, 4, 5}、percentile = 50
-/// 出力例: 3
+/// Example input: {1, 2, 3, 4, 5}, percentile = 50
+/// Example output: 3
 double percentile_nearest_rank(const std::vector<double>& sorted_samples, double percentile);
 
-/// 標本から要約統計を求める。
+/// Computes the summary statistics of a sample.
 ///
-/// 外れ値の除去は行わない。有利な結果だけが残ることを避けるため、
-/// 集計は常に全標本に対して行う。
+/// Outliers are not removed. Aggregation always covers every sample, so that a favorable
+/// subset cannot be what remains.
 ///
-/// @param samples 標本。順序は問わない。空の場合は false を返す。
-///                内部で複製して並べ替えるため、引数は変更しない。
-/// @param out 成功時に結果を格納する。失敗時は変更しない。領域の所有権は呼出側にある。
-/// @return 成功した場合は true。
+/// @param samples The samples, in any order. Returns false if empty. They are copied and
+///                sorted internally, so the argument is left unchanged.
+/// @param out On success, receives the result; left unchanged on failure. The caller owns
+///            the storage.
+/// @return true on success.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。再入可能である。
+/// Ownership: does not retain the memory behind the arguments.
+/// Synchronization: host only, with no synchronization point. Reentrant.
 ///
-/// 入力例: {4.0, 1.0, 3.0, 2.0, 5.0}
-/// 出力例: count_ = 5、min_ = 1.0、max_ = 5.0、mean_ = 3.0、p50_ = 3.0
+/// Example input: {4.0, 1.0, 3.0, 2.0, 5.0}
+/// Example output: count_ = 5, min_ = 1.0, max_ = 5.0, mean_ = 3.0, p50_ = 3.0
 bool compute_statistics(const std::vector<double>& samples, SampleStatistics* out);
 
 }  // namespace aruco3cuda::util

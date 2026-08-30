@@ -8,108 +8,113 @@
 
 #include "geometry.hpp"
 
-/// ground truth と検出結果を突き合わせ、正確性指標を算出する。
+/// Matches detections against the ground truth and computes accuracy metrics.
 ///
-/// 目的:
-///     [差分レポート](../report/report_diff.hpp) は CPU 基準実装を基準に据える。
-///     しかし基準実装は互換性の oracle であって ground truth ではない。基準が
-///     取りこぼしたマーカーは差分に現れず、「一致率 100%」でも検出できていない
-///     ことがある。生成時に判っている真値と突き合わせ、precision と recall を
-///     別に測る。
+/// Purpose:
+///     The [difference report](../report/report_diff.hpp) takes the CPU baseline
+///     implementation as its reference. That baseline, however, is an oracle for
+///     compatibility, not ground truth. A marker the baseline itself missed never
+///     shows up as a difference, so "100% agreement" can still mean the marker was
+///     not detected. Matching against the true values known at generation time
+///     measures precision and recall separately.
 namespace aruco3cuda::evaluate {
 
 using aruco3cuda::report::Quad;
 
-/// 生成時に判っている真値 1 件。
+/// One true value known at generation time.
 ///
-/// 所有権: 値型。参照や pointer を持たない。
-/// 同期動作: 無し。
+/// Ownership: value type. Holds no references or pointers.
+/// Synchronization: none.
 ///
-/// 入力例: 中心 (100, 100)、1 辺 40 pixel に描かれた ID 7 のマーカー
-/// 出力例: id_ = 7、side_px_ = 40.0、fully_inside_ = true
+/// Example input: a marker with ID 7 drawn at center (100, 100) with a 40-pixel side
+/// Example output: id_ = 7, side_px_ = 40.0, fully_inside_ = true
 struct TruthMarker {
     int id_ = -1;
-    /// 四隅。マーカー座標系の (0,0)、(S,0)、(S,S)、(0,S) に対応する。
+    /// The four corners, corresponding to (0,0), (S,0), (S,S), (0,S) in marker
+    /// coordinates.
     Quad corners_{};
-    /// 1 辺の長さ (pixel)。
+    /// Length of one side, in pixels.
     double side_px_ = 0.0;
-    /// 四隅すべてが画像内に収まっているか。
+    /// Whether all four corners fall inside the image.
     bool fully_inside_ = true;
-    /// マーカーを覆う遮蔽の面積比。
+    /// Area ratio of the occlusion covering the marker.
     double occlusion_ratio_ = 0.0;
 };
 
-/// 真値 1 件の結末。
+/// Outcome for one true value.
 enum class TruthOutcome {
-    /// 位置が対応し ID も一致した。
+    /// Matched by position, with the ID also agreeing.
     kDetected,
-    /// 位置は対応したが ID を誤られた。
+    /// Matched by position, but the ID was read incorrectly.
     kIdMismatched,
-    /// 対応する検出が無かった。
+    /// No detection matched it.
     kMissed,
 };
 
-/// 評価対象が返した検出 1 件。
+/// One detection returned by the route under evaluation.
 ///
-/// 所有権: 値型。
-/// 同期動作: 無し。
+/// Ownership: value type.
+/// Synchronization: none.
 ///
-/// 入力例: 検出器が返した ID 7 と四隅
-/// 出力例: id_ = 7、corners_ に 8 要素
+/// Example input: an ID of 7 and the four corners returned by the detector
+/// Example output: id_ = 7, corners_ holding 8 elements
 struct Observation {
     int id_ = -1;
     Quad corners_{};
 };
 
-/// 突き合わせの設定。
+/// Settings for the matching.
 struct MatchConfig {
-    /// 真値と検出を同じマーカーとみなす重心距離の上限。真値の 1 辺に対する比。
+    /// Upper bound on the centroid distance for treating a true value and a detection
+    /// as the same marker, as a ratio of the true value's side length.
     double match_radius_ratio_ = 0.5;
 };
 
-/// 画像 1 枚分の突き合わせ結果。
+/// Matching result for one image.
 ///
-/// 次の 2 項目は member 関数にも適用される。
-/// 所有権: 値型。参照や pointer を持たない。
-/// 同期動作: 無し。const member 関数は並行に呼べる。
+/// Each of the following two items applies to all public member functions.
+/// Ownership: value type. Holds no references or pointers.
+/// Synchronization: none. The const member functions may be called concurrently.
 ///
-/// 入力例: 真値 4 件に対し 3 件を正しい ID で検出し、1 件を取りこぼした画像
-/// 出力例: truth_count_ = 4、true_positive_ = 3、false_negative_ = 1
+/// Example input: an image where 3 of 4 true values were detected with the correct ID
+///                and 1 was missed
+/// Example output: truth_count_ = 4, true_positive_ = 3, false_negative_ = 1
 struct ImageAccuracy {
     std::string image_name_;
     std::size_t truth_count_ = 0;
     std::size_t observed_count_ = 0;
-    /// 位置が対応し ID も一致した件数。
+    /// Number matched by position with the ID also agreeing.
     std::size_t true_positive_ = 0;
-    /// 対応が付かない検出と、ID を誤った検出の合計。
+    /// Detections with no match, plus detections whose ID was wrong.
     std::size_t false_positive_ = 0;
-    /// 対応が付かない真値と、ID を誤られた真値の合計。
+    /// True values with no match, plus true values whose ID was read incorrectly.
     std::size_t false_negative_ = 0;
-    /// true_positive_ のうち四隅の並びまで一致した件数。
+    /// How many of true_positive_ also agree on the corner ordering.
     std::size_t rotation_agreed_ = 0;
-    /// true_positive_ の四隅距離の二乗和 (pixel^2)。
+    /// Sum of squared corner distances over true_positive_, in pixel^2.
     double corner_squared_sum_px2_ = 0.0;
-    /// 二乗和へ入れた四隅の数。true_positive_ の 4 倍になる。
+    /// Number of corners entered into the sum of squares. Four times true_positive_.
     std::size_t corner_sample_count_ = 0;
-    /// true_positive_ における四隅距離の最大値 (pixel)。
+    /// Largest corner distance over true_positive_, in pixels.
     double corner_max_px_ = 0.0;
-    /// 真値 1 件ごとの結末。並びは compare_to_truth へ渡した truth に対応する。
+    /// Outcome per true value. The order corresponds to the truth passed to
+    /// compare_to_truth.
     std::vector<TruthOutcome> truth_outcomes_;
-    /// 真値 1 件ごとの四隅距離の二乗和 (pixel^2)。kDetected 以外では 0。
+    /// Sum of squared corner distances per true value, in pixel^2. 0 unless kDetected.
     std::vector<double> truth_squared_error_px2_;
-    /// 真値 1 件ごとの四隅距離の最大値 (pixel)。kDetected 以外では 0。
+    /// Largest corner distance per true value, in pixels. 0 unless kDetected.
     std::vector<double> truth_corner_max_px_;
-    /// 真値 1 件ごとの四隅の並びの一致。kDetected 以外では false。
+    /// Whether the corner ordering agrees, per true value. false unless kDetected.
     std::vector<bool> truth_rotation_agreed_;
 };
 
-/// 複数画像をまとめた集計。
+/// Aggregate over several images.
 ///
-/// 所有権: 値型。
-/// 同期動作: 無し。
+/// Ownership: value type.
+/// Synchronization: none.
 ///
-/// 入力例: 真値 4 件のうち 3 件を正しく検出した画像 2 枚を足し込んだ状態
-/// 出力例: image_count_ = 2、truth_count_ = 8、true_positive_ = 6
+/// Example input: two images accumulated, each detecting 3 of 4 true values correctly
+/// Example output: image_count_ = 2, truth_count_ = 8, true_positive_ = 6
 struct AccuracySummary {
     std::size_t image_count_ = 0;
     std::size_t truth_count_ = 0;
@@ -123,110 +128,124 @@ struct AccuracySummary {
     double corner_max_px_ = 0.0;
 };
 
-/// 真値と検出を突き合わせ、1 枚分の指標を求める。
+/// Matches detections against the true values and computes the metrics for one image.
 ///
-/// 対応付けは ID ではなく重心の近さで行う。ID で対応を取ると、ID を読み違えた
-/// 場合に「未検出」と「過検出」が 1 件ずつ立ち、同じマーカーの ID を誤ったのか
-/// 別の場所で誤検出したのかが区別できなくなる。
+/// The pairing uses centroid proximity rather than the ID. Pairing by ID would, for a
+/// misread ID, raise one "missed" and one "extra", which makes it impossible to tell
+/// a wrong ID on the same marker from a false detection somewhere else.
 ///
-/// @param image_name 報告へ残す画像名。参照するだけで保持しない。
-/// @param truth 生成時の真値。参照するだけで保持しない。
-/// @param observed 評価対象の検出。参照するだけで保持しない。
-/// @param config 対応付けの設定。参照するだけで保持しない。
-/// @return 1 枚分の指標。
+/// @param image_name Image name to record in the report. Only read, never retained.
+/// @param truth The true values from generation time. Only read, never retained.
+/// @param observed The detections of the route under evaluation. Only read, never
+///        retained.
+/// @param config Settings for the pairing. Only read, never retained.
+/// @return The metrics for one image.
 ///
-/// 所有権: 引数の領域を保持しない。戻り値は値として返る。
-/// 同期動作: 無し。引数を変更しないため、同じ入力に対して並行に呼べる。
+/// Ownership: none of the argument storage is retained. The result is returned by
+/// value.
+/// Synchronization: none. The arguments are not modified, so the function may be
+/// called concurrently on the same input.
 ///
-/// 入力例: 真値 1 件と、同じ位置・同じ ID の検出 1 件
-/// 出力例: true_positive_ = 1、false_positive_ = 0、false_negative_ = 0
+/// Example input: one true value and one detection at the same position with the same
+///                ID
+/// Example output: true_positive_ = 1, false_positive_ = 0, false_negative_ = 0
 ImageAccuracy compare_to_truth(const std::string& image_name, const std::vector<TruthMarker>& truth,
                                const std::vector<Observation>& observed, const MatchConfig& config);
 
-/// 1 枚分の指標を集計へ足し込む。
+/// Accumulates the metrics of one image into an aggregate.
 ///
-/// @param image 足し込む 1 枚分の指標。参照するだけで保持しない。
-/// @param out_summary 足し込み先。領域の所有権は呼出側にある。nullptr は不可。
-/// @return 無し。out_summary の内容だけが変化する。
+/// @param image The per-image metrics to accumulate. Only read, never retained.
+/// @param out_summary The aggregate to accumulate into. The storage is owned by the
+///        caller. Must not be nullptr.
+/// @return Nothing. Only the contents of out_summary change.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: 無し。同じ out_summary へ並行に足し込む場合は呼出側で排他する。
+/// Ownership: none of the argument storage is retained.
+/// Synchronization: none. Concurrent accumulation into the same out_summary must be
+/// serialized by the caller.
 ///
-/// 入力例: true_positive_ = 1 の 1 枚を空の集計へ足す
-/// 出力例: image_count_ = 1、true_positive_ = 1
+/// Example input: one image with true_positive_ = 1 added to an empty aggregate
+/// Example output: image_count_ = 1, true_positive_ = 1
 void accumulate(const ImageAccuracy& image, AccuracySummary* out_summary);
 
-/// 真値の部分集合だけを集計へ足し込む。
+/// Accumulates only a subset of the true values into an aggregate.
 ///
-/// 条件別の recall を出すために使う。ArUco3 は縮小後の 1 辺が
-/// `min_side_length_canonical_img_px` を下回るマーカーを原理上検出しない。
-/// 検出できない大きさの真値を含めたまま recall を出すと、実装の取りこぼしと
-/// 戦略上の下限が混ざり、どちらの数値なのか読み取れない。
+/// Used to produce recall broken down by condition. ArUco3 cannot, in principle,
+/// detect a marker whose side after downscaling falls below
+/// `min_side_length_canonical_img_px`. Computing recall while still including true
+/// values of an undetectable size mixes the implementation's misses with the
+/// strategy's inherent lower bound, leaving it unclear which the number reflects.
 ///
-/// 対応の付かない検出 (false positive) はどの真値にも属さないため足し込まない。
-/// したがって求まる集計から precision は定義できない。recall と四隅の指標
-/// だけを読むこと。
+/// Detections with no match (false positives) belong to no true value and are not
+/// accumulated. Precision therefore cannot be defined from the resulting aggregate;
+/// read only recall and the corner metrics from it.
 ///
-/// @param image 足し込む 1 枚分の指標。参照するだけで保持しない。
-/// @param selected 真値の並びに対応する採否。要素数が truth_outcomes_ と
-///                 異なる場合は何もしない。
-/// @param out_summary 足し込み先。領域の所有権は呼出側にある。nullptr は不可。
-/// @return 無し。out_summary の内容だけが変化する。
+/// @param image The per-image metrics to accumulate. Only read, never retained.
+/// @param selected Selection flags corresponding to the order of the true values.
+///        Does nothing if the element count differs from truth_outcomes_.
+/// @param out_summary The aggregate to accumulate into. The storage is owned by the
+///        caller. Must not be nullptr.
+/// @return Nothing. Only the contents of out_summary change.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: 無し。同じ out_summary へ並行に足し込む場合は呼出側で排他する。
+/// Ownership: none of the argument storage is retained.
+/// Synchronization: none. Concurrent accumulation into the same out_summary must be
+/// serialized by the caller.
 ///
-/// 入力例: 真値 2 件のうち 1 件目だけを選んだ採否
-/// 出力例: truth_count_ = 1。observed_count_ と false_positive_ は増えない
+/// Example input: selection flags choosing only the first of two true values
+/// Example output: truth_count_ = 1; observed_count_ and false_positive_ do not grow
 void accumulate_selected(const ImageAccuracy& image, const std::vector<bool>& selected,
                          AccuracySummary* out_summary);
 
-/// precision を求める。
+/// Computes precision.
 ///
-/// 検出が 1 件も無い場合は定義できない。0 除算を 1.0 とみなすと「検出しない
-/// ほど precision が高い」ことになり、判断を誤らせる。
+/// It is undefined when there is not a single detection. Treating the division by
+/// zero as 1.0 would mean "the less it detects, the higher its precision", which
+/// misleads the judgement.
 ///
-/// @param summary 対象の集計。参照するだけで保持しない。
-/// @param out_value 求まった場合に格納する。領域の所有権は呼出側にある。nullptr は不可。
-/// @return 定義できる場合は true。
+/// @param summary The aggregate in question. Only read, never retained.
+/// @param out_value Receives the value when it is defined. The storage is owned by
+///        the caller. Must not be nullptr.
+/// @return true when the value is defined.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: none of the argument storage is retained.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: true_positive_ = 3、false_positive_ = 1 の集計
-/// 出力例: true、out_value = 0.75
+/// Example input: an aggregate with true_positive_ = 3 and false_positive_ = 1
+/// Example output: true, out_value = 0.75
 bool precision(const AccuracySummary& summary, double* out_value);
 
-/// recall を求める。
+/// Computes recall.
 ///
-/// 真値が 1 件も無い場合は定義できない。マーカー 0 個の場面が corpus に
-/// 含まれるため、この場合は実際に起こる。
+/// It is undefined when there is not a single true value. This does occur in
+/// practice, because the corpus contains scenes with zero markers.
 ///
-/// @param summary 対象の集計。参照するだけで保持しない。
-/// @param out_value 求まった場合に格納する。領域の所有権は呼出側にある。nullptr は不可。
-/// @return 定義できる場合は true。
+/// @param summary The aggregate in question. Only read, never retained.
+/// @param out_value Receives the value when it is defined. The storage is owned by
+///        the caller. Must not be nullptr.
+/// @return true when the value is defined.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: none of the argument storage is retained.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: true_positive_ = 3、false_negative_ = 1 の集計
-/// 出力例: true、out_value = 0.75
+/// Example input: an aggregate with true_positive_ = 3 and false_negative_ = 1
+/// Example output: true, out_value = 0.75
 bool recall(const AccuracySummary& summary, double* out_value);
 
-/// 四隅の RMSE を求める。
+/// Computes the corner RMSE.
 ///
-/// 最大値と別に持つ。1 隅だけ大きく外れた場合と 4 隅が一様にずれた場合を
-/// 区別するためである。
+/// Kept separate from the maximum, so that one badly displaced corner can be told
+/// apart from four corners displaced uniformly.
 ///
-/// @param summary 対象の集計。参照するだけで保持しない。
-/// @param out_value 求まった場合に格納する。領域の所有権は呼出側にある。nullptr は不可。
-/// @return 対応が 1 件以上あれば true。
+/// @param summary The aggregate in question. Only read, never retained.
+/// @param out_value Receives the value when it is defined. The storage is owned by
+///        the caller. Must not be nullptr.
+/// @return true when there is at least one match.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: 無し。再入可能。
+/// Ownership: none of the argument storage is retained.
+/// Synchronization: none. Reentrant.
 ///
-/// 入力例: corner_squared_sum_px2_ = 4.0、corner_sample_count_ = 4 の集計
-/// 出力例: true、out_value = 1.0
+/// Example input: an aggregate with corner_squared_sum_px2_ = 4.0 and
+///                corner_sample_count_ = 4
+/// Example output: true, out_value = 1.0
 bool corner_rmse_px(const AccuracySummary& summary, double* out_value);
 
 }  // namespace aruco3cuda::evaluate

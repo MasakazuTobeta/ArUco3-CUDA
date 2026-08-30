@@ -1,17 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 暫定設定。CONTRIBUTING.md の命名規則と RAII 方針を検査対象へ含める。
-# CUDA の .cu は clang-tidy が解釈できないため C++ にのみ適用する。
+# Provisional settings. The naming conventions and the RAII policy from
+# CONTRIBUTING.md are part of what is checked. clang-tidy cannot parse CUDA .cu
+# files, so this applies to C++ only.
 #
-# performance-enum-size を無効にしている理由:
-#   Status の基底型 int は公開 ABI の一部である。将来 C API を追加する場合や
-#   host と device をまたぐ受け渡しで表現を安定させるため、size 削減より
-#   型の固定を優先する。
+# Why performance-enum-size is disabled:
+#   The underlying type int of Status is part of the public ABI. To keep the
+#   representation stable if a C API is added later, and when values are passed
+#   between host and device, fixing the type takes priority over reducing its
+#   size.
 #
-# misc-const-correctness を無効にしている理由:
-#   cv::Mat と GpuMat は handle 型であり、handle を const にしても指す先の
-#   pixel は変更できる。const を付けると不変であるかのように読めてしまい、
-#   この check の助言はかえって誤解を招く。
+# Why misc-const-correctness is disabled:
+#   cv::Mat and GpuMat are handle types; making the handle const still leaves the
+#   pixels it points at mutable. Adding const would read as if the data were
+#   immutable, so this check's advice is actively misleading here.
 Checks: >
   -*,
   bugprone-*,
@@ -31,8 +33,9 @@ Checks: >
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*/(include|src)/aruco3cuda/.*'
 CheckOptions:
-  # CUDA と OpenCV の型は内部 header が提供するが、直接 include すべきではない。
-  # cuda_runtime_api.h と opencv2/*.hpp を入口として扱う。
+  # The CUDA and OpenCV types come from internal headers that should not be
+  # included directly. cuda_runtime_api.h and opencv2/*.hpp are treated as the
+  # entry points.
   - key: misc-include-cleaner.IgnoreHeaders
     value: '.*cuda_runtime.*;.*driver_types.*;.*vector_types.*;.*crt/.*;.*cuda_device_runtime_api.*;.*opencv2/.*'
   - key: readability-identifier-naming.ClassCase
@@ -49,7 +52,8 @@ CheckOptions:
     value: _
   - key: readability-identifier-naming.NamespaceCase
     value: lower_case
-  # CONTRIBUTING.md の「定数は kPascalCase」を、定数のあらゆる出現箇所へ適用する。
+  # Apply "constants are kPascalCase" from CONTRIBUTING.md to every place a
+  # constant can appear.
   - key: readability-identifier-naming.GlobalConstantPrefix
     value: k
   - key: readability-identifier-naming.GlobalConstantCase
@@ -58,9 +62,10 @@ CheckOptions:
     value: k
   - key: readability-identifier-naming.ConstexprVariableCase
     value: CamelCase
-  # LocalConstant は const を付けた局所変数全般を指す。CONTRIBUTING.md では
-  # これは「ローカル変数」であり snake_case とする。kPascalCase は
-  # コンパイル時定数 (ConstexprVariable、Static/Global/Class の定数) へ適用する。
+  # LocalConstant covers local variables declared const in general. In
+  # CONTRIBUTING.md those count as local variables and use snake_case.
+  # kPascalCase applies to compile-time constants (ConstexprVariable and
+  # static/global/class constants).
   - key: readability-identifier-naming.LocalConstantCase
     value: lower_case
   - key: readability-identifier-naming.StaticConstantPrefix

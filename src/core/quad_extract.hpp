@@ -13,93 +13,105 @@
 
 namespace aruco3cuda::detail {
 
-/// 四隅の点数。
+/// Number of corner points.
 constexpr int kQuadCornerCount = 4;
 
-/// label ごとの四隅と、その抽出に使う作業領域。
+/// Per-label corners and the scratch space used to extract them.
 ///
-/// 四隅は極点探索で求める。重心から最も遠い点を c0、c0 から最も遠い点を
-/// c2 とし、直線 c0c2 の左右それぞれで最も離れた点を c1 と c3 とする。
-/// 輪郭を順に辿る必要がないため、label 単位で完全に並列化できる。
+/// The corners are found by an extreme-point search. The point farthest from the
+/// centroid becomes c0, the point farthest from c0 becomes c2, and the points
+/// farthest from the line c0c2 on either side become c1 and c3. There is no need
+/// to walk the contour in order, so the work parallelizes completely per label.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。内容は発行済みの
-///           kernel が完了するまで確定しない。
+/// Ownership: the regions all of the pointers refer to are owned by the workspace.
+/// Synchronization: a plain set of references, so it carries no synchronization
+///                  point. The contents are not settled until the already-issued
+///                  kernels complete.
 ///
-/// 入力例: 427x240 の label 画像
-/// 出力例: capacity_ = 25680、corner_x_ が 4 * 25680 要素
+/// Example input: a 427x240 label image
+/// Example output: capacity_ = 25680, corner_x_ holding 4 * 25680 elements
 struct QuadBuffers {
-    /// 四隅の x 座標。添字は (corner * capacity_) + label。
+    /// x coordinates of the corners. The index is (corner * capacity_) + label.
     ///
-    /// 角ごとに配列を分けて並べるのは、1 つの kernel が同じ角だけを
-    /// 走査するためである。label 方向に連続していれば読み書きがまとまる。
+    /// The corners are laid out as separate arrays because a single kernel
+    /// traverses only one corner at a time. Being contiguous along the label axis
+    /// keeps the reads and writes coalesced.
     std::int32_t* corner_x_ = nullptr;
-    /// 四隅の y 座標。並びは corner_x_ と同じ。
+    /// y coordinates of the corners. Laid out the same way as corner_x_.
     std::int32_t* corner_y_ = nullptr;
-    /// 四隅を取り出せたか。1 で有効、0 で無効。
+    /// Whether the corners could be extracted. 1 for valid, 0 for invalid.
     ///
-    /// 1 画素だけの成分や直線状の成分は、直線 c0c2 の片側に点を持たない。
-    /// この場合は四隅が定まらないため無効とする。
+    /// A single-pixel component or a line-shaped component has no point on one
+    /// side of the line c0c2. In that case the corners are not determined, so it
+    /// is marked invalid.
     std::uint8_t* valid_ = nullptr;
-    /// 探索の途中結果。距離と画素 index を 1 語へ詰めたもの。
+    /// Intermediate search result. The distance and the pixel index packed into one
+    /// word.
     ///
-    /// 上位 32 bit に距離、下位 32 bit に画素の線形 index を置く。
-    /// atomicMax 1 回で「最も遠い点」と「その位置」を同時に決められる。
-    /// 距離が等しい場合は index の大きい方が残るため、結果は実行順に
-    /// 依存しない。
+    /// The distance sits in the upper 32 bits and the pixel's linear index in the
+    /// lower 32. A single atomicMax then settles both the "farthest point" and
+    /// "where it is" at once. On a tie in distance the larger index survives, so
+    /// the result does not depend on execution order.
     unsigned long long* best_ = nullptr;
     unsigned long long* best_positive_ = nullptr;
     unsigned long long* best_negative_ = nullptr;
-    /// 確保した label 数。
+    /// Number of labels allocated for.
     int capacity_ = 0;
 };
 
-/// 四隅抽出に必要な workspace の容量を返す。
+/// Returns the workspace capacity corner extraction requires.
 ///
-/// @param width_px 画像の幅。
-/// @param height_px 画像の高さ。
-/// @return 必要な byte 数。桁溢れや引数が不正なら 0。
+/// @param width_px Image width.
+/// @param height_px Image height.
+/// @return Required byte count. 0 on overflow or an invalid argument.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240
-/// 出力例: 25680 label 分の四隅と作業領域を収める byte 数
+/// Example input: 427 and 240
+/// Example output: the byte count that holds the corners and the scratch space for
+///                 25680 labels
 std::size_t quad_workspace_bytes(int width_px, int height_px);
 
-/// workspace から四隅抽出用の領域を切り出す。
+/// Carves the corner-extraction regions out of the workspace.
 ///
-/// @param width_px 画像の幅。1 以上。
-/// @param height_px 画像の高さ。1 以上。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer 一式を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param width_px Image width. At least 1.
+/// @param height_px Image height. At least 1.
+/// @param workspace Source of the carve-out. Owned by the caller.
+/// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument when an argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the carved-out regions stay owned by the workspace.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 427 と 240 と十分な容量の workspace
-/// 出力例: capacity_ = 25680 で各配列に pointer が入る
+/// Example input: 427, 240, and a workspace with sufficient capacity
+/// Example output: capacity_ = 25680 and every array receives a pointer
 Status reserve_quads(int width_px, int height_px, Workspace& workspace, QuadBuffers* out);
 
-/// label ごとに極点探索で四隅を求める。
+/// Finds the corners per label by an extreme-point search.
 ///
-/// 四隅の並びは OpenCV の `_reorderCandidatesCorners` と同じ向きへ揃える。
-/// 起点の角は成分の形で決まるため、CPU 基準と同じ角から始まるとは限らない。
-/// 起点の違いは Dictionary 照合が返す回転量に吸収される。
+/// The corner order is brought into the same orientation as OpenCV
+/// `_reorderCandidatesCorners`. Which corner comes first is determined by the
+/// shape of the component, so it is not necessarily the same corner the CPU
+/// reference starts from. That difference in starting corner is absorbed by the
+/// rotation the dictionary match reports.
 ///
-/// @param labels build_labels_async が埋めた label 一式。
-/// @param stats build_label_stats_async が埋めた統計。重心を起点に使う。
-/// @param quads reserve_quads が返した buffer 一式。nullptr は不可。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param labels The set of labels filled in by build_labels_async.
+/// @param stats The statistics filled in by build_label_stats_async. The centroid
+///              is used as the starting point.
+/// @param quads The set of buffers returned by reserve_quads. Must not be nullptr.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: 引数が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
-///           探索は 3 段階で、各段の結果を次段が使うため順に実行される。
+/// Ownership: the regions the arguments refer to stay owned by the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization. The search runs in 3 stages, executed in
+///                  order because each stage consumes the previous stage's result.
 ///
-/// 入力例: 1 つの正方形の枠が label 0 になっている label 画像
-/// 出力例: valid_[0] = 1、corner_x_/corner_y_ が枠の 4 隅
+/// Example input: a label image with one square outline carrying label 0
+/// Example output: valid_[0] = 1, with corner_x_/corner_y_ at the 4 corners of the
+///                 outline
 Status build_quads_async(const LabelBuffers& labels, const LabelStatisticsBuffers& stats,
                          QuadBuffers* quads, cudaStream_t stream);
 

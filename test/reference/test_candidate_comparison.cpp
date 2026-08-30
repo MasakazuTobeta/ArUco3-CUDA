@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 案 A (GPU 常駐の候補抽出) と案 C (CPU の輪郭追跡) を突き合わせる。
+// Cross-checks plan A (device-resident candidate extraction) against plan C (contour
+// tracing on the CPU).
 //
-// 候補抽出の 2 方式の比較に対応する。両者は同じ二値化画像から候補を求めるが、
-// 四隅の決め方が異なる。案 A は連結成分の極点、案 C は輪郭の多角形近似で
-// ある。差がどこにどれだけ出るかを実測し、主案の選択を ADR へ残す材料に
-// する。有利な結果だけを見ないよう、全ての場面の結果を表として出す。
+// This covers the comparison of the two candidate extraction approaches. Both derive
+// candidates from the same binary image, but they determine the four corners
+// differently: plan A uses the extreme points of the connected component, plan C the
+// polygon approximation of the contour. These tests measure where the differences
+// appear and how large they are, as material for the ADR that records which approach
+// is chosen. So that no one looks only at the favorable results, every scene is
+// printed as a table.
 #include <gtest/gtest.h>
 
 #include <cuda_runtime_api.h>
@@ -48,9 +52,10 @@ using aruco3cuda::Status;
 using aruco3cuda::Workspace;
 using aruco3cuda::detail::kQuadCornerCount;
 
-/// 計測の暖機回数。初回は kernel の読み込みと page fault を含む。
+/// Warm-up iterations before a measurement. The first run includes kernel loading and
+/// page faults.
 constexpr int kWarmupIterations = 5;
-/// 時間を測る場合の本測定回数。中央値を採るため奇数にする。
+/// Measured iterations when timing. Odd so that a median can be taken.
 constexpr int kTimingIterations = 21;
 
 bool has_cuda_device() {
@@ -58,15 +63,15 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 1 つの場面についての比較結果。
+/// Comparison result for a single scene.
 struct SceneOutcome {
     std::string name_;
     std::size_t cpu_count_ = 0;
     std::size_t gpu_count_ = 0;
     std::size_t matched_ = 0;
-    /// 案 C だけが出した候補の数。
+    /// Number of candidates produced by plan C only.
     std::size_t missed_ = 0;
-    /// 案 A だけが出した候補の数。
+    /// Number of candidates produced by plan A only.
     std::size_t extra_ = 0;
     double worst_corner_px_ = 0.0;
     std::size_t markers_ = 0;
@@ -76,7 +81,7 @@ struct SceneOutcome {
     double cpu_ms_ = 0.0;
 };
 
-/// 画像を device へ載せる。
+/// Uploads an image to the device.
 class DeviceImage {
 public:
     DeviceImage() = default;
@@ -116,7 +121,7 @@ private:
     ImageViewU8 view_;
 };
 
-/// device の平面を host へ取り出す。
+/// Reads a device plane back to the host.
 cv::Mat download_plane(const aruco3cuda::detail::ImagePlaneU8& plane) {
     cv::Mat result(plane.height_px_, plane.width_px_, CV_8UC1);
     const cudaError_t error =
@@ -127,7 +132,8 @@ cv::Mat download_plane(const aruco3cuda::detail::ImagePlaneU8& plane) {
     return result;
 }
 
-/// 2 つの四隅を、開始位置と向きの違いを許して突き合わせた最大距離。
+/// Largest corner distance between two quads, allowing for a different starting
+/// corner and winding direction.
 double quad_distance(const std::vector<cv::Point2f>& expected,
                      const std::vector<cv::Point2f>& actual) {
     double best = 1e18;
@@ -150,17 +156,17 @@ double quad_distance(const std::vector<cv::Point2f>& expected,
     return best;
 }
 
-/// 1 場面分の両経路を実行して比較する。
+/// Runs both paths on one scene and compares them.
 class ComparisonRun {
 public:
     ComparisonRun() = default;
     ComparisonRun(const ComparisonRun&) = delete;
     ComparisonRun& operator=(const ComparisonRun&) = delete;
 
-    /// @param measure true なら暖機して繰り返し、時間の中央値を求める。
-    ///                false なら 1 回だけ実行する。正しさの検証には時間が
-    ///                不要であり、繰り返すと Compute Sanitizer の下で
-    ///                実行時間が現実的でなくなる。
+    /// @param measure true warms up, repeats, and takes the median time. false runs
+    ///                once only: verifying correctness does not need timings, and
+    ///                repeating makes the run time impractical under Compute
+    ///                Sanitizer.
     bool run(const cv::Mat& image, const DetectorConfig& config, bool measure, SceneOutcome* out) {
         const int warmup = measure ? kWarmupIterations : 0;
         const int iterations = measure ? kTimingIterations : 1;
@@ -214,8 +220,8 @@ public:
             return false;
         }
 
-        // 前処理と二値化は両経路に共通の入力を作る。比較の対象から外すため
-        // 計測の外へ置く。
+        // Preprocessing and binarization produce the input shared by both paths. They
+        // are not part of the comparison, so they stay outside the measured region.
         if (aruco3cuda::detail::build_pyramid_async(&preprocess, config, nullptr) != Status::kOk ||
             aruco3cuda::detail::build_segmentation_async(plan, &preprocess, config, nullptr) !=
                     Status::kOk) {
@@ -231,10 +237,11 @@ public:
             return false;
         }
 
-        // 案 A: window ごとに候補を求めて 1 つの配列へ連ね、まとめて統合する。
+        // Plan A: derive candidates per window, append them into one array, and merge
+        // them all at once.
         //
-        // 1 回だけの計測は初回の kernel 読み込みを含み、経路の比較に使えない。
-        // 暖機してから繰り返し、中央値を採る。
+        // A single timed run includes the first kernel load and cannot be used to
+        // compare the paths, so it warms up, repeats, and takes the median.
         std::vector<double> gpu_samples;
         gpu_samples.reserve(static_cast<std::size_t>(iterations));
         int gpu_count = 0;
@@ -276,7 +283,8 @@ public:
             return false;
         }
 
-        // 案 C: 同じ二値化画像を host へ戻し、輪郭追跡で候補を求める。
+        // Plan C: bring the same binary images back to the host and derive candidates
+        // by contour tracing.
         std::vector<cv::Mat> binaries;
         binaries.reserve(static_cast<std::size_t>(threshold.window_count_));
         for (int window = 0; window < threshold.window_count_; ++window) {
@@ -307,16 +315,18 @@ public:
         std::sort(cpu_samples.begin(), cpu_samples.end());
         out->cpu_ms_ = cpu_samples[cpu_samples.size() / 2];
 
-        // 突き合わせは四隅の距離で行う。開始する角と回り方が経路ごとに
-        // 違うため、巡回と反転を許した距離を使う。開始角の違いを差として
-        // 数えると、実際には一致している候補が全て不一致になる。
+        // Pairing is done on the corner distance. The starting corner and the winding
+        // direction differ between the paths, so the distance allows for a cyclic
+        // shift and a reversal. Counting a different starting corner as a difference
+        // would turn every candidate that actually agrees into a mismatch.
         std::vector<bool> gpu_used(gpu_quads.size(), false);
         std::vector<std::pair<double, std::pair<std::size_t, std::size_t>>> pairs;
         for (std::size_t i = 0; i < cpu_nodes.size(); ++i) {
             for (std::size_t j = 0; j < gpu_quads.size(); ++j) {
                 const double distance = quad_distance(cpu_nodes[i].corners_, gpu_quads[j]);
-                // 対応付けの半径は辺長の半分とする。別のマーカーへ誤って
-                // 対応させないための上限であり、一致の判定ではない。
+                // The pairing radius is half the edge length. It is an upper bound
+                // that keeps a candidate from being paired with a different marker,
+                // not a test for agreement.
                 const double radius = static_cast<double>(cpu_nodes[i].perimeter_) / 8.0;
                 if (distance <= radius) {
                     pairs.emplace_back(distance, std::make_pair(i, j));
@@ -385,12 +395,13 @@ private:
     std::vector<std::vector<cv::Point2f>> gpu_quads_;
 };
 
-/// 合成 corpus の 1 枚を生成する。
+/// Generates one image of the synthetic corpus.
 cv::Mat make_scene(const aruco3cuda::corpusgen::SceneSpec& spec,
                    aruco3cuda::corpusgen::GeneratedScene* out) {
     aruco3cuda::corpusgen::CorpusConfig config;
-    // 出力先を process ごとに分ける。この file の 2 つの test は同じ場面を
-    // 生成するため、ctest の並列実行では書き込みと読み出しが競合する。
+    // Give every process its own output directory. The two tests in this file
+    // generate the same scenes, so under a parallel ctest run their writes and reads
+    // would race.
     config.output_dir_ = std::string("/tmp/aruco3cuda_compare_test_") + std::to_string(::getpid());
     config.seed_ = 20260827U;
     std::string error;
@@ -398,7 +409,7 @@ cv::Mat make_scene(const aruco3cuda::corpusgen::SceneSpec& spec,
     return cv::imread(out->path_, cv::IMREAD_GRAYSCALE);
 }
 
-/// 比較に使う場面の一覧。
+/// The list of scenes used for the comparison.
 std::vector<aruco3cuda::corpusgen::SceneSpec> comparison_cases() {
     std::vector<aruco3cuda::corpusgen::SceneSpec> cases;
     {
@@ -459,19 +470,19 @@ std::vector<aruco3cuda::corpusgen::SceneSpec> comparison_cases() {
     return cases;
 }
 
-/// 設定 2 つ。ArUco3 有効では候補抽出が縮小画像 (長辺 1/3) で行われ、
-/// 無効では原寸で行われる。画素数が 10 倍近く変わるため、どちらが有利かは
-/// 規模によって変わりうる。
+/// Two configurations. With ArUco3 enabled, candidate extraction runs on the reduced
+/// image (long side 1/3); with it disabled, on the full-size image. The pixel count
+/// changes by almost a factor of ten, so which approach wins can depend on the scale.
 struct ConfigCase {
     const char* label;
     DetectorConfig config;
 };
 
-/// 全場面 x 全設定を実行し、結果を集める。
+/// Runs every scene x every configuration and collects the results.
 ///
-/// @param measure 時間を測るか。false なら 1 回だけ実行する。
-/// @param out_outcomes 設定ごとの結果を追加する。
-/// @return 真値のマーカー数と、案 A が見つけた数の組。
+/// @param measure whether to time the runs. false runs each scene once only.
+/// @param out_outcomes the per-configuration results are appended here.
+/// @return the pair of the ground truth marker count and the count plan A found.
 std::pair<std::size_t, std::size_t> run_all(bool measure,
                                             std::vector<std::vector<SceneOutcome>>* out) {
     const ConfigCase config_cases[] = {{"aruco3", DetectorConfig{}},
@@ -499,7 +510,8 @@ std::pair<std::size_t, std::size_t> run_all(bool measure,
                 return {0U, 1U};
             }
 
-            // 真の四隅を segmentation 座標へ写し、案 A が覆えているかを見る。
+            // Map the true corners into segmentation coordinates and check whether
+            // plan A covers them.
             aruco3cuda::detail::ScalePlan plan;
             EXPECT_EQ(aruco3cuda::detail::plan_scales(config, image.cols, image.rows, &plan),
                       Status::kOk);
@@ -524,17 +536,18 @@ std::pair<std::size_t, std::size_t> run_all(bool measure,
             outcomes.push_back(outcome);
         }
 
-        std::printf("\n=== 案 A と案 C の候補比較 (%s、segmentation 座標) ===\n",
+        std::printf("\n=== plan A versus plan C candidates (%s, segmentation coordinates) ===\n",
                     config_case.label);
-        // 「案 C のみ」は案 C が出して案 A が出さない候補である。多くは黒枠の
-        // 内周や内部セルの輪郭であり、識別で落ちるものである。マーカーを
-        // 取りこぼしたことを意味しない。真値一致の列がそれを示す。
+        // "C only" counts candidates plan C produced and plan A did not. Most of them
+        // are the inner edge of the black border or the contours of the inner cells,
+        // which identification would reject anyway. They do not mean a marker was
+        // missed; the truth column shows that.
         if (measure) {
-            std::printf("%-12s %5s %5s %5s %7s %7s %8s %9s %8s %8s\n", "場面", "案C", "案A", "一致",
-                        "案Cのみ", "案Aのみ", "四隅差", "真値一致", "GPU ms", "CPU ms");
+            std::printf("%-12s %5s %5s %5s %7s %7s %8s %9s %8s %8s\n", "scene", "planC", "planA",
+                        "match", "C only", "A only", "corner", "truth", "GPU ms", "CPU ms");
         } else {
-            std::printf("%-12s %5s %5s %5s %7s %7s %8s %9s\n", "場面", "案C", "案A", "一致",
-                        "案Cのみ", "案Aのみ", "四隅差", "真値一致");
+            std::printf("%-12s %5s %5s %5s %7s %7s %8s %9s\n", "scene", "planC", "planA", "match",
+                        "C only", "A only", "corner", "truth");
         }
         std::size_t total_markers = 0;
         std::size_t total_found = 0;
@@ -557,8 +570,8 @@ std::pair<std::size_t, std::size_t> run_all(bool measure,
             total_found += outcome.markers_found_by_gpu_;
             worst_marker = std::max(worst_marker, outcome.worst_marker_px_);
         }
-        std::printf("真値に対する検出 %zu/%zu、四隅の最大差 %.3f px\n", total_found, total_markers,
-                    worst_marker);
+        std::printf("found against truth %zu/%zu, largest corner difference %.3f px\n", total_found,
+                    total_markers, worst_marker);
         grand_markers += total_markers;
         grand_found += total_found;
         out->push_back(std::move(outcomes));
@@ -566,30 +579,33 @@ std::pair<std::size_t, std::size_t> run_all(bool measure,
     return {grand_markers, grand_found};
 }
 
-// 正常系: 案 A の候補が、真の四隅を許容差内で覆う。あわせて案 C との差を数える。
+// Happy path: the plan A candidates cover the true corners within tolerance. The
+// differences from plan C are counted alongside.
 TEST(CandidateComparisonTest, plan_a_versus_plan_c) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     std::vector<std::vector<SceneOutcome>> outcomes;
     const auto totals = run_all(false, &outcomes);
-    // 案 A が真のマーカーを取りこぼさないことを求める。案 C との候補集合の
-    // 差は測定値として表に残し、判断は ADR で行う。
+    // Require that plan A misses no true marker. The difference between the candidate
+    // sets of the two plans is left in the table as a measurement; the decision is
+    // made in the ADR.
     EXPECT_EQ(totals.second, totals.first);
 }
 
-// 計測: 案 A と案 C の候補抽出にかかる時間を比べる。
+// Measurement: compares how long candidate extraction takes for plan A and plan C.
 //
-// 暖機したうえで繰り返すため実行時間が長い。Compute Sanitizer からは
-// 除外する。同じ経路の正しさは上の test が確かめており、繰り返しても
-// 新しい実行経路は通らない。
+// It warms up and repeats, so it runs long, and it is excluded from Compute Sanitizer.
+// The correctness of the same paths is covered by the test above, and repeating them
+// exercises no new code path.
 TEST(CandidateTimingTest, plan_a_versus_plan_c) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     std::printf(
-            "\n[注意] 以下の時間は単独実行かつ core 固定でのみ意味を持つ。"
-            "ctest の並列実行では GPU と CPU の取り合いで値が伸びる。\n");
+            "\n[note] the times below are only meaningful when run alone with a pinned "
+            "core. Under a parallel ctest run they grow because the GPU and the CPU are "
+            "contended.\n");
     std::vector<std::vector<SceneOutcome>> outcomes;
     const auto totals = run_all(true, &outcomes);
     EXPECT_EQ(totals.second, totals.first);

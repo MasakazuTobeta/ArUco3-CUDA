@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Status と version の正常系および境界値を検証する。
+// Verifies the nominal and boundary behavior of Status and of the version constants.
 #include "aruco3cuda/status.hpp"
 
 #include <gtest/gtest.h>
@@ -13,7 +13,7 @@
 
 namespace {
 
-// 正常系: 全ての列挙子が固有かつ空でない識別子を返す。
+// Nominal: every enumerator returns a distinct, non-empty identifier.
 TEST(StatusTest, to_string_returns_unique_identifier_for_each_value) {
     const aruco3cuda::Status values[] = {
             aruco3cuda::Status::kOk,
@@ -30,11 +30,11 @@ TEST(StatusTest, to_string_returns_unique_identifier_for_each_value) {
         const char* text = aruco3cuda::to_string(value);
         ASSERT_NE(text, nullptr);
         EXPECT_NE(std::strlen(text), 0U);
-        EXPECT_TRUE(seen.insert(text).second) << "識別子が重複している: " << text;
+        EXPECT_TRUE(seen.insert(text).second) << "duplicate identifier: " << text;
     }
 }
 
-// 異常系: 列挙に無い値が渡されても nullptr を返さない。
+// Error case: a value outside the enumeration must not yield nullptr.
 TEST(StatusTest, to_string_handles_out_of_range_value) {
     const auto invalid = static_cast<aruco3cuda::Status>(9999);
     const char* text = aruco3cuda::to_string(invalid);
@@ -42,13 +42,13 @@ TEST(StatusTest, to_string_handles_out_of_range_value) {
     EXPECT_STREQ(text, "kUnknown");
 }
 
-// 境界値: CUDA を呼ぶ前でも有効な文字列を返す。
+// Boundary: a valid string is returned even before any CUDA call has been made.
 TEST(StatusTest, last_cuda_error_message_is_valid_before_any_cuda_call) {
     const char* message = aruco3cuda::last_cuda_error_message();
     ASSERT_NE(message, nullptr);
 }
 
-// 正常系: version 文字列が構成要素と一致する。
+// Nominal: the version string matches its individual components.
 TEST(VersionTest, version_string_matches_components) {
     const std::string expected = std::to_string(aruco3cuda::kVersionMajor) + "." +
                                  std::to_string(aruco3cuda::kVersionMinor) + "." +

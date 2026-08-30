@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// device への画像転送を検証する。
+// Verifies image upload to the device.
 //
-// 検出器は転送を行わず、device から読める memory を指す view を受け取る。
-// 転送の失敗を無言で通すと、検出が「0 件」として成立してしまい、原因が
-// 転送なのか検出なのか区別できない。境界と異常系を固定する。
+// The detector performs no upload of its own; it takes a view pointing at
+// memory that is readable from the device. If an upload failure passes
+// silently, detection still "succeeds" with zero results, and there is no way
+// to tell whether the upload or the detection was at fault. These tests pin
+// down the boundaries and the failure paths.
 #include "device_image.hpp"
 
 #include <gtest/gtest.h>
@@ -31,7 +33,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 決まった値の並びを持つ試験画像。
+/// Test image with a fixed, deterministic sequence of values.
 std::vector<std::uint8_t> make_pattern(int width, int height) {
     std::vector<std::uint8_t> data(static_cast<std::size_t>(width) *
                                    static_cast<std::size_t>(height));
@@ -41,7 +43,7 @@ std::vector<std::uint8_t> make_pattern(int width, int height) {
     return data;
 }
 
-/// device の内容を host へ戻す。
+/// Copies the device contents back to the host.
 std::vector<std::uint8_t> download(const aruco3cuda::ImageViewU8& view) {
     std::vector<std::uint8_t> result(static_cast<std::size_t>(view.width_px_) *
                                      static_cast<std::size_t>(view.height_px_));
@@ -53,10 +55,10 @@ std::vector<std::uint8_t> download(const aruco3cuda::ImageViewU8& view) {
     return result;
 }
 
-// 正常系: 転送した内容が device 側で一致する。
+// Happy path: the uploaded content matches on the device side.
 TEST(DeviceImageTest, uploads_content_unchanged) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const int width = 133;
     const int height = 71;
@@ -73,15 +75,17 @@ TEST(DeviceImageTest, uploads_content_unchanged) {
     EXPECT_EQ(view.width_px_, width);
     EXPECT_EQ(view.height_px_, height);
     EXPECT_EQ(view.space_, MemorySpace::kDevice);
-    // pitch は幅以上になる。cudaMallocPitch は行頭を整列させる。
+    // The pitch is at least the width; cudaMallocPitch aligns the start of
+    // each row.
     EXPECT_GE(view.pitch_bytes_, static_cast<std::size_t>(width));
     EXPECT_EQ(download(view), source);
 }
 
-// 正常系: host 側の pitch が幅と異なっても正しく転送する。
+// Happy path: uploads correctly even when the host-side pitch differs from
+// the width.
 TEST(DeviceImageTest, handles_padded_source_pitch) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const int width = 64;
     const int height = 40;
@@ -104,10 +108,11 @@ TEST(DeviceImageTest, handles_padded_source_pitch) {
     EXPECT_EQ(download(image.view()), expected);
 }
 
-// 正常系: 同じか小さい寸法で reserve を呼び直しても確保し直さない。
+// Happy path: calling reserve again with the same or smaller dimensions does
+// not reallocate.
 TEST(DeviceImageTest, reserve_reuses_existing_buffer) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     DeviceImage image;
     ASSERT_EQ(image.reserve(200, 100), Status::kOk);
@@ -117,17 +122,18 @@ TEST(DeviceImageTest, reserve_reuses_existing_buffer) {
     ASSERT_EQ(image.reserve(200, 100), Status::kOk);
     EXPECT_EQ(image.view().data_, first);
     ASSERT_EQ(image.reserve(120, 60), Status::kOk);
-    // 小さい要求では確保し直さない。frame ごとの確保を避けるためである。
+    // A smaller request does not reallocate, so that we avoid allocating once
+    // per frame.
     EXPECT_EQ(image.view().data_, first);
     EXPECT_EQ(image.view().pitch_bytes_, pitch);
     EXPECT_EQ(image.view().width_px_, 120);
     EXPECT_EQ(image.view().height_px_, 60);
 }
 
-// 正常系: 大きい寸法を要求すると確保し直す。
+// Happy path: requesting larger dimensions reallocates.
 TEST(DeviceImageTest, reserve_grows_for_larger_request) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     DeviceImage image;
     ASSERT_EQ(image.reserve(64, 64), Status::kOk);
@@ -139,10 +145,10 @@ TEST(DeviceImageTest, reserve_grows_for_larger_request) {
     EXPECT_EQ(download(image.view()), source);
 }
 
-// 正常系: move しても内容を保つ。
+// Happy path: the content survives a move.
 TEST(DeviceImageTest, can_be_moved) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<std::uint8_t> source = make_pattern(48, 32);
     DeviceImage original;
@@ -157,7 +163,8 @@ TEST(DeviceImageTest, can_be_moved) {
     EXPECT_EQ(download(assigned.view()), source);
 }
 
-// 異常系: 引数が不正なら確保も転送も行わない。
+// Failure path: invalid arguments perform neither an allocation nor an
+// upload.
 TEST(DeviceImageTest, rejects_invalid_arguments) {
     DeviceImage image;
     std::string message;
@@ -165,19 +172,19 @@ TEST(DeviceImageTest, rejects_invalid_arguments) {
     EXPECT_FALSE(message.empty());
     EXPECT_EQ(image.reserve(10, 0, &message), Status::kInvalidArgument);
     EXPECT_EQ(image.reserve(-1, 10, &message), Status::kInvalidArgument);
-    // out_message を渡さなくても落ちない。
+    // Omitting out_message must not crash.
     EXPECT_EQ(image.reserve(0, 10), Status::kInvalidArgument);
 
     const std::vector<std::uint8_t> source = make_pattern(8, 8);
-    // reserve していない状態での転送。
+    // Upload without a preceding reserve.
     EXPECT_EQ(image.upload(source.data(), 8, 8, 8U, &message), Status::kNotInitialized);
     EXPECT_FALSE(message.empty());
 }
 
-// 異常系: 確保済みの寸法を超える転送を拒否する。
+// Failure path: rejects an upload larger than the reserved dimensions.
 TEST(DeviceImageTest, rejects_upload_larger_than_reserved) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     DeviceImage image;
     std::string message;
@@ -189,10 +196,11 @@ TEST(DeviceImageTest, rejects_upload_larger_than_reserved) {
     EXPECT_EQ(image.upload(source.data(), 0, 16, 16U, &message), Status::kInvalidArgument);
 }
 
-// 正常系: memory 種別ごとに確保のしかたと view の空間が変わる。
+// Happy path: the allocation method and the view's memory space vary per
+// memory kind.
 TEST(DeviceImageTest, reserves_each_memory_space) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     struct Case {
         aruco3cuda::MemorySpace requested_;
@@ -205,7 +213,8 @@ TEST(DeviceImageTest, reserves_each_memory_space) {
             {aruco3cuda::MemorySpace::kHostPageable, aruco3cuda::MemorySpace::kDevice, "pageable"},
             {aruco3cuda::MemorySpace::kManaged, aruco3cuda::MemorySpace::kManaged, "managed"},
     };
-    // 既知の模様を入れて、どの種別でも同じ内容が device 側へ届くことを見る。
+    // Fill in a known pattern so we can check that every kind delivers the
+    // same content to the device side.
     std::vector<std::uint8_t> source(static_cast<std::size_t>(64) * 48U);
     for (std::size_t i = 0; i < source.size(); ++i) {
         source[i] = static_cast<std::uint8_t>((i * 7U) % 251U);
@@ -220,7 +229,8 @@ TEST(DeviceImageTest, reserves_each_memory_space) {
         ASSERT_EQ(image.upload(source.data(), 64, 48, 64U, &message), aruco3cuda::Status::kOk)
                 << item.name_ << " " << message;
 
-        // 内容を読み戻す。managed は host から直接読める。
+        // Read the content back. Managed memory is directly readable from the
+        // host.
         std::vector<std::uint8_t> received(source.size());
         ASSERT_EQ(cudaMemcpy2D(received.data(), 64U, image.view().data_, image.view().pitch_bytes_,
                                64U, 48U, cudaMemcpyDeviceToHost),
@@ -230,10 +240,11 @@ TEST(DeviceImageTest, reserves_each_memory_space) {
     }
 }
 
-// 正常系: 種別を変えて確保し直すと、前の領域を使い回さない。
+// Happy path: reserving again with a different memory kind does not reuse the
+// previous allocation.
 TEST(DeviceImageTest, changing_space_reallocates) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     aruco3cuda::hybrid::DeviceImage image;
     std::string message;
@@ -244,18 +255,20 @@ TEST(DeviceImageTest, changing_space_reallocates) {
     ASSERT_EQ(image.reserve(aruco3cuda::MemorySpace::kManaged, 64, 48, &message),
               aruco3cuda::Status::kOk)
             << message;
-    // 空間が変わったので確保し直している。
+    // The space changed, so the buffer was reallocated.
     //
-    // **pointer が変わることは主張しない。** 解放した番地を allocator が
-    // すぐ再利用してよく、実際 Jetson AGX Orin では同じ番地が返る。
-    // 確かめるべきは空間が変わったことと、その空間として使えることである。
+    // **We deliberately do not assert that the pointer changes.** The allocator
+    // is free to immediately reuse a freed address, and on Jetson AGX Orin it
+    // in fact hands back the same address. What must be verified is that the
+    // space changed and that the buffer is usable as that space.
     EXPECT_EQ(image.view().space_, aruco3cuda::MemorySpace::kManaged);
-    // managed なら host から直接書ける。device 専用の領域では落ちる。
+    // Managed memory is directly writable from the host; a device-only
+    // allocation would fault here.
     auto* writable = const_cast<std::uint8_t*>(image.view().data_);
     writable[0] = 123U;
     EXPECT_EQ(writable[0], 123U);
 
-    // 同じ空間で小さくするときは使い回す。
+    // Shrinking within the same space reuses the existing buffer.
     const aruco3cuda::ImageViewU8 managed = image.view();
     ASSERT_EQ(image.reserve(aruco3cuda::MemorySpace::kManaged, 32, 24, &message),
               aruco3cuda::Status::kOk)

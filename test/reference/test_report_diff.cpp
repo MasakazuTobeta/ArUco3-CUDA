@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 差分レポートの分類を検証する。
+// Verifies how the diff report classifies differences.
 //
-// 目的:
-//   差異の種類ごとに、意図した分類になることを確かめる。分類を誤ると、
-//   四隅のずれと取りこぼしが同じ数値へ丸められ、原因の切り分けができない。
+// Purpose:
+//   Confirm that every kind of difference falls into the intended class. A wrong
+//   classification collapses corner shifts and missed detections into the same
+//   number, which makes it impossible to isolate the cause.
 #include "report_diff.hpp"
 
 #include <gtest/gtest.h>
@@ -21,7 +22,7 @@ using aruco3cuda::report::CompareConfig;
 using aruco3cuda::report::Detection;
 using aruco3cuda::report::DiffKind;
 
-/// 軸に平行な正方形の検出を作る。
+/// Builds a detection whose corners form an axis-aligned square.
 Detection make_square(int id, double x, double y, double side) {
     Detection detection;
     detection.id_ = id;
@@ -30,7 +31,7 @@ Detection make_square(int id, double x, double y, double side) {
     return detection;
 }
 
-/// 四隅を steps 段巡回させた検出を作る。
+/// Builds a detection whose four corners are rotated by `steps` positions.
 Detection rotate_corners(const Detection& source, int steps) {
     Detection detection = source;
     for (std::size_t c = 0; c < 4U; ++c) {
@@ -41,7 +42,7 @@ Detection rotate_corners(const Detection& source, int steps) {
     return detection;
 }
 
-// 正常系: 同じ検出どうしでは差異が出ない。
+// Nominal: identical detections produce no difference.
 TEST(ReportDiffTest, identical_results_produce_no_diff) {
     const std::vector<Detection> detections = {make_square(7, 100.0, 100.0, 80.0),
                                                make_square(9, 400.0, 300.0, 80.0)};
@@ -52,7 +53,7 @@ TEST(ReportDiffTest, identical_results_produce_no_diff) {
     EXPECT_EQ(comparison.worst_corner_error_px_, 0.0);
 }
 
-// 正常系: 基準にあり対象に無い検出は未検出になる。
+// Nominal: a detection present in the baseline but absent from the target counts as missed.
 TEST(ReportDiffTest, classifies_missed_detection) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0),
                                              make_square(9, 400.0, 300.0, 80.0)};
@@ -64,7 +65,7 @@ TEST(ReportDiffTest, classifies_missed_detection) {
     EXPECT_EQ(comparison.agreed_count_, 1U);
 }
 
-// 正常系: 対象にあり基準に無い検出は過検出になる。
+// Nominal: a detection present in the target but absent from the baseline counts as extra.
 TEST(ReportDiffTest, classifies_extra_detection) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<Detection> target = {baseline[0], make_square(9, 400.0, 300.0, 80.0)};
@@ -74,7 +75,8 @@ TEST(ReportDiffTest, classifies_extra_detection) {
     EXPECT_EQ(comparison.diffs_[0].target_id_, 9);
 }
 
-// 正常系: 同じ位置で ID が違う場合は ID 不一致になる。未検出と過検出には分けない。
+// Nominal: same position with a different ID is an ID mismatch. It is not split
+// into a missed plus an extra detection.
 TEST(ReportDiffTest, classifies_id_mismatch) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<Detection> target = {make_square(8, 100.0, 100.0, 80.0)};
@@ -85,7 +87,7 @@ TEST(ReportDiffTest, classifies_id_mismatch) {
     EXPECT_EQ(comparison.diffs_[0].target_id_, 8);
 }
 
-// 正常系: 四隅の並びだけが巡回している場合は rotation 不一致になる。
+// Nominal: when only the order of the four corners is rotated, the result is a rotation mismatch.
 TEST(ReportDiffTest, classifies_rotation_mismatch) {
     const Detection base = make_square(7, 100.0, 100.0, 80.0);
     const std::vector<Detection> baseline = {base};
@@ -93,12 +95,13 @@ TEST(ReportDiffTest, classifies_rotation_mismatch) {
     const auto comparison = aruco3cuda::report::compare_detections("a.png", baseline, target, {});
     ASSERT_EQ(comparison.diffs_.size(), 1U);
     EXPECT_EQ(comparison.diffs_[0].kind_, DiffKind::kRotationMismatch);
-    // 巡回の向きは、対象を何段ずらすと基準に戻るかで表す。
+    // The direction of the rotation is expressed as the number of steps the target
+    // must be shifted by to return to the baseline.
     EXPECT_EQ(comparison.diffs_[0].rotation_steps_, 1);
     EXPECT_EQ(comparison.diffs_[0].corner_error_px_, 0.0);
 }
 
-// 正常系: 許容差を超える四隅のずれは四隅ずれになる。
+// Nominal: a corner displacement beyond the tolerance is reported as a corner shift.
 TEST(ReportDiffTest, classifies_corner_shift) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<Detection> target = {make_square(7, 103.0, 100.0, 80.0)};
@@ -108,7 +111,7 @@ TEST(ReportDiffTest, classifies_corner_shift) {
     EXPECT_NEAR(comparison.diffs_[0].corner_error_px_, 3.0, 1e-9);
 }
 
-// 境界値: 許容差ちょうどのずれは一致として扱う。
+// Boundary: a displacement exactly at the tolerance is treated as agreement.
 TEST(ReportDiffTest, tolerance_boundary_is_inclusive) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<Detection> target = {make_square(7, 101.0, 100.0, 80.0)};
@@ -120,7 +123,7 @@ TEST(ReportDiffTest, tolerance_boundary_is_inclusive) {
     EXPECT_NEAR(comparison.worst_corner_error_px_, 1.0, 1e-9);
 }
 
-// 境界値: 対応付けの半径を超えて離れた検出は同じマーカーとみなさない。
+// Boundary: detections farther apart than the matching radius are not taken to be the same marker.
 TEST(ReportDiffTest, distant_detections_are_not_matched) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<Detection> target = {make_square(7, 200.0, 100.0, 80.0)};
@@ -130,11 +133,12 @@ TEST(ReportDiffTest, distant_detections_are_not_matched) {
     EXPECT_EQ(comparison.diffs_[1].kind_, DiffKind::kExtra);
 }
 
-// 正常系: 近い候補が複数ある場合、より近い組から対応が確定する。
+// Nominal: when several candidates are close, the nearest pair is matched first.
 TEST(ReportDiffTest, closest_pair_is_matched_first) {
     const std::vector<Detection> baseline = {make_square(1, 100.0, 100.0, 80.0),
                                              make_square(2, 120.0, 100.0, 80.0)};
-    // 対象は基準 2 の位置に近い 1 件のみ。基準 1 は未検出になる。
+    // The target holds a single detection, near the position of baseline 2.
+    // Baseline 1 is therefore reported as missed.
     const std::vector<Detection> target = {make_square(2, 121.0, 100.0, 80.0)};
     const auto comparison = aruco3cuda::report::compare_detections("a.png", baseline, target, {});
     ASSERT_EQ(comparison.diffs_.size(), 1U);
@@ -143,7 +147,7 @@ TEST(ReportDiffTest, closest_pair_is_matched_first) {
     EXPECT_EQ(comparison.agreed_count_, 1U);
 }
 
-// 正常系: 集計は画像をまたいで種類ごとに数える。
+// Nominal: the summary counts each kind across all images.
 TEST(ReportDiffTest, summary_counts_each_kind) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     std::vector<aruco3cuda::report::ImageComparison> comparisons;
@@ -161,7 +165,7 @@ TEST(ReportDiffTest, summary_counts_each_kind) {
     EXPECT_EQ(summary.kind_counts_[static_cast<std::size_t>(DiffKind::kExtra)], 1U);
 }
 
-// 正常系: 報告は差異のある画像を全て列挙する。
+// Nominal: the report lists every image that shows a difference.
 TEST(ReportDiffTest, text_report_lists_every_differing_image) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     std::vector<aruco3cuda::report::ImageComparison> comparisons;
@@ -175,13 +179,13 @@ TEST(ReportDiffTest, text_report_lists_every_differing_image) {
     const std::string text = out.str();
     EXPECT_NE(text.find("a.png"), std::string::npos);
     EXPECT_NE(text.find("c.png"), std::string::npos);
-    // 一致した画像は列挙しない。
+    // Images that agree are not listed.
     EXPECT_EQ(text.find("b.png"), std::string::npos);
-    EXPECT_NE(text.find("未検出"), std::string::npos);
-    EXPECT_NE(text.find("過検出"), std::string::npos);
+    EXPECT_NE(text.find("missed"), std::string::npos);
+    EXPECT_NE(text.find("extra"), std::string::npos);
 }
 
-// 正常系: 差異が無い場合はその旨を示す。
+// Nominal: when there is no difference, the report says so.
 TEST(ReportDiffTest, text_report_states_when_there_is_no_diff) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<aruco3cuda::report::ImageComparison> comparisons = {
@@ -189,10 +193,10 @@ TEST(ReportDiffTest, text_report_states_when_there_is_no_diff) {
     std::ostringstream out;
     aruco3cuda::report::write_text_report(out, comparisons,
                                           aruco3cuda::report::summarize(comparisons));
-    EXPECT_NE(out.str().find("差異は無い"), std::string::npos);
+    EXPECT_NE(out.str().find("No differences"), std::string::npos);
 }
 
-// 正常系: JSON 出力に集計と画像ごとの内訳が含まれる。
+// Nominal: the JSON output carries the summary and the per-image breakdown.
 TEST(ReportDiffTest, json_report_contains_summary_and_images) {
     const std::vector<Detection> baseline = {make_square(7, 100.0, 100.0, 80.0)};
     const std::vector<aruco3cuda::report::ImageComparison> comparisons = {
@@ -207,9 +211,9 @@ TEST(ReportDiffTest, json_report_contains_summary_and_images) {
     EXPECT_NE(json.find("\"cornerTolerancePx\""), std::string::npos);
 }
 
-// 境界値: 列挙に無い値でも名前解決が破綻しない。
+// Boundary: a value outside the enumeration still resolves to a name.
 TEST(ReportDiffTest, unknown_kind_has_a_name) {
-    EXPECT_STREQ(aruco3cuda::report::diff_kind_name(static_cast<DiffKind>(99)), "不明");
+    EXPECT_STREQ(aruco3cuda::report::diff_kind_name(static_cast<DiffKind>(99)), "unknown");
 }
 
 }  // namespace

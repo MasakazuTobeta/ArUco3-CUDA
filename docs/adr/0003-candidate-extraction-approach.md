@@ -1,112 +1,112 @@
-# ADR-0003: 四角形候補抽出は案 A (連結成分と極点探索) を主案とする
+# ADR-0003: Adopt plan A (connected components and extreme point search) as the primary approach for quadrilateral candidate extraction
 
 - Status: Accepted
 - Date: 2026-08-27
 
-## 目的
+## Purpose
 
-[検出パイプライン設計](../design/detector-pipeline.md) が挙げた 3 案のうち、S4 と S5 (四角形候補抽出) をどれで進めるかを決めます。以降の decode 実装はこの選択の上に積み上がるため、候補抽出が出そろった時点で確定させます。
+Of the three plans raised in the [detection pipeline design](../design/detector-pipeline.md), decide which one to proceed with for S4 and S5 (quadrilateral candidate extraction). Because the subsequent decode implementation builds on this choice, we settle it now that the candidate extraction paths are in place.
 
-## 対象範囲
+## Scope
 
-二値化画像から四隅の候補集合を得るまでを対象とします。前処理、二値化、Dictionary 照合、四隅の subpixel 補正は対象外です。
+This covers everything from the binarized image up to obtaining a set of corner candidates. Preprocessing, thresholding, Dictionary matching, and subpixel refinement of the corners are out of scope.
 
-## 背景
+## Background
 
-### 3 案
+### The three plans
 
-| 案 | 内容 | 決定時点の状態 |
+| Plan | Content | State at the time of the decision |
 | --- | --- | --- |
-| A | 連結成分ラベリングと極点探索で四隅を直接求める | 実装済み |
-| B | GPU 上で境界追跡を行い、多角形近似を適用する | 未実装 |
-| C | 二値化画像を host へ戻し、CPU の輪郭追跡で四隅を求める | 実装済み |
+| A | Find the corners directly with connected component labeling and extreme point search | Implemented |
+| B | Perform border following on the GPU and apply polygonal approximation | Not implemented |
+| C | Return the binarized image to the host and find the corners with CPU contour tracing | Implemented |
 
-### 実測
+### Measurements
 
-`CandidateComparisonTest.plan_a_versus_plan_c` が両経路を同じ二値化画像へ適用して比較します。合成 9 場面 (マーカー数、面内回転、射影歪み、ぼけ、noise、照度勾配、解像度 1280x720 と 1920x1080) を、設定 2 通りで測りました。時間は暖機 5 回のあと 21 回の中央値、`taskset -c 0` で core を固定しています。
+`CandidateComparisonTest.plan_a_versus_plan_c` applies both routes to the same binarized image and compares them. We measured 9 synthetic scenes (marker count, in-plane rotation, projective distortion, blur, noise, illumination gradient, resolutions 1280x720 and 1920x1080) under two configurations. Times are the median of 21 runs after 5 warm-up runs, with the core pinned via `taskset -c 0`.
 
-#### 正確さ
+#### Accuracy
 
-| 設定 | 真値に対する検出 | 四隅の最大差 (真値比) | 案 C だけが出した候補 | 案 A だけが出した候補 |
+| Configuration | Detections against ground truth | Maximum corner difference (vs. ground truth) | Candidates produced only by plan C | Candidates produced only by plan A |
 | --- | --- | --- | --- | --- |
-| ArUco3 有効 (縮小画像で抽出) | 38/38 | 1.556 px | 0 | 0 |
-| ArUco3 無効 (原寸で抽出) | 38/38 | 1.594 px | 7 から 58 | 0 |
+| ArUco3 enabled (extraction on the downscaled image) | 38/38 | 1.556 px | 0 | 0 |
+| ArUco3 disabled (extraction at full size) | 38/38 | 1.594 px | 7 to 58 | 0 |
 
-ArUco3 有効では候補集合が完全に一致します。共通する候補どうしの四隅の差は、ぼけを加えた場面の 1.414 px を除いて 0 です。
+With ArUco3 enabled, the candidate sets match exactly. The corner differences between shared candidates are 0, except for 1.414 px in the scene with blur added.
 
-ArUco3 無効では案 C の候補が案 A より多くなります。案 C は輪郭ごとに候補を作るため、黒枠の外周と内周、および内部セルの輪郭がそれぞれ候補になります。案 A は連結成分ごとに 1 つの四隅しか作らないため、内周は現れません。ArUco3 有効では縮小により内周の周長が下限 (`4 * minSideLengthCanonicalImg` = 128) を下回り、案 C 側でも落ちるため差が出ません。
+With ArUco3 disabled, plan C produces more candidates than plan A. Because plan C creates a candidate per contour, the outer and inner boundaries of the black border and the contours of the interior cells each become candidates. Plan A creates only one set of corners per connected component, so the inner boundaries do not appear. With ArUco3 enabled, downscaling puts the perimeter of the inner boundary below the lower bound (`4 * minSideLengthCanonicalImg` = 128), so it is dropped on the plan C side as well and no difference appears.
 
-この差はマーカーの取りこぼしではありません。真値に対する検出はどちらの設定でも 38/38 です。案 C の余分な候補は Dictionary 照合の border 検証で落ちるものです。ただし OpenCV は代表候補の識別が失敗した場合に同じ group の別候補を試す経路 (`closeContours`) を持ち、案 A ではその代替が存在しません。影響は識別まで通したうえで測ります。
+This difference is not a marker miss. Detections against ground truth are 38/38 under both configurations. The extra candidates from plan C are ones that the border verification in Dictionary matching drops. However, OpenCV has a route (`closeContours`) that tries another candidate from the same group when identification of the representative candidate fails, and plan A has no such alternative. We will measure the impact once identification is included in the run.
 
-#### 速度
+#### Speed
 
-候補抽出のみ (ラベリングから統合まで) の時間です。前処理と二値化は両経路で共通のため除いています。
+These are times for candidate extraction only (from labeling through consolidation). Preprocessing and thresholding are common to both routes and are therefore excluded.
 
-| 設定 | 場面 | DGX Spark 案 A | DGX Spark 案 C | Jetson Orin 案 A | Jetson Orin 案 C |
+| Configuration | Scene | DGX Spark plan A | DGX Spark plan C | Jetson Orin plan A | Jetson Orin plan C |
 | --- | --- | --- | --- | --- | --- |
-| ArUco3 有効 | 素の場面 (マーカー 4 枚) | 0.543 ms | 0.168 ms | 0.746 ms | 0.250 ms |
-| ArUco3 有効 | マーカー 9 枚 | 0.665 ms | 0.323 ms | 0.815 ms | 0.467 ms |
-| ArUco3 有効 | noise あり | 0.530 ms | 1.728 ms | 0.803 ms | 2.299 ms |
-| ArUco3 有効 | 1920x1080 | 0.518 ms | 0.172 ms | 0.756 ms | 0.263 ms |
-| ArUco3 無効 | 素の場面 (マーカー 4 枚) | 1.278 ms | 1.161 ms | 2.620 ms | 1.710 ms |
-| ArUco3 無効 | マーカー 9 枚 | 1.667 ms | 2.301 ms | 3.194 ms | 3.340 ms |
-| ArUco3 無効 | noise あり | 1.420 ms | 21.392 ms | 4.447 ms | 29.745 ms |
-| ArUco3 無効 | 1920x1080 | 2.074 ms | 1.886 ms | 5.274 ms | 2.826 ms |
+| ArUco3 enabled | plain scene (4 markers) | 0.543 ms | 0.168 ms | 0.746 ms | 0.250 ms |
+| ArUco3 enabled | 9 markers | 0.665 ms | 0.323 ms | 0.815 ms | 0.467 ms |
+| ArUco3 enabled | with noise | 0.530 ms | 1.728 ms | 0.803 ms | 2.299 ms |
+| ArUco3 enabled | 1920x1080 | 0.518 ms | 0.172 ms | 0.756 ms | 0.263 ms |
+| ArUco3 disabled | plain scene (4 markers) | 1.278 ms | 1.161 ms | 2.620 ms | 1.710 ms |
+| ArUco3 disabled | 9 markers | 1.667 ms | 2.301 ms | 3.194 ms | 3.340 ms |
+| ArUco3 disabled | with noise | 1.420 ms | 21.392 ms | 4.447 ms | 29.745 ms |
+| ArUco3 disabled | 1920x1080 | 2.074 ms | 1.886 ms | 5.274 ms | 2.826 ms |
 
-案 A の時間は場面の内容にほとんど依らず、画素数でほぼ決まります。案 C は輪郭の数と長さに比例し、noise を加えると 10 倍以上に伸びます。素の場面では案 C が速く、輪郭が増える場面では案 A が速いという crossover があります。ArUco3 有効かつ noise ありの場面で、DGX Spark では案 A が 3.3 倍、Jetson Orin では 2.9 倍速くなります。ArUco3 無効かつ noise ありでは 15 倍と 6.7 倍です。
+Plan A's time barely depends on the content of the scene and is determined almost entirely by the pixel count. Plan C is proportional to the number and length of contours, and stretches more than tenfold when noise is added. There is a crossover: plan C is faster in plain scenes, and plan A is faster in scenes with more contours. In the scene with ArUco3 enabled and noise, plan A is 3.3 times faster on DGX Spark and 2.9 times faster on Jetson Orin. With ArUco3 disabled and noise, the figures are 15 times and 6.7 times.
 
-ArUco3 有効時に案 A が解像度によらず 0.52 ms から 0.67 ms に収まるのは、segmentation 画像が 427x240 と小さく、kernel 起動の固定費が支配的なためです。1 フレームあたり window 3 通り x 9 kernel に統合の 7 kernel を加えて 34 回の起動があります。
+The reason plan A stays between 0.52 ms and 0.67 ms regardless of resolution when ArUco3 is enabled is that the segmentation image is small at 427x240, so the fixed cost of kernel launches dominates. Per frame there are 34 launches: 3 windows x 9 kernels, plus 7 kernels for consolidation.
 
-### 案 B を評価しなかった理由
+### Why plan B was not evaluated
 
-案 A が正確さの要件を満たし、案 B は境界追跡という逐次性の高い処理を GPU へ載せる点で案 A より実装費用が大きいためです。案 A が要件を満たさなくなった場合に再検討します。
+Plan A meets the accuracy requirements, and plan B has a higher implementation cost than plan A because it puts border following — a highly sequential process — on the GPU. We will reconsider it if plan A stops meeting the requirements.
 
-## 決定
+## Decision
 
-**案 A を主案とし、案 C を fallback かつ差分検証の基準として残します。**
+**Adopt plan A as the primary approach, and keep plan C as a fallback and as the baseline for differential verification.**
 
-## 根拠
+## Rationale
 
-- 候補集合が ArUco3 有効時に案 C と完全一致し、四隅の差も 1.414 px 以内である。ArUco3 検出戦略の評価が本 project の主目的であり、その設定で差が無いことは決定に足る。
-- 案 A の時間は場面に依らずほぼ一定である。実時間処理では最悪値が要件を決めるため、内容で 10 倍以上変わる案 C より扱いやすい。
-- 案 C は二値化画像を host へ戻す必要がある。GPU 常駐を目標とする以上、案 C を主案にすると転送が経路に残り続ける。
-- 案 A は輪郭の順序付けと可変長 buffer を必要とせず、label 単位で完全に並列化できる。decode も label 単位であり、構造が揃う。
-- 案 A は公式 ArUco の GPLv3 実装の構造を移植しない独自設計であり、[知的財産・ライセンス方針](../ip-and-licensing.md) の要求と整合する。
+- The candidate set matches plan C exactly when ArUco3 is enabled, and the corner difference is within 1.414 px. Evaluating the ArUco3 detection strategy is the main purpose of this project, and having no difference under that configuration is sufficient grounds for the decision.
+- Plan A's time is nearly constant regardless of the scene. In real-time processing the worst case determines the requirements, so it is easier to work with than plan C, which varies by more than tenfold with the content.
+- Plan C needs to return the binarized image to the host. Given the goal of staying device-resident, making plan C the primary approach would leave a transfer in the route permanently.
+- Plan A needs neither contour ordering nor variable-length buffers, and can be fully parallelized per label. Decode is also per label, so the structures line up.
+- Plan A is an independent design that does not port the structure of the official ArUco GPLv3 implementation, which is consistent with the requirements of the [intellectual property and licensing policy](../ip-and-licensing.md).
 
-## 影響
+## Consequences
 
-### 利点
+### Benefits
 
-- 候補抽出まで GPU 常駐で完結する。二値化画像の host 転送が不要になる。
-- 実行時間の最悪値が読みやすくなる。
-- 案 C を残すことで、GPU 経路の変更が候補集合を変えていないことを常に検証できる。
+- Everything through candidate extraction completes device-resident. No host transfer of the binarized image is needed.
+- The worst-case execution time becomes easier to predict.
+- Keeping plan C lets us continuously verify that changes to the GPU route have not changed the candidate set.
 
-### 欠点
+### Drawbacks
 
-- 小さい segmentation 画像では案 C の方が速い。ArUco3 有効かつ素の場面という、本 project が主に想定する条件がそこに当たる。kernel 起動の固定費を減らす最適化が次の課題になる。
-- 連結成分ごとに 1 つの四隅しか作らないため、OpenCV の `closeContours` に相当する代替候補を持てない。
-- 重なって 1 成分になった 2 枚のマーカーを 1 つの四角形として受け入れる、またはどちらも落とす。CPU 経路は輪郭が 8 角形になり多角形近似で落とす。どちらも 2 枚を取りこぼす点は同じだが、挙動が異なる。
-- 四角形らしさの判定が `polygonalApproxAccuracyRate` そのものではなく、内側比と辺の裏付けという 2 つの比への写像である。合成図形では分離できているが、実写での余裕は未測定である。
+- For small segmentation images, plan C is faster. The conditions this project mainly assumes — ArUco3 enabled and a plain scene — fall exactly there. Reducing the fixed cost of kernel launches becomes the next task.
+- Because only one set of corners is created per connected component, there can be no alternative candidate equivalent to OpenCV's `closeContours`.
+- Two markers that overlap into a single component are either accepted as one quadrilateral or both dropped. On the CPU route the contour becomes an octagon and is dropped by polygonal approximation. Both miss the two markers, but the behavior differs.
+- The quadrilateral test is not `polygonalApproxAccuracyRate` itself, but a mapping onto two ratios: the inner ratio and edge support. They separate cleanly on synthetic shapes, but the margin on real imagery is unmeasured.
 
-### 撤回条件
+### Conditions for reversal
 
-次のいずれかが後の段で確認された場合、案 B の実装または案 C への切り替えを再検討します。
+If any of the following is confirmed at a later stage, we will reconsider implementing plan B or switching to plan C.
 
-- 実写 corpus で、案 A の検出率が案 C より 1% 以上低い。
-- `closeContours` の欠如により、識別の成功率が案 C より有意に低い。
-- 最適化後も、想定条件で案 C より遅い。
+- On a real-imagery corpus, plan A's detection rate is 1% or more below plan C's.
+- The absence of `closeContours` makes the identification success rate significantly lower than plan C's.
+- Even after optimization, it is slower than plan C under the assumed conditions.
 
-## 未確定事項
+## Open questions
 
-- kernel 起動の固定費をどこまで下げられるか。window 3 通りを 1 つの kernel へまとめる、または CUDA Graph を使う案がある。測定して決める。
-- 内側比 0.80 と辺の裏付け 2.0 という下限を実写でどう調整するか。現在の値は合成図形の実測 (通すべき形の最小 0.875 と 2.52、落とすべき形の最大 0.665 と 1.71) に基づく。
-- 案 A に `closeContours` 相当を持たせるか。連結成分から複数の四隅候補を作る方法が必要になる。
+- How far the fixed cost of kernel launches can be reduced. Options include merging the 3 windows into a single kernel, or using CUDA Graph. We will decide by measurement.
+- How to adjust the lower bounds of 0.80 for the inner ratio and 2.0 for edge support on real imagery. The current values are based on measurements of synthetic shapes (minimum 0.875 and 2.52 for shapes that should pass, maximum 0.665 and 1.71 for shapes that should be dropped).
+- Whether to give plan A an equivalent of `closeContours`. That would require a way to create multiple corner candidates from one connected component.
 
-## 関連
+## See also
 
-- [ADR-0001: 独立リポジトリで CUDA 実装を先行する](0001-independent-implementation.md)
-- [ADR-0002: build 基盤と対象環境の baseline を固定する](0002-toolchain-and-target-baseline.md)
-- [検出パイプライン設計](../design/detector-pipeline.md)
-- [実装計画](../implementation-plan.md)
-- [評価計画](../evaluation-plan.md)
-- [Benchmark 報告](../benchmark-report.md)
+- [ADR-0001: Develop the CUDA implementation first in an independent repository](0001-independent-implementation.md)
+- [ADR-0002: Fix the build toolchain and target environment baseline](0002-toolchain-and-target-baseline.md)
+- [Detection pipeline design](../design/detector-pipeline.md)
+- [Implementation plan](../implementation-plan.md)
+- [Evaluation plan](../evaluation-plan.md)
+- [Benchmark report](../benchmark-report.md)

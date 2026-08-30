@@ -1,240 +1,240 @@
-# 実装の構成と検証
+# Implementation Structure and Verification
 
-## 目的
+## Purpose
 
-本 repository の CUDA 実装について、検出をどの段へ分けたか、各段が何を保証するか、なぜその設計を選んだかを 1 箇所へまとめます。設計判断の根拠と検証の方法を残し、後から同じ検討をやり直さずに済む状態にすることが目的です。
+This document collects in one place, for the CUDA implementation in this repository, how detection is divided into stages, what each stage guarantees, and why each design was chosen. The goal is to record the rationale behind the design decisions and the verification methods, so that the same investigation does not have to be redone later.
 
-## 対象範囲
+## Scope
 
-検出の段構成、主要な設計判断、検証戦略、coverage、測定上の注意を対象とします。性能と正確性の数値は [benchmark 結果まとめ](benchmark-report.md) と [正確性評価の結果](accuracy-report.md) が正本であり、本文では判断の根拠に必要な範囲だけを引きます。姿勢推定は対象外です。評価は合成 corpus に限ります。
+The scope covers the stage structure of detection, the main design decisions, the verification strategy, coverage, and cautions regarding measurement. The [benchmark summary](benchmark-report.md) and the [accuracy evaluation results](accuracy-report.md) are authoritative for the performance and accuracy numbers; this document quotes only what is needed to support its conclusions. Pose estimation is out of scope. The evaluation is limited to the synthetic corpus.
 
-## 現状
+## Current state
 
-### できること
+### What works
 
-- 入力画像の縮小と二値化から、候補抽出、Dictionary 照合、四隅の subpixel 補正まで (S1 から S10) を GPU 上で完結します。結果は device buffer のまま参照でき (S11)、`Detector::detect_async` は host 同期なしで返ります。host 側で使う場合は `download()` で取り出します。
-- 1 frame の kernel 発行列は CUDA Graph へ畳んでいます。
-- 検出中に device memory を確保しません。workspace の最大使用量は ArUco3 検出戦略が有効で 17.51 MB、無効で 414.51 MB です。合成 corpus 91 場面を検出しても確保回数は増えません。
-- 下の 3 機すべてで自動 test 402 件が通ります。Compute Sanitizer は memcheck / racecheck / initcheck / synccheck の 4 tool を 2 つの実行 file へ掛け、8 件が 3 機すべてで通ります。
+- Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and subpixel refinement of the corners (S1 through S10) completes on the GPU. The results can be referenced while still in device buffers (S11), and `Detector::detect_async` returns without host synchronization. To use them on the host, retrieve them with `download()`.
+- The kernel launch sequence for one frame is folded into a CUDA Graph.
+- No device memory is allocated during detection. Peak workspace usage is 17.51 MB with the ArUco3 detection strategy enabled and 414.51 MB with it disabled. Detecting all 91 scenes of the synthetic corpus does not increase the allocation count.
+- All 402 automated tests pass on all three machines below. Compute Sanitizer applies its four tools (memcheck / racecheck / initcheck / synccheck) to two executables, and all 8 combinations pass on all three machines.
 
-| 機体 | architecture | GPU | Compute Capability | CUDA | CPU |
+| Machine | Architecture | GPU | Compute Capability | CUDA | CPU |
 | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | aarch64 | NVIDIA GB10 (統合) | 12.1 | 13.0 | Cortex-X925 x10 + Cortex-A725 x10 |
-| Jetson AGX Orin | aarch64 | Orin (統合) | 8.7 | 11.4 | Cortex-A78AE x12 (MAXN) |
-| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti (単体) | 12.0 | 13.0 | Core Ultra 7 265 |
+| DGX Spark GB10 | aarch64 | NVIDIA GB10 (integrated) | 12.1 | 13.0 | Cortex-X925 x10 + Cortex-A725 x10 |
+| Jetson AGX Orin | aarch64 | Orin (integrated) | 8.7 | 11.4 | Cortex-A78AE x12 (MAXN) |
+| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti (discrete) | 12.0 | 13.0 | Core Ultra 7 265 |
 
-統合 GPU 2 機と単体 GPU 1 機という構成は、統合 GPU 固有の結果と一般に成り立つ結果を切り分けるためのものです。
+The configuration of two integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
 
-正確性は 3 経路 x 3 機の全 18 組合せで precision 100% であり、false positive と ID 誤りは 0 件です。ArUco3 検出戦略は縮小後の 1 辺が下限を下回るマーカーを原理上検出しないため、recall は corpus 全体で 18.33%、下限以上のマーカーに限れば 94.44% です。速度は検出のみを測った end-to-end 時間を 28 場面 x 3 経路 x 3 機で比べています。画像の読み込みと checksum は測定区間に含みません。合成 corpus では CPU が有利なのは 640x480 かつ検出が 1 件以上ある場面だけです。実画像では輪郭点数が増えて境界が動く可能性がありますが、確かめていません。
+For accuracy, precision is 100% across all 18 combinations of 3 routes x 3 machines, with zero false positives and zero ID errors. Because the ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below the lower bound, recall is 18.33% over the whole corpus and 94.44% when limited to markers at or above that bound. For speed, end-to-end times measuring detection only are compared across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not part of the measured interval. On the synthetic corpus, the CPU is favored only in scenes that are 640x480 and contain at least one detection. On real images the contour point count may increase and move the boundary, but we have not verified this.
 
-### 検出の段構成
+### Detection stage structure
 
-入力から ID と四隅までを次の順に処理します。すべて device 上で走り、段の間で host へ戻しません。
+Input is processed into IDs and corners in the following order. Every step runs on the device, with no return to the host between stages.
 
 ```mermaid
 flowchart TD
-    IN["入力画像"] --> S1["S1 pyramid"]
-    S1 --> S2["S2 segmentation 縮小"]
-    S2 --> S3["S3 適応的二値化"]
-    S3 --> S4["S4 連結成分ラベリング"]
-    S4 --> S5["S5 極点探索による四隅推定"]
-    S5 --> S6["S6 フィルタと compaction"]
-    S6 --> S7["S7 射影変換とセル sampling"]
-    S7 --> S8["S8 Otsu・border 検証・Dictionary 照合"]
-    S8 --> S9["S9 包含木による識別の打ち切りと詰め直し"]
-    S9 --> S10["S10 四隅の subpixel 補正と原寸への復元"]
-    S10 --> S11["S11 device 上の結果"]
+    IN["Input image"] --> S1["S1 pyramid"]
+    S1 --> S2["S2 segmentation downscale"]
+    S2 --> S3["S3 adaptive thresholding"]
+    S3 --> S4["S4 connected component labeling"]
+    S4 --> S5["S5 corner estimation by extreme point search"]
+    S5 --> S6["S6 filtering and compaction"]
+    S6 --> S7["S7 perspective transform and cell sampling"]
+    S7 --> S8["S8 Otsu, border verification, dictionary matching"]
+    S8 --> S9["S9 identification suppression and repacking via containment tree"]
+    S9 --> S10["S10 subpixel corner refinement and restoration to full scale"]
+    S10 --> S11["S11 results on device"]
 ```
 
-各段が何を保証するかは次のとおりです。「bit 一致」は、CPU 基準または OpenCV を逐語で写した oracle と 1 bit も違わないことを test で固定していることを指します。
+What each stage guarantees is as follows. "Bit-identical" means that tests pin the result to differ by not a single bit from the CPU reference or from an oracle transcribed verbatim from OpenCV.
 
-| 段 | 内容 | 保証 |
+| Stage | Content | Guarantee |
 | --- | --- | --- |
-| S1 | pyramid の生成 | OpenCV の `buildPyramid` と全 level で bit 一致 |
-| S2 | segmentation 画像への縮小 | 最大 1 階調の差を許容する。OpenCV の `INTER_LINEAR` は `softdouble` と `ufixedpoint16` によるソフトウェア浮動小数点の bit exact 経路であり、kernel へ移していない |
-| S3 | 適応的二値化 | OpenCV の `adaptiveThreshold` と bit 一致。行方向と列方向へ分けて積むため中間の丸めが入らない |
-| S4 | 連結成分ラベリング | label は root の線形 index の昇順に採番し、atomics の到着順に依存しない |
-| S5 | 極点探索による四隅推定 | 四隅が定まらない成分 (1 画素、幅 1 画素の直線) を無効として落とす |
-| S6 | 四角形らしさの判定と compaction | 候補上限を超えた場合は `kCandidateOverflow` を返して打ち切る |
-| S7 | 射影変換とセル sampling | 積和を融合しない側へ揃える。x86_64 の OpenCV と byte 単位で一致し、aarch64 では OpenCV 側が NEON の融合積和を使うためわずかに残差が出る |
-| S8 前半 | Otsu と border 検証 | `minOtsuStdDev` と border 誤り率の境界で CPU 基準と判定が一致する。機種差は出ない |
-| S8 後半 | Dictionary 照合 | 全 ID の 4 回転について ID・回転・距離が CPU 基準とも OpenCV とも一致する |
-| S9 | 包含木と識別の打ち切り | 包含判定が `cv::pointPolygonTest` と一致し、打ち切りの結果が CPU 基準と一致する |
-| S10 | 四隅の subpixel 補正と原寸への復元 | 逐語 oracle と 3 機すべてで bit 一致。実際の `cv::cornerSubPix` とは許容差で見る |
-| S11 | 結果の出力 | host 同期なしで device 上の結果を参照できる |
+| S1 | Pyramid generation | Bit-identical to OpenCV's `buildPyramid` at every level |
+| S2 | Downscale to the segmentation image | A difference of at most 1 gray level is tolerated. OpenCV's `INTER_LINEAR` is a bit-exact software floating-point path built on `softdouble` and `ufixedpoint16`, and has not been ported to a kernel |
+| S3 | Adaptive thresholding | Bit-identical to OpenCV's `adaptiveThreshold`. Accumulation is split into row and column directions, so no intermediate rounding occurs |
+| S4 | Connected component labeling | Labels are numbered in ascending order of the root's linear index, independent of the arrival order of atomics |
+| S5 | Corner estimation by extreme point search | Components whose corners cannot be determined (a single pixel, a one-pixel-wide line) are marked invalid and dropped |
+| S6 | Squareness test and compaction | If the candidate limit is exceeded, `kCandidateOverflow` is returned and processing is suppressed |
+| S7 | Perspective transform and cell sampling | Aligned to the non-fused multiply-add side. Matches x86_64 OpenCV byte for byte; on aarch64 a slight residual appears because OpenCV uses NEON fused multiply-add |
+| S8 first half | Otsu and border verification | Decisions match the CPU reference at the boundaries of `minOtsuStdDev` and the border error rate. No machine-to-machine differences appear |
+| S8 second half | Dictionary matching | ID, rotation, and distance match both the CPU reference and OpenCV for all 4 rotations of every ID |
+| S9 | Containment tree and identification suppression | Containment decisions match `cv::pointPolygonTest`, and the suppression results match the CPU reference |
+| S10 | Subpixel corner refinement and restoration to full scale | Bit-identical to the verbatim oracle on all three machines. Compared against actual `cv::cornerSubPix` with a tolerance |
+| S11 | Result output | Results on the device can be referenced without host synchronization |
 
-段ごとの詳細と、互換対象である OpenCV 4.x の観測仕様は [検出パイプライン設計](design/detector-pipeline.md) にあります。
+Per-stage details and the observed behavior of OpenCV 4.x, the compatibility baseline, are in [detection pipeline design](design/detector-pipeline.md).
 
-### 主要な設計判断
+### Main design decisions
 
-#### 候補抽出は連結成分ラベリングと極点探索で行う
+#### Candidate extraction uses connected component labeling and extreme point search
 
-二値化画像を host へ戻して CPU の輪郭追跡で四隅を求める経路 (Hybrid) と比べ、GPU 上のラベリングと極点探索は場面の内容によって時間がほとんど変わりません。速度は場面により優劣が入れ替わりますが、遅い場面が無いことを採用の理由としています。決定と撤回条件は [ADR-0003](adr/0003-candidate-extraction-approach.md) にあります。
+Compared with the route that copies the thresholded image back to the host and finds the corners with CPU contour tracing (Hybrid), labeling and extreme point search on the GPU take almost the same time regardless of scene content. Which is faster varies by scene, but the absence of slow scenes is the reason for adopting it. The decision and the conditions for reversing it are in [ADR-0003](adr/0003-candidate-extraction-approach.md).
 
-欠点は 2 つあります。OpenCV は代表候補の識別が失敗したとき同じ group の別候補を試す経路 (`closeContours`) を持ちますが、この方式には対応する経路がありません。また四隅の推定方法が OpenCV の多角形近似と違うため、subpixel 補正を切ると差はすべて sqrt(2) = 1.414 px になります。整数座標の四隅が斜めに 1 pixel ずれた距離であり、補正がこの違いを吸収して差異を 18 件から 1 件へ減らします。
+There are two drawbacks. OpenCV has a route (`closeContours`) that tries other candidates in the same group when identification of the representative candidate fails; this approach has no corresponding route. Also, because the corner estimation method differs from OpenCV's polygon approximation, turning off subpixel refinement makes every difference sqrt(2) = 1.414 px. That is the distance of a diagonal one-pixel shift of integer-coordinate corners, and the refinement absorbs this difference, reducing the discrepancies from 18 to 1.
 
-ラベリングは 8 近傍とします。OpenCV の `findContours` が前景を 8 連結として辿るため、4 近傍では対角にのみ接する前景が別成分になって候補が割れます。label 統計の配列は label 数の上限 `ceil(W/2) * ceil(H/2)` で確保します。8 近傍では別成分どうしが縦横斜めのいずれでも接せないため 1 画素飛ばしの配置が上限であり、上限で確保すれば統計側に溢れの経路を持たずに済みます。
+Labeling uses 8-connectivity. Because OpenCV's `findContours` traces the foreground as 8-connected, 4-connectivity would place foreground pixels that touch only diagonally into separate components and split candidates. The label statistics array is allocated at the upper bound on the label count, `ceil(W/2) * ceil(H/2)`. With 8-connectivity, distinct components cannot touch vertically, horizontally, or diagonally, so an every-other-pixel arrangement is the upper bound; allocating at that bound removes the need for an overflow path on the statistics side.
 
-四角形らしさの判定には 2 つの比が要ります。成分画素が推定四角形へ収まる割合だけでは L 字と十字を落とせず、各辺の近くにある成分画素の数だけでは円を落とせません。両方を要求して既定値をその間に置いています。
+The squareness test needs two ratios. The fraction of component pixels that fall inside the estimated quadrilateral alone cannot reject L shapes and crosses, and the count of component pixels near each edge alone cannot reject circles. Both are required, with the defaults placed between them.
 
-#### 近接候補の grouping まで写さないと四隅が一致しない
+#### The corners do not match unless grouping of nearby candidates is also transcribed
 
-適応的二値化は window を 3 通り試すため、同じマーカーから少しずつ違う候補が得られます。OpenCV は識別の前に候補を周長の降順へ並べ、近接するものを 1 グループにまとめ、グループ内で最大周長の候補を代表に選びます。この grouping を省いて識別後に ID と位置で重複を落とすと、最小 window 由来の小さい候補が残って四隅が内側へ寄り、原寸へ戻した時点で無視できない差になります。grouping、包含関係の木、親候補の識別打ち切りまで写して差が 0 になります。
+Adaptive thresholding tries three window sizes, so slightly different candidates are obtained from the same marker. Before identification, OpenCV sorts candidates in descending order of perimeter, collects nearby ones into a single group, and selects the candidate with the largest perimeter in the group as the representative. If this grouping is skipped and duplicates are instead removed by ID and position after identification, small candidates originating from the smallest window survive, the corners shift inward, and the difference becomes non-negligible once restored to full scale. Transcribing grouping, the containment relation tree, and the identification suppression of parent candidates brings the difference to zero.
 
-#### 重複除去という段は存在しない
+#### There is no deduplication stage
 
-`detectMarkers` には ID による重複除去がありません。同じ ID のマーカーが離れた位置に 2 枚あれば 2 件とも出ます。重複が消えるのは包含木による識別の打ち切りの結果です。黒枠の外周と内周が両方候補になるため、内側でマーカーが見つかったらそれを囲む候補は識別せずに済ませます。GPU 化にあたって外せない規則は 4 つあります。
+`detectMarkers` has no deduplication by ID. If two markers with the same ID are at separate positions, both are reported. Duplicates disappear as a consequence of identification suppression via the containment tree. Because both the outer and inner edges of the black border become candidates, once a marker is found inside, the candidate surrounding it need not be identified. Four rules cannot be dropped when moving this to the GPU.
 
-1. `parent[i]` は `j < i` を満たす最大の j です。index は周長の降順なので「囲むもののうち最も内側」を意味します。
-2. 段数の伝播は index の降順に行います。並列にすると、まだ確定していない段数を読みます。
-3. 包含判定は `pointPolygonTest` の crossing number をそのまま写し、境界を内側として扱います。極点探索で作る四角形は凹になりうるため、凸性を仮定した符号一致では代用できません。交差積は 64 bit 整数で計算します。
-4. 到達数の二重計上を保ちます。祖先として数えた候補を、自分の段に来たときもう一度数えます。打ち切りを早める方向に働くため、候補単位の厳密な抑止へ書き換えると結果が変わります。
+1. `parent[i]` is the largest j satisfying `j < i`. Since indices are in descending order of perimeter, this means "the innermost of those that enclose it."
+2. Depth propagation proceeds in descending index order. Doing it in parallel would read depths that are not yet settled.
+3. The containment test transcribes the crossing number of `pointPolygonTest` as is, treating the boundary as inside. Quadrilaterals produced by extreme point search can be concave, so a sign-agreement test that assumes convexity cannot substitute for it. Cross products are computed in 64-bit integers.
+4. The double counting of the reach count is preserved. A candidate counted as an ancestor is counted again when its own depth is reached. Since this works in the direction of suppressing earlier, rewriting it as strict per-candidate suppression changes the results.
 
-#### Dictionary 照合には見落としやすい規則が 2 つある
+#### Dictionary matching has two rules that are easy to overlook
 
-セル比を 1 つの bit 列へ潰せません。OpenCV は「黒ではない」(比が閾値より大きい) と「白ではない」(比が 1 - 閾値より小さい) の 2 つの mask を作ります。既定の閾値 0.49 では両方に立つ比が存在し、bit が 0 でも 1 でも誤りとして数えられます。1 つの bit 列へ潰すとこの第 3 の状態が消えます。誤り数は分岐なしに求まります。
+Cell ratios cannot be collapsed into a single bit string. OpenCV builds two masks: "not black" (ratio greater than the threshold) and "not white" (ratio less than 1 - threshold). At the default threshold of 0.49 there are ratios that set both, and they are counted as errors whether the bit is 0 or 1. Collapsing into a single bit string eliminates this third state. The error count is obtained without branching.
 
 ```
-誤り = not_black ^ ((not_black ^ not_white) & codeword)
+error = not_black ^ ((not_black ^ not_white) & codeword)
 ```
 
-もう 1 つは、最小距離の ID ではなく条件を満たした最初の ID を採ることです。OpenCV は ID の昇順に見て、許容距離を満たした時点で打ち切ります。`DICT_ARUCO_MIP_36h12` は収録間の最小距離が許容距離より大きいため両者は一致しますが、規則としては別物です。GPU 側は条件を満たした ID の `atomicMin` で同じ結果を得ます。
+The other rule is that the first ID satisfying the condition is taken, not the ID with the minimum distance. OpenCV scans IDs in ascending order and stops as soon as the allowed distance is satisfied. For `DICT_ARUCO_MIP_36h12` the minimum distance among the entries is greater than the allowed distance, so the two agree, but as rules they are distinct. The GPU side obtains the same result with an `atomicMin` over the IDs satisfying the condition.
 
-#### 支持する設定の組み合わせを 2 つに絞る
+#### Supported configuration combinations are narrowed to two
 
-| `use_aruco3_detection_` | `corner_refine_method_` | 可否 |
+| `use_aruco3_detection_` | `corner_refine_method_` | Allowed |
 | --- | --- | --- |
-| true | kSubpix | 可。四隅は原寸 |
-| false | kNone | 可。縮小しないため原寸 |
-| true | kNone | 拒否。四隅が縮小後の座標のまま残る |
-| false | kSubpix | 拒否。段が 1 つしかなく補正が走らない |
+| true | kSubpix | Allowed. Corners are at full scale |
+| false | kNone | Allowed. No downscaling, so full scale |
+| true | kNone | Rejected. Corners would remain in post-downscale coordinates |
+| false | kSubpix | Rejected. There is only one stage, so refinement never runs |
 
-縮小後の座標を原寸へ戻す処理は S10 の段登りにしかありません。ArUco3 検出戦略を有効にして補正を切ると、四隅が segmentation 座標のまま出ます。逆に無効では pyramid が 1 段しかなく、段登りが 1 度も回りません。どちらも黙って通すと座標系が食い違うため、`initialize` が `kInvalidConfig` で拒否します。OpenCV 自身は ArUco3 有効時に `cornerRefinementMethod` を SUBPIX へ無条件で上書きするため、本実装も同じ上書きを設定の側で明示します。
+The processing that restores post-downscale coordinates to full scale exists only in the stage climb of S10. Enabling the ArUco3 detection strategy and turning off refinement emits corners still in segmentation coordinates. Conversely, with it disabled the pyramid has only one level, so the stage climb never runs. Since silently allowing either would leave the coordinate systems inconsistent, `initialize` rejects them with `kInvalidConfig`. OpenCV itself unconditionally overwrites `cornerRefinementMethod` with SUBPIX when ArUco3 is enabled, so this implementation makes the same overwrite explicit on the configuration side.
 
-#### workspace は 2 本に分け、確保量は正方形の上界から求める
+#### The workspace is split into two, and the allocation size is derived from a square upper bound
 
-Dictionary は frame をまたいで生きるため専用の arena に置き、残りの段は frame ごとに `reset()` して切り出し直します。切り出しは host の計算だけで CUDA API を呼ばないため、frame ごとに回しても確保回数は 1 のままです。`allocate()` は容量が足りなくても自動で拡張しません。自動拡張は frame ごとの確保を静かに生むためです。
+Because the dictionary lives across frames, it is placed in a dedicated arena, while the remaining stages are re-carved with `reset()` every frame. Carving involves only host-side computation and calls no CUDA API, so the allocation count stays at 1 even when run every frame. `allocate()` does not automatically grow when capacity is insufficient, because automatic growth would silently produce per-frame allocations.
 
-確保量は上限の寸法をそのまま入れても求まりません。縮小率は `fxfy = S / (S + max(W, H) * tau)` であり分母に長辺が入るため、上限より小さい入力の方が segmentation 画像が大きくなることがあります。`fxfy * W` は `W` について単調増加なので、正方形として計算した幅と高さをそれぞれの上界に使います。
+The allocation size cannot be obtained by simply plugging in the maximum dimensions. The downscale factor is `fxfy = S / (S + max(W, H) * tau)`, and since the long side appears in the denominator, an input smaller than the maximum can yield a larger segmentation image. Because `fxfy * W` is monotonically increasing in `W`, the width and height computed as a square are used as the respective upper bounds.
 
-#### 結果は面ごとの並び (SoA) で持つ
+#### Results are held as separate planes (SoA)
 
-`DeviceDetections` は四隅を `float2` の配列ではなく面ごとの float 配列で持ちます。S5 から S10 までが同じ添字の規則で一貫しており、S10 は同じ添字で in-place に書き戻すためです。公開 header が `vector_types.h` へ依存しない利点もあります。
+`DeviceDetections` holds the corners as per-plane float arrays rather than an array of `float2`. This is because S5 through S10 are consistent in their indexing convention, and S10 writes back in place at the same index. It also has the advantage that the public headers do not depend on `vector_types.h`.
 
-#### 丸めを固定する
+#### Rounding is pinned
 
-`cell_decode.cu` は `-fmad=false` で compile します。融合を許すと分散が `minOtsuStdDev` の境界でずれ、低分散の分岐へ入るかどうかが変わります。S7 も積和を融合しない側へ揃えています。OpenCV 自身が機種間で bit 一致しないため、どちらへ揃えるかを決めておかないと機種ごとに基準が変わります。
+`cell_decode.cu` is compiled with `-fmad=false`. Allowing fusion shifts the variance at the `minOtsuStdDev` boundary, changing whether the low-variance branch is taken. S7 is likewise aligned to the non-fused multiply-add side. Since OpenCV itself is not bit-identical across machines, without deciding which side to align to, the reference would vary by machine.
 
-#### 起動費用は kernel の数と形で減らす
+#### Startup cost is reduced through the number and shape of kernels
 
-完全 GPU 経路は固定費が高く、仕事量に対して平坦です。段別に切り分けると、固定費の大半は S10 の四隅補正と S8 前半の Otsu が占め、検出 0 件の場面では kernel 起動そのものが最小値の半分近くを占めます。これに対して 3 つ手を入れました。
+The fully-GPU route has a high fixed cost that is flat with respect to the amount of work. Broken down by stage, most of the fixed cost is taken by the S10 corner refinement and the S8 first-half Otsu, and in scenes with zero detections the kernel launches themselves account for nearly half of the minimum value. Three changes were made in response.
 
-- S10 の補正を隅ごとの並列から要素ごとの並列へ変える。
-- Otsu の閾値計算を 3 相へ分ける。重心の集計と分離度の探索は要素ごとに独立なので並列にし、漸化式だけを 1 thread の逐次で回す。
-- 1 frame の発行列を CUDA Graph へ畳む。
+- Change the S10 refinement from per-corner parallelism to per-element parallelism.
+- Split the Otsu threshold computation into three phases. Accumulating the centroid and searching for the separation measure are independent per element, so they are parallelized, and only the recurrence is run sequentially on one thread.
+- Fold the launch sequence for one frame into a CUDA Graph.
 
-丸めは 1 bit も変わりません。CPU 比 (1 未満が GPU 有利) の変化は次のとおりです。
+Rounding does not change by a single bit. The changes in the ratio to CPU (below 1 favors the GPU) are as follows.
 
-| 場面 | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
+| Scene | DGX Spark | Jetson AGX Orin | RTX 5070 Ti |
 | --- | --- | --- | --- |
-| 1280x720 マーカー 4 枚 | 1.94 → 0.98 | 1.08 → 0.66 | 1.32 → 0.68 |
-| 3840x2160 マーカー 4 枚 | 0.99 → 0.45 | 0.46 → 0.30 | 0.60 → 0.28 |
+| 1280x720, 4 markers | 1.94 → 0.98 | 1.08 → 0.66 | 1.32 → 0.68 |
+| 3840x2160, 4 markers | 0.99 → 0.45 | 0.46 → 0.30 | 0.60 → 0.28 |
 
-それでも 640x480 で検出がある場面では CPU が速いままです。境界を決めるのは解像度でも候補数でもなく二値化後の輪郭点数で、輪郭点 1e5 あたりの係数は CPU 2.48 から 5.35 ms、CUDA-Resident 0.041 から 0.278 ms です。Hybrid の係数は CPU とほぼ同じ (2.54 から 5.48 ms) で、輪郭抽出から先を host で行うためです。
+Even so, the CPU remains faster in 640x480 scenes with detections. What determines the boundary is neither the resolution nor the candidate count but the contour point count after thresholding: the coefficient per 1e5 contour points is 2.48 to 5.35 ms for CPU and 0.041 to 0.278 ms for CUDA-Resident. Hybrid's coefficient is nearly the same as the CPU's (2.54 to 5.48 ms), because it performs everything from contour extraction onward on the host.
 
-#### 機に依存する値は設定ではなく device 属性から導く
+#### Machine-dependent values are derived from device attributes rather than configuration
 
-block size は 8 / 16 / 32 を振った実測で 3 機とも 16 が最良でした。設定として露出しても変える理由がないため、`cuda_block_dim_` の既定値のままにしています。代わりに S10 の補正で起こす block 数を、SM 数の 2 倍と仕事量の上限の小さい方から決めます。効果は控えめですが、固定値をやめること自体に意味があります。隅の上限をそのまま block 数にしていたときは、SM 数の少ない Jetson AGX Orin で大きく悪化しました。共有 memory を使う kernel では、1 SM に載る block が限られて起動が波に分かれるためです。SM 数の桁が違う機を足したときに同じ事故が構造的に起きなくなります。
+In measurements sweeping block sizes of 8 / 16 / 32, 16 was the best on all three machines. Since there is no reason to change it even if it were exposed as a setting, `cuda_block_dim_` is left at its default. Instead, the number of blocks launched for the S10 refinement is determined as the smaller of twice the SM count and the upper bound on the amount of work. The effect is modest, but doing away with a fixed value has value in itself. When the corner upper bound was used directly as the block count, the Jetson AGX Orin, with its smaller SM count, degraded significantly. In kernels that use shared memory, the number of blocks that fit on one SM is limited, so launches split into waves. Adding a machine with an SM count of a different order of magnitude will no longer cause the same accident structurally.
 
-### 検証戦略
+### Verification strategy
 
-| 層 | 対象 | 実行頻度 |
+| Layer | Target | Frequency |
 | --- | --- | --- |
-| unit | 型、設定検証、host 側の境界処理、kernel 単体 | 全 commit |
-| conformance | Dictionary の ID 数、markerSize、4 回転 codeword、訂正境界 | 全 commit |
-| differential | CPU 基準結果との ID・rotation・四隅の比較 | 全 commit |
-| robustness | 0 マーカー、上限超過、非連続 pitch、ROI、極小画像、null pointer、memory 空間の不一致 | 全 commit |
-| cli | CLI の引数解析。正常系、異常系、境界値を実行 file の起動で検証 | 全 commit |
-| doc | 公開 API の Doxygen 要件の充足を機械検査 | 全 commit |
-| sanitizer | Compute Sanitizer の 4 mode | `ctest -L sanitizer` |
-| coverage | C0 と C1 の測定と未達理由の確認 | 変更時 |
-| benchmark | end-to-end 時間と latency 分布 | 変更時 |
+| unit | Types, configuration validation, host-side boundary handling, individual kernels | Every commit |
+| conformance | Dictionary ID count, markerSize, 4-rotation codewords, correction boundaries | Every commit |
+| differential | Comparison of ID, rotation, and corners against the CPU reference results | Every commit |
+| robustness | Zero markers, exceeding limits, non-contiguous pitch, ROI, tiny images, null pointers, memory space mismatches | Every commit |
+| cli | CLI argument parsing. Normal, abnormal, and boundary cases verified by launching the executable | Every commit |
+| doc | Machine check that the public API satisfies the Doxygen requirements | Every commit |
+| sanitizer | The 4 Compute Sanitizer modes | `ctest -L sanitizer` |
+| coverage | Measuring C0 and C1 and confirming the reasons for shortfalls | On change |
+| benchmark | End-to-end time and latency distribution | On change |
 
-bit 一致を要求する対象と許容差で見る対象を分けています。pyramid、適応的二値化、Dictionary 照合、Dictionary の生成物、S10 の逐語 oracle との比較は bit 一致です。segmentation の 1 階調差、S7 の aarch64 での残差、実際の `cv::cornerSubPix` との差、四隅の RMSE は許容差で見ます。
+Targets requiring bit-identical results are separated from those checked with a tolerance. The pyramid, adaptive thresholding, dictionary matching, the dictionary's generated data, and the comparison of S10 against the verbatim oracle are bit-identical. The 1-gray-level segmentation difference, the S7 residual on aarch64, the difference from actual `cv::cornerSubPix`, and the corner RMSE are checked with a tolerance.
 
-S10 の検証を 2 段に分けているのは、この段だけ浮動小数の演算順序が結果へ離散的に効くためです。1 ULP の差が反復回数を 1 回変え、収束不良で初期位置へ戻す分岐の採否を反転させます。そこで第 1 に、`cv::cornerSubPix` と `cv::getRectSubPix` を host へ逐語で写した oracle と bit 一致することを要求します。oracle は `-ffp-contract=off` で compile し、GPU 側の `-fmad=false` と意味論を揃えます。第 2 に、実際の OpenCV との差を許容差で見ます。退化した入力では aarch64 で収束不良の判定が反転し、窓の半径の分だけ四隅が動きます。丸めの差が離散的な分岐へ増幅された結果であり、同じ入力で oracle とは bit 一致しています。実運用に近い入力では 3 機とも RMSE が十分小さく収まります。
+The S10 verification is split into two levels because this stage alone has floating-point operation order affecting the result discretely. A 1 ULP difference changes the iteration count by one and flips whether the branch that reverts to the initial position on convergence failure is taken. So, first, we require bit-identical results against an oracle that transcribes `cv::cornerSubPix` and `cv::getRectSubPix` verbatim onto the host. The oracle is compiled with `-ffp-contract=off` to align its semantics with `-fmad=false` on the GPU side. Second, the difference from actual OpenCV is checked with a tolerance. With degenerate inputs, the convergence-failure decision flips on aarch64 and the corners move by the window radius. This is a rounding difference amplified into a discrete branch, and for the same input the result is bit-identical to the oracle. For inputs closer to real use, the RMSE stays sufficiently small on all three machines.
 
-差分レポートは CPU 基準と評価対象を同じ画像へ適用し、差異を未検出・過検出・ID 不一致・rotation 不一致・四隅ずれの 5 種類へ分類します。対応付けは ID ではなく重心の近さで行います。ID で対応を取ると、ID を読み違えた場合に未検出と過検出が 1 件ずつ計上され、実際に起きたことが読み取れなくなるためです。rotation 不一致は、四隅の並びを巡回させると許容差内に収まる場合として判定します。`detectMarkers` は回転量を返さず回転を四隅の並びへ畳み込むため、これが回転の差を見る唯一の手段です。
+The differential report applies the CPU reference and the evaluation target to the same image and classifies discrepancies into five kinds: missed detection, extra detection, ID mismatch, rotation mismatch, and corner deviation. Correspondence is established by centroid proximity rather than by ID. If correspondence were taken by ID, a misread ID would be counted as one missed detection plus one extra detection, making what actually happened unreadable. A rotation mismatch is decided as the case where cyclically shifting the corner ordering brings it within tolerance. Because `detectMarkers` does not return a rotation amount and instead folds rotation into the corner ordering, this is the only way to see rotation differences.
 
-CPU 基準は互換性の oracle であって ground truth ではありません。基準自身が取りこぼしたマーカーは差異として現れないため、合成 corpus の真値と突き合わせる経路を `tools/evaluate` として別に持たせています。
+The CPU reference is a compatibility oracle, not ground truth. Markers that the reference itself misses do not appear as discrepancies, so a separate route that checks against the synthetic corpus's ground truth is provided as `tools/evaluate`.
 
-`tools/check_doxygen.py` は公開ヘッダの宣言を列挙し、規約が求める 7 要素 (目的、引数、戻り値、所有権、同期動作、入力例、出力例) の欠落を検出します。所有権と同期動作が class 全体で共通する場合は、class の Doxygen へその旨を明記して member 側の記載に代えます。同一の記述を member ごとに複写すると冗長になるためです。
+`tools/check_doxygen.py` enumerates the declarations in the public headers and detects missing items among the 7 elements the convention requires (purpose, arguments, return value, ownership, synchronization behavior, input example, output example). When ownership and synchronization behavior are common across an entire class, this is stated in the class's Doxygen in place of describing it on each member, because copying identical text onto every member would be redundant.
 
-Compute Sanitizer の実行では、意図的に CUDA API を失敗させる test を suite 名で除外します。除外しないと意図した失敗が指摘として現れ、本物の問題が埋もれます。racecheck は既定では block の完了まで解析を溜めるため、共有 memory を多く使う kernel があると解析の状態が上限に達します。単体 GPU 機では `--force-synchronization-limit 1` を指定します。
+In Compute Sanitizer runs, tests that intentionally make CUDA APIs fail are excluded by suite name. Without excluding them, the intended failures show up as reports and bury real problems. By default racecheck accumulates analysis until block completion, so with kernels that use a lot of shared memory the analysis state reaches its limit. On discrete-GPU machines, `--force-synchronization-limit 1` is specified.
 
-規則を写した実装は、規則を壊しても test が通らないことまで確認します。上に挙げた包含木の 4 規則には変異を実際に注入し、すべてが test で捕まることを確かめています。
+For implementations that transcribe a rule, we also confirm that breaking the rule makes the tests fail. Mutations were actually injected into the four containment tree rules listed above, and all of them were confirmed to be caught by the tests.
 
-### カバレッジ
+### Coverage
 
-`coverage` preset で C0 と C1 を測ります。`cmake --build build/coverage --target coverage-report` が `ctest` を実行してから `gcovr` で集計します。C0 と C1 は 100% を目標としますが到達していません。対象は C++ の翻訳単位のみで、`.cu` は nvcc が compile するため gcov の計測に入りません。`src/core` の kernel だけでなく、同じ file にある host 側の `reserve_*` と `*_workspace_bytes` も計測外です。これらは `test/reference` の各 test から正常系・異常系ともに呼ばれ、引数不正と容量不足の経路も test で固定していますが、行として数えられていません。
+C0 and C1 are measured with the `coverage` preset. `cmake --build build/coverage --target coverage-report` runs `ctest` and then aggregates with `gcovr`. C0 and C1 target 100% but have not reached it. Only C++ translation units are covered; `.cu` files are compiled by nvcc and therefore fall outside gcov's measurement. Not only the kernels in `src/core` but also the host-side `reserve_*` and `*_workspace_bytes` in the same files are outside the measurement. These are called from each test in `test/reference` in both normal and abnormal cases, and the invalid-argument and insufficient-capacity paths are pinned by tests, but they are not counted as lines.
 
-未到達行の内訳は次のとおりです。
+The breakdown of unreached lines is as follows.
 
-| 分類 | 内容 | 扱い |
+| Category | Content | Handling |
 | --- | --- | --- |
-| 外部資源の獲得失敗 | `popen` の失敗、`ofstream` の書き込み失敗、`cudaMalloc` の失敗 | 対象外。故障注入の仕組みが無いと再現できない |
-| OpenCV 内部の失敗 | `cv::imwrite` の失敗、`getPerspectiveTransform` の異常入力 | 対象外。OpenCV 側の内部状態に依存し、外から誘発できない |
-| CUDA API の失敗経路 | `cudaGetDeviceProperties` や `cudaMemcpy` の失敗 | 対象外。`check_cuda` の記録経路自体は別 test で検証している |
-| 到達不能な防御的分岐 | 順位の下限、列挙に無い値の既定処理 | 対象外。仕様上到達しないが、将来の変更に対する防御として残す |
-| CUDA device code | 自己診断用の kernel | gcov は device code を計測できない。入力分割と境界値で経路を確認する |
-| 候補 grouping の代替経路 | `close_contours_` を使う再識別 | 対象外。代表候補の識別が失敗し、かつ同一 group に離れた候補が残る場面を合成で作れていない |
-| 同一 ID の並び替え | 検出結果の整列で ID が等しい場合の比較 | 対象外。合成 corpus は 1 場面に同じ ID を置かない |
+| Failure to acquire external resources | `popen` failure, `ofstream` write failure, `cudaMalloc` failure | Out of scope. Cannot be reproduced without a fault injection mechanism |
+| Failures inside OpenCV | `cv::imwrite` failure, abnormal input to `getPerspectiveTransform` | Out of scope. Depends on OpenCV's internal state and cannot be induced from outside |
+| CUDA API failure paths | Failure of `cudaGetDeviceProperties` or `cudaMemcpy` | Out of scope. The `check_cuda` recording path itself is verified by separate tests |
+| Unreachable defensive branches | Lower bound on rank, default handling for values not in the enumeration | Out of scope. Unreachable by specification, but kept as a defense against future changes |
+| CUDA device code | Kernels for self-diagnosis | gcov cannot measure device code. Paths are confirmed through input partitioning and boundary values |
+| Alternate route for candidate grouping | Re-identification using `close_contours_` | Out of scope. We have not been able to synthesize a scene where identification of the representative candidate fails and separated candidates remain in the same group |
+| Reordering of identical IDs | The comparison for equal IDs when sorting detection results | Out of scope. The synthetic corpus never places the same ID twice in one scene |
 
-`main.cpp` の CLI 層は `test/cli/` の ctest から実行 file を起動して測定に含めています。
+The CLI layer in `main.cpp` is included in the measurement by launching the executable from the ctest cases in `test/cli/`.
 
-### 測定上の注意
+### Cautions regarding measurement
 
-**CPU の core 種別を固定します。** DGX Spark GB10 は性能 core と効率 core の混成であり、同じ条件でも効率 core へ割り当てられると 2 倍近く遅くなります。固定しない測定は割り当て次第で二極化し、GPU 側の優位が実際より大きく見えます。Jetson AGX Orin は均一構成のためこの影響を受けません。
+**Pin the CPU core type.** The DGX Spark GB10 mixes performance and efficiency cores, and being assigned to an efficiency core makes it nearly twice as slow under the same conditions. Measurements without pinning become bimodal depending on the assignment, making the GPU's advantage look larger than it is. The Jetson AGX Orin has a uniform configuration and is not affected.
 
-**address space の無作為化 (ASLR) の状態を結果へ記録します。** 全解像度を扱う CPU 経路では、process ごとの memory 配置の違いだけで p50 が動きます。1 回の実行内の分位点はこの変動を捉えないため、独立した複数 process の中央値と実行間ばらつきを併せて見ます。GPU 経路の実行間ばらつきは CPU 経路より 1 桁大きく、DGX Spark では CPU 0.6% に対し Hybrid 17.7%、CUDA-Resident 14.1% です。
+**Record the state of address space layout randomization (ASLR) with the results.** On the CPU route, which handles all resolutions, p50 moves from nothing more than per-process differences in memory layout. Percentiles within a single run do not capture this variation, so the median across independent processes is examined together with the run-to-run variance. Run-to-run variance on the GPU routes is an order of magnitude larger than on the CPU route: on the DGX Spark it is 17.7% for Hybrid and 14.1% for CUDA-Resident, against 0.6% for CPU.
 
-**1 割程度の差は別 session の比較で判断できません。** 各版の分布の幅が版どうしの差より広いため、同一 session で交互に測る必要があります。
+**Differences on the order of 10% cannot be judged by comparing separate sessions.** Because each version's distribution is wider than the difference between versions, they must be measured alternately within the same session.
 
-**差が小さいとき、起動費用の相殺 frame 数は意味を持ちません。** GPU 経路は 1 枚目の結果が出るまでに時間がかかります (DGX Spark で Hybrid 171.0 ms、CUDA-Resident 174.0 ms、CPU 3.3 ms)。相殺に要する frame 数は起動費用の差を定常時間の差で割った値ですが、DGX Spark の 1280x720 マーカー 4 枚では定常時間が CPU 0.699 ms に対し CUDA-Resident 0.696 ms しか違わず、分母が測定のばらつきに埋もれます。相殺 frame 数は定常差が十分大きい場面でのみ意味を持ちます。
+**When the difference is small, the break-even frames for the startup cost carry no meaning.** The GPU routes take time before the first frame's result is produced (on the DGX Spark, 171.0 ms for Hybrid, 174.0 ms for CUDA-Resident, and 3.3 ms for CPU). The number of frames needed to break even is the difference in startup cost divided by the difference in steady-state time, but for 1280x720 with 4 markers on the DGX Spark, the steady-state time differs by only 0.696 ms for CUDA-Resident against 0.699 ms for CPU, and the denominator is buried in measurement variance. Break-even frames carry meaning only in scenes where the steady-state difference is large enough.
 
-**統合 GPU では page cache が memory の判定に影響します。** device memory と host memory が同一であるため、`cudaMemGetInfo` が返す空きは host 側の空き memory に相当します。page cache が育つと確保に失敗し、測定値も揺れます。測定の前に page cache を落としてください。
+**On integrated GPUs, the page cache affects memory decisions.** Because device memory and host memory are the same, the free amount returned by `cudaMemGetInfo` corresponds to the free host memory. As the page cache grows, allocation fails and measured values fluctuate. Drop the page cache before measuring.
 
-**入力の memory 種別を測定軸として分けます。** managed memory は単体 GPU で 6.4 から 30 倍遅く、統合 GPU でも 1.01 から 1.22 倍にとどまり、pageable より速くなりません。
+**Separate the input's memory type as a measurement axis.** Managed memory is 6.4 to 30 times slower on discrete GPUs, and even on integrated GPUs it stays at 1.01 to 1.22 times, never faster than pageable.
 
-**外れ値を削除せず全分布を保存します。** 測定条件は機械可読形式で結果へ併記し、有利な結果だけが残らないようにします。CUDA Toolkit は開発 container の image へ固定し、version を環境情報へ記録します。compiler が image と分離していると、測定結果を後から再現できません。
+**Preserve the entire distribution without removing outliers.** Measurement conditions are recorded alongside the results in a machine-readable format so that only favorable results do not survive. The CUDA Toolkit is pinned to the development container image, and the version is recorded in the environment information. If the compiler were separated from the image, the measurement results could not be reproduced later.
 
-## 目標
+## Goals
 
-- 実画像 corpus で正確性と速度を測り、crossover point がどこへ動くかを確かめる。
-- 段ごとの時間を CUDA event で測り、host 同期を含む wall-clock と分離して記録する。
-- `.cu` を含めた coverage を測る手段を用意する。
-- 640x480 で検出がある場面の固定費をさらに下げる。
+- Measure accuracy and speed on a real-image corpus and confirm where the crossover point moves.
+- Measure per-stage times with CUDA events and record them separately from wall-clock time that includes host synchronization.
+- Provide a means to measure coverage including `.cu` files.
+- Further reduce the fixed cost in 640x480 scenes with detections.
 
-## 未確定事項
+## Open questions
 
-- 実画像で候補 grouping の代替経路 (`close_contours_`) が必要になるか。合成 corpus では該当する場面を作れていない。
-- DGX Spark で `M-Pinned` が `M-Pageable` より遅い理由。統合 GPU で DMA の利点が無いことは説明できるが、遅くなる分の説明が付いていない。
-- 対応 Dictionary をどの順で広げるか。方針は [Dictionary 方針](dictionaries.md) にある。
-- corpus へ実画像を含める場合の入手条件と配布条件。
+- Whether the alternate route for candidate grouping (`close_contours_`) becomes necessary on real images. We have not been able to create a matching scene in the synthetic corpus.
+- Why `M-Pinned` is slower than `M-Pageable` on the DGX Spark. That DMA offers no advantage on an integrated GPU can be explained, but the amount of the slowdown has not been accounted for.
+- In what order to expand the supported dictionaries. The policy is in [dictionary policy](dictionaries.md).
+- The acquisition and distribution conditions if real images are included in the corpus.
 
-## 関連
+## See also
 
-- [ロードマップ](roadmap.md)
-- [アーキテクチャ](architecture.md)
-- [検出パイプライン設計](design/detector-pipeline.md)
-- [公開 API](design/public-api.md)
-- [Docker 環境設計](design/docker-environment.md)
-- [memory 転送設計](design/memory-transfer.md)
-- [評価計画](evaluation-plan.md)
-- [benchmark 結果まとめ](benchmark-report.md)
-- [正確性評価の結果](accuracy-report.md)
-- [Dictionary 方針](dictionaries.md)
-- [知的財産・ライセンス方針](ip-and-licensing.md)
-- [Code Provenance 記録](code-provenance.md)
-- [ADR-0002: build 基盤と対象環境の baseline を固定する](adr/0002-toolchain-and-target-baseline.md)
-- [ADR-0003: 四角形候補抽出は案 A を主案とする](adr/0003-candidate-extraction-approach.md)
+- [Roadmap](roadmap.md)
+- [Architecture](architecture.md)
+- [Detection pipeline design](design/detector-pipeline.md)
+- [Public API](design/public-api.md)
+- [Docker environment design](design/docker-environment.md)
+- [Memory transfer design](design/memory-transfer.md)
+- [Evaluation plan](evaluation-plan.md)
+- [Benchmark summary](benchmark-report.md)
+- [Accuracy evaluation results](accuracy-report.md)
+- [Dictionary policy](dictionaries.md)
+- [Intellectual property and licensing policy](ip-and-licensing.md)
+- [Code provenance record](code-provenance.md)
+- [ADR-0002: Pin the build infrastructure and target environment baseline](adr/0002-toolchain-and-target-baseline.md)
+- [ADR-0003: Adopt option A as the primary approach for quadrilateral candidate extraction](adr/0003-candidate-extraction-approach.md)

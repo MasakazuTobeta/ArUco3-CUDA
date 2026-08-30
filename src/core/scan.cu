@@ -15,15 +15,16 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// scan 1 block あたりの thread 数と要素数。
+/// Thread count and element count per scan block.
 ///
-/// 共有 memory 上の走査を 1 要素 1 thread で行うため両者は等しい。
+/// The scan over shared memory runs one thread per element, so the two are equal.
 constexpr int kScanThreads = 256;
 
-/// block ごとに排他 scan を行い、block の合計を block_sums へ書く。
+/// Exclusive-scans within each block and writes the block total to block_sums.
 ///
-/// 入出力に同じ配列を渡してよい。各 thread は書き込みの前に自分の値を
-/// register へ読み出し、他 thread の位置へは書かないためである。
+/// The same array may be passed as both input and output, because every thread
+/// reads its own value into a register before writing and never writes to another
+/// thread's position.
 __global__ void scan_within_block_kernel(std::int32_t* values, std::int32_t* block_sums,
                                          int count) {
     __shared__ std::int32_t shared[kScanThreads];
@@ -48,10 +49,12 @@ __global__ void scan_within_block_kernel(std::int32_t* values, std::int32_t* blo
     }
 }
 
-/// block の合計を 1 block で排他 scan し、総和を out_total へ書く。
+/// Exclusive-scans the block totals in a single block and writes the grand total
+/// to out_total.
 ///
-/// block 数が thread 数を超える場合は塊ごとに走査し、直前までの総和を
-/// 繰り越す。block 数は要素数の 1/256 であり、この逐次化は問題にならない。
+/// When the block count exceeds the thread count, the scan proceeds chunk by chunk
+/// and carries the running total forward. The block count is 1/256 of the element
+/// count, so this serialization is not a concern.
 __global__ void scan_block_sums_kernel(std::int32_t* block_sums, int block_count,
                                        std::int32_t* out_total) {
     __shared__ std::int32_t shared[kScanThreads];
@@ -82,7 +85,7 @@ __global__ void scan_block_sums_kernel(std::int32_t* block_sums, int block_count
     }
 }
 
-/// block ごとの開始位置を各要素へ加える。
+/// Adds each block's start position to every element of that block.
 __global__ void add_block_offsets_kernel(std::int32_t* values, const std::int32_t* block_offsets,
                                          int count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   評価計画が要求する環境情報を機械可読形式で保存する。
-#   benchmark 結果は、この JSON と対にして初めて再現可能になる。
+# Purpose:
+#   Save the environment information the evaluation plan requires, in a
+#   machine-readable form. Benchmark results only become reproducible when they
+#   are paired with this JSON.
 #
-# 使用方法:
-#   record-environment.sh [出力先 JSON]
-#   出力先を省略した場合は標準出力へ書き出す。
+# Usage:
+#   record-environment.sh [output JSON]
+#   With no output path, the JSON is written to standard output.
 set -euo pipefail
 
 readonly kCudaHome="${CUDA_HOME:-/usr/local/cuda}"
@@ -19,7 +20,8 @@ query_gpu() {
   fi
 }
 
-# aarch64 の /proc/cpuinfo には model name が無いため、複数の情報源を順に試す。
+# On aarch64, /proc/cpuinfo has no model name, so several sources are tried in
+# order.
 detect_cpu_model() {
   local model=""
   if command -v lscpu >/dev/null 2>&1; then
@@ -37,9 +39,10 @@ detect_cpu_model() {
   printf '%s' "${model}"
 }
 
-# Jetson の power mode と clock は測定条件に直結するため必ず記録する。
-# power mode、clock、driver、L4T release は取得元が機種ごとに異なる。
-# 差の吸収は query-platform-info.sh へ集約する。
+# The Jetson power mode and clock feed directly into the measurement conditions,
+# so they are always recorded. The sources for power mode, clock, driver, and L4T
+# release differ per machine; absorbing those differences is concentrated in
+# query-platform-info.sh.
 platform_info="$(query-platform-info.sh 2>/dev/null || true)"
 platform_field() {
   printf '%s\n' "${platform_info}" | sed -n "s/^$1=//p" | head -1
@@ -60,7 +63,8 @@ if [ -f "${opencv_provenance}" ]; then
   opencv_json="$(cat "${opencv_provenance}")"
 fi
 
-# CUDA Toolkit の供給方式と version は測定結果の比較可能性に直結する。
+# How the CUDA Toolkit is supplied, and at which version, feeds directly into
+# the comparability of the measurement results.
 cuda_provenance="/opt/aruco3cuda/cuda-provenance.json"
 cuda_json='null'
 if [ -f "${cuda_provenance}" ]; then
@@ -121,5 +125,5 @@ if [ "${kOutput}" = "-" ]; then
 else
   mkdir -p "$(dirname "${kOutput}")"
   mv "${tmp_output}" "${kOutput}"
-  echo "[record-environment] 出力: ${kOutput}" >&2
+  echo "[record-environment] wrote: ${kOutput}" >&2
 fi

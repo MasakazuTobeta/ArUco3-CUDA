@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   mount された CUDA Toolkit を PATH と LD_LIBRARY_PATH へ反映し、
-#   引数で渡された command を実行する。
+# Purpose:
+#   Reflect the mounted CUDA Toolkit into PATH and LD_LIBRARY_PATH, then run the
+#   command given as arguments.
 #
-# 備考:
-#   環境検査は既定では実行しない。ARUCO3_VERIFY_ON_START=1 の場合のみ
-#   verify-environment.sh を実行し、不合格なら起動を中止する。
+# Notes:
+#   The environment check does not run by default. Only when
+#   ARUCO3_VERIFY_ON_START=1 is verify-environment.sh run, and startup is aborted
+#   if it fails.
 set -euo pipefail
 
 readonly kCudaHome="${CUDA_HOME:-/usr/local/cuda}"

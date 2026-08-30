@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 定義済み Dictionary の packed 表現と照合処理。
-# generated/ 以下は tools/dictgen が生成した source であり手で編集しない。
+# Packed representation of the predefined dictionaries and the matching code.
+# Everything under generated/ is source produced by tools/dictgen and must not be
+# edited by hand.
 add_library(aruco3cuda_dictionary
   dictionary.cpp
   registry.cpp

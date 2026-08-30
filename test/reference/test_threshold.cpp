@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 適応的二値化を OpenCV の adaptiveThreshold と突き合わせる。
+// Cross-checks the adaptive threshold against the OpenCV adaptiveThreshold.
 //
-// この段階の出力が候補抽出の入力になる。画素の白黒が入れ替わると輪郭が
-// 変わるため、一致率を実測して固定する。あわせて、前段の resize に残る
-// 1 階調差が二値化へ与える実際の影響も測る。
+// The output of this stage feeds candidate extraction. Any pixel whose black and
+// white flip changes the contours, so the agreement rate is measured and pinned
+// down here. The test also measures the real effect on binarization of the
+// one-level difference left over by the resize in the preceding stage.
 #include "threshold.hpp"
 
 #include <gtest/gtest.h>
@@ -41,7 +42,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 決定的な試験画像。マーカーに似た矩形と勾配と noise を混ぜる。
+/// Deterministic test image mixing marker-like rectangles, a gradient, and noise.
 cv::Mat make_test_image(int width, int height, std::uint64_t seed) {
     cv::Mat image(height, width, CV_8UC1);
     std::mt19937_64 rng(seed);
@@ -53,7 +54,8 @@ cv::Mat make_test_image(int width, int height, std::uint64_t seed) {
             row[x] = cv::saturate_cast<std::uint8_t>(60 + gradient + noise(rng));
         }
     }
-    // 黒い矩形を並べる。二値化の境界が輪郭として現れる条件を作る。
+    // Lay out black rectangles. This creates the conditions under which the
+    // binarization boundaries show up as contours.
     for (int i = 0; i < 6; ++i) {
         const int size = 20 + i * 11;
         const cv::Rect rect((i * 53 + 11) % std::max(width - size - 1, 1),
@@ -77,7 +79,8 @@ public:
     bool upload(const cv::Mat& image) {
         this->width_px_ = image.cols;
         this->height_px_ = image.rows;
-        // 幅と異なる pitch を使い、非連続配置でも正しく扱えることを同時に確認する。
+        // Use a pitch that differs from the width, so that a non-contiguous layout
+        // is exercised at the same time.
         this->pitch_bytes_ = static_cast<std::size_t>(image.cols) + 32U;
         const std::size_t bytes = this->pitch_bytes_ * static_cast<std::size_t>(image.rows);
         if (cudaMalloc(&this->data_, bytes) != cudaSuccess) {
@@ -134,7 +137,7 @@ double mismatch_ratio(const cv::Mat& a, const cv::Mat& b) {
     return static_cast<double>(mismatched) / static_cast<double>(a.total());
 }
 
-/// 二値化を実行して buffer を返す。
+/// Runs the binarization and holds on to the resulting buffers.
 class ThresholdFixture {
 public:
     bool run(const cv::Mat& image, const DetectorConfig& config) {
@@ -166,7 +169,7 @@ public:
     DeviceImage input_;
 };
 
-// 正常系: window 一覧が OpenCV の走査と一致する。
+// Nominal: the list of windows matches the OpenCV sweep.
 TEST(ThresholdWindowTest, matches_opencv_window_sequence) {
     DetectorConfig config;
     int sizes[aruco3cuda::kMaxAdaptiveThresholdWindows] = {};
@@ -174,14 +177,14 @@ TEST(ThresholdWindowTest, matches_opencv_window_sequence) {
     ASSERT_EQ(aruco3cuda::detail::threshold_window_sizes(
                       config, sizes, aruco3cuda::kMaxAdaptiveThresholdWindows, &count),
               Status::kOk);
-    // 既定は min 3、max 23、step 10 であり 3、13、23 の 3 通り。
+    // The defaults are min 3, max 23, step 10, which yields the three windows 3, 13, and 23.
     ASSERT_EQ(count, 3);
     EXPECT_EQ(sizes[0], 3);
     EXPECT_EQ(sizes[1], 13);
     EXPECT_EQ(sizes[2], 23);
 }
 
-// 境界値: 偶数の window は奇数へ切り上げる。OpenCV の _threshold と同じ。
+// Boundary: even windows are rounded up to odd, the same as OpenCV _threshold does.
 TEST(ThresholdWindowTest, rounds_even_windows_up) {
     DetectorConfig config;
     config.adaptive_thresh_win_size_min_px_ = 4;
@@ -192,14 +195,14 @@ TEST(ThresholdWindowTest, rounds_even_windows_up) {
     ASSERT_EQ(aruco3cuda::detail::threshold_window_sizes(
                       config, sizes, aruco3cuda::kMaxAdaptiveThresholdWindows, &count),
               Status::kOk);
-    // 4、7、10 が 5、7、11 になる。
+    // 4, 7, and 10 become 5, 7, and 11.
     ASSERT_EQ(count, 3);
     EXPECT_EQ(sizes[0], 5);
     EXPECT_EQ(sizes[1], 7);
     EXPECT_EQ(sizes[2], 11);
 }
 
-// 異常系: 不正な引数と容量不足を拒否する。
+// Failure: invalid arguments and insufficient capacity are rejected.
 TEST(ThresholdWindowTest, rejects_invalid_arguments) {
     const DetectorConfig config;
     int sizes[4] = {};
@@ -210,16 +213,16 @@ TEST(ThresholdWindowTest, rejects_invalid_arguments) {
               Status::kInvalidArgument);
     EXPECT_EQ(aruco3cuda::detail::threshold_window_sizes(config, sizes, 0, &count),
               Status::kInvalidArgument);
-    // 走査数より小さい capacity は拒否する。
+    // A capacity smaller than the number of windows in the sweep is rejected.
     EXPECT_EQ(aruco3cuda::detail::threshold_window_sizes(config, sizes, 2, &count),
               Status::kInvalidConfig);
 }
 
-// 正常系: 3 通りの window で OpenCV の二値化と完全に一致する。
-// 完了条件そのものである。
+// Nominal: for all three windows the result matches the OpenCV binarization exactly.
+// This is the completion criterion itself.
 TEST(ThresholdTest, matches_opencv_adaptive_threshold) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     struct Case {
         int width;
@@ -238,18 +241,18 @@ TEST(ThresholdTest, matches_opencv_adaptive_threshold) {
             cv::adaptiveThreshold(image, expected, 255, cv::ADAPTIVE_THRESH_MEAN_C,
                                   cv::THRESH_BINARY_INV, window, config.adaptive_thresh_constant_);
             const double ratio = mismatch_ratio(expected, download(fixture.buffers_.binary_[i]));
-            std::printf("[threshold] %dx%d window=%2d 不一致率 %.6f\n", item.width, item.height,
-                        window, ratio);
+            std::printf("[threshold] %dx%d window=%2d mismatch ratio %.6f\n", item.width,
+                        item.height, window, ratio);
             EXPECT_DOUBLE_EQ(ratio, 0.0)
                     << item.width << "x" << item.height << " window=" << window;
         }
     }
 }
 
-// 正常系: 定数を変えても OpenCV と一致する。
+// Nominal: the result still matches OpenCV when the constant is changed.
 TEST(ThresholdTest, matches_opencv_for_various_constants) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(320, 240, 5U);
     for (const double constant : {0.0, 3.0, 7.0, 7.9, 15.0}) {
@@ -263,14 +266,14 @@ TEST(ThresholdTest, matches_opencv_for_various_constants) {
                               cv::THRESH_BINARY_INV, fixture.buffers_.window_sizes_px_[1],
                               constant);
         EXPECT_DOUBLE_EQ(mismatch_ratio(expected, download(fixture.buffers_.binary_[1])), 0.0)
-                << "定数 " << constant;
+                << "constant " << constant;
     }
 }
 
-// 正常系: block 寸法を変えても結果が変わらない。
+// Nominal: the result does not depend on the block dimension.
 TEST(ThresholdTest, result_is_independent_of_block_dim) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(320, 240, 9U);
     cv::Mat reference;
@@ -288,7 +291,7 @@ TEST(ThresholdTest, result_is_independent_of_block_dim) {
     }
 }
 
-// 異常系: 不正な引数を拒否する。
+// Failure: invalid arguments are rejected.
 TEST(ThresholdTest, rejects_invalid_arguments) {
     const DetectorConfig config;
     ThresholdBuffers buffers;
@@ -303,15 +306,15 @@ TEST(ThresholdTest, rejects_invalid_arguments) {
               Status::kInvalidArgument);
     EXPECT_EQ(aruco3cuda::detail::reserve_threshold(config, 10, 10, workspace, nullptr),
               Status::kInvalidArgument);
-    // 容量不足。
+    // Insufficient capacity.
     EXPECT_EQ(aruco3cuda::detail::reserve_threshold(config, 640, 480, workspace, &buffers),
               Status::kInvalidConfig);
 }
 
-// 異常系: 入力の寸法が予約時と違えば拒否する。
+// Failure: an input whose size differs from the one reserved for is rejected.
 TEST(ThresholdTest, rejects_size_mismatch) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat image = make_test_image(320, 240, 1U);
     DetectorConfig config;
@@ -325,16 +328,17 @@ TEST(ThresholdTest, rejects_size_mismatch) {
               Status::kInvalidArgument);
 }
 
-// 前段の resize に残る 1 階調差が、二値化へ与える実際の影響を測る。
-// 縮小段で受け入れた差の下流影響を、模擬ではなく実測で確認する。
+// Measures the real effect on binarization of the one-level difference left over by
+// the resize in the preceding stage. The downstream impact of the difference accepted
+// at the downscaling stage is confirmed by measurement, not by simulation.
 TEST(ThresholdTest, measures_impact_of_resize_difference) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat source = make_test_image(1280, 720, 20260827U);
     DetectorConfig config;
 
-    // CUDA の前処理で作った segmentation 画像を取り出す。
+    // Take out the segmentation image produced by the CUDA preprocessing.
     DeviceImage input;
     ASSERT_TRUE(input.upload(source));
     aruco3cuda::detail::ScalePlan plan;
@@ -359,7 +363,8 @@ TEST(ThresholdTest, measures_impact_of_resize_difference) {
                cv::Size(plan.segmentation_width_px_, plan.segmentation_height_px_), 0.0, 0.0,
                cv::INTER_LINEAR);
 
-    // 同じ二値化を両方へ適用し、白黒が入れ替わる割合を測る。
+    // Apply the same binarization to both and measure the fraction of pixels whose
+    // black and white are swapped.
     for (int window : {3, 13, 23}) {
         cv::Mat from_cuda;
         cv::Mat from_opencv;
@@ -368,8 +373,9 @@ TEST(ThresholdTest, measures_impact_of_resize_difference) {
         cv::adaptiveThreshold(opencv_segmentation, from_opencv, 255, cv::ADAPTIVE_THRESH_MEAN_C,
                               cv::THRESH_BINARY_INV, window, config.adaptive_thresh_constant_);
         const double ratio = mismatch_ratio(from_opencv, from_cuda);
-        std::printf("[resize の影響] window=%2d 二値化の反転 %.6f\n", window, ratio);
-        // 実測に基づく上限。大きく増える変更は前処理の劣化を意味する。
+        std::printf("[resize impact] window=%2d binarization flips %.6f\n", window, ratio);
+        // Upper bound based on measurement. A change that raises this markedly means
+        // the preprocessing has degraded.
         EXPECT_LT(ratio, 0.01) << "window=" << window;
     }
 }

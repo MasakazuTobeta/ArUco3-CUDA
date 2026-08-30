@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// CPU 基準 runner の CLI。
+// CLI for the CPU baseline runner.
 //
-// 目的:
-//   OpenCV の ArUco 検出を固定した設定で実行し、結果を機械可読形式で保存する。
-//   CUDA 実装との差分比較および crossover point の測定に使用する基準値を作る。
+// Purpose:
+//   Run OpenCV ArUco detection with a fixed configuration and store the results
+//   in a machine-readable format. Produces the baseline used for diffing
+//   against the CUDA implementation and for measuring the crossover point.
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
@@ -20,28 +21,29 @@ namespace {
 using aruco3cuda::reference::ReferenceConfig;
 
 void print_usage(std::ostream& out) {
-    out << "使用方法: aruco3cuda_reference_runner [option]... --input <画像>...\n"
+    out << "Usage: aruco3cuda_reference_runner [option]... --input <image>...\n"
         << "\n"
-        << "  --input <path>                 入力画像。複数回指定できる\n"
-        << "  --output <path>                結果 JSON の出力先。既定は標準出力\n"
-        << "  --dictionary <name>            既定 DICT_ARUCO_MIP_36h12\n"
-        << "  --threads <n>                  OpenCV の thread 数。既定 1。0 で OpenCV の既定\n"
-        << "  --use-aruco3 <0|1>             ArUco3 検出戦略。既定 1\n"
-        << "  --min-side-length-canonical <n>  既定 32\n"
-        << "  --min-marker-length-ratio <f>  既定 0.05。0 では縮小が発生しない\n"
-        << "  --adaptive-thresh-win-min <n>  既定 3\n"
-        << "  --adaptive-thresh-win-max <n>  既定 23\n"
-        << "  --adaptive-thresh-win-step <n> 既定 10\n"
-        << "  --error-correction-rate <f>    既定 0.6\n"
-        << "  --omit-timing                  実行時間を出力へ含めない。golden 比較用\n"
-        << "  --list-dictionaries            対応する Dictionary 名を表示して終了\n"
-        << "  --help                         この説明を表示して終了\n";
+        << "  --input <path>                 Input image. May be given several times\n"
+        << "  --output <path>                Destination of the result JSON. Default is stdout\n"
+        << "  --dictionary <name>            Default DICT_ARUCO_MIP_36h12\n"
+        << "  --threads <n>                  OpenCV thread count. Default 1. 0 keeps\n"
+        << "                                 the OpenCV default\n"
+        << "  --use-aruco3 <0|1>             ArUco3 detection strategy. Default 1\n"
+        << "  --min-side-length-canonical <n>  Default 32\n"
+        << "  --min-marker-length-ratio <f>  Default 0.05. No downscaling happens at 0\n"
+        << "  --adaptive-thresh-win-min <n>  Default 3\n"
+        << "  --adaptive-thresh-win-max <n>  Default 23\n"
+        << "  --adaptive-thresh-win-step <n> Default 10\n"
+        << "  --error-correction-rate <f>    Default 0.6\n"
+        << "  --omit-timing                  Omit the execution time. For golden comparison\n"
+        << "  --list-dictionaries            Print the supported dictionary names and exit\n"
+        << "  --help                         Print this help and exit\n";
 }
 
-/// 次の引数を取り出す。不足している場合は false を返す。
+/// Take the next argument. Returns false when it is missing.
 bool take_value(int argc, char** argv, int* index, const char* option, std::string* out) {
     if (*index + 1 >= argc) {
-        std::cerr << "引数が不足している: " << option << '\n';
+        std::cerr << "missing argument: " << option << '\n';
         return false;
     }
     ++(*index);
@@ -49,14 +51,15 @@ bool take_value(int argc, char** argv, int* index, const char* option, std::stri
     return true;
 }
 
-/// 解析した整数が指定範囲にあることを確認する。
+/// Confirm that a parsed integer lies within the given range.
 ///
-/// 外部入力である argv を信頼せず、範囲外の値を設定へ書き込まない。
-/// 範囲の検証を CLI 側でも行うのは、どの option が不正かを利用者へ示すためである。
+/// argv is external input and is not trusted, so an out-of-range value is never
+/// written into the settings. The range is validated on the CLI side as well so
+/// that the user is told which option was invalid.
 bool check_range(const std::string& option, int value, int minimum, int maximum) {
     if (value < minimum || value > maximum) {
-        std::cerr << option << " は " << minimum << " 以上 " << maximum
-                  << " 以下である必要がある: " << value << '\n';
+        std::cerr << option << " must be between " << minimum << " and " << maximum
+                  << " inclusive: " << value << '\n';
         return false;
     }
     return true;
@@ -137,14 +140,14 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // 数値 option をまとめて扱う。
+        // Handle the numeric options together.
         struct IntOption {
             const char* name;
             int* target;
             int minimum;
             int maximum;
         };
-        // 範囲は reference_runner の validate_config と一致させる。
+        // Keep the ranges consistent with validate_config in reference_runner.
         const IntOption int_options[] = {
                 {"--threads", &config.num_threads_, 0, 1024},
                 {"--min-side-length-canonical", &config.min_side_length_canonical_img_px_, 0, 4096},
@@ -159,7 +162,8 @@ int main(int argc, char** argv) {
                     return EXIT_FAILURE;
                 }
                 if (!parse_int(value, &int_value)) {
-                    std::cerr << "整数として解釈できない: " << entry.name << ' ' << value << '\n';
+                    std::cerr << "cannot parse as an integer: " << entry.name << ' ' << value
+                              << '\n';
                     return EXIT_FAILURE;
                 }
                 if (!check_range(entry.name, int_value, entry.minimum, entry.maximum)) {
@@ -177,7 +181,7 @@ int main(int argc, char** argv) {
         if (option == "--use-aruco3") {
             if (!take_value(argc, argv, &i, "--use-aruco3", &value) ||
                 !parse_int(value, &int_value)) {
-                std::cerr << "0 または 1 を指定すること: --use-aruco3\n";
+                std::cerr << "specify either 0 or 1: --use-aruco3\n";
                 return EXIT_FAILURE;
             }
             config.use_aruco3_detection_ = int_value != 0;
@@ -186,11 +190,11 @@ int main(int argc, char** argv) {
         if (option == "--min-marker-length-ratio") {
             if (!take_value(argc, argv, &i, "--min-marker-length-ratio", &value) ||
                 !parse_double(value, &double_value)) {
-                std::cerr << "実数として解釈できない: --min-marker-length-ratio\n";
+                std::cerr << "cannot parse as a real number: --min-marker-length-ratio\n";
                 return EXIT_FAILURE;
             }
             if (!(double_value >= 0.0) || !(double_value <= 1.0)) {
-                std::cerr << "--min-marker-length-ratio は 0 以上 1 以下である必要がある: "
+                std::cerr << "--min-marker-length-ratio must be between 0 and 1 inclusive: "
                           << double_value << '\n';
                 return EXIT_FAILURE;
             }
@@ -200,11 +204,11 @@ int main(int argc, char** argv) {
         if (option == "--error-correction-rate") {
             if (!take_value(argc, argv, &i, "--error-correction-rate", &value) ||
                 !parse_double(value, &double_value)) {
-                std::cerr << "実数として解釈できない: --error-correction-rate\n";
+                std::cerr << "cannot parse as a real number: --error-correction-rate\n";
                 return EXIT_FAILURE;
             }
             if (!(double_value >= 0.0) || !(double_value <= 1.0)) {
-                std::cerr << "--error-correction-rate は 0 以上 1 以下である必要がある: "
+                std::cerr << "--error-correction-rate must be between 0 and 1 inclusive: "
                           << double_value << '\n';
                 return EXIT_FAILURE;
             }
@@ -212,26 +216,27 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        std::cerr << "未知の option: " << option << '\n';
+        std::cerr << "unknown option: " << option << '\n';
         print_usage(std::cerr);
         return EXIT_FAILURE;
     }
 
     if (inputs.empty()) {
-        std::cerr << "--input が指定されていない\n";
+        std::cerr << "--input was not specified\n";
         print_usage(std::cerr);
         return EXIT_FAILURE;
     }
     if (!aruco3cuda::reference::is_known_dictionary(config.dictionary_name_)) {
-        std::cerr << "未対応の Dictionary: " << config.dictionary_name_ << '\n'
-                  << "--list-dictionaries で対応名を確認できる\n";
+        std::cerr << "unsupported Dictionary: " << config.dictionary_name_ << '\n'
+                  << "--list-dictionaries lists the supported names\n";
         return EXIT_FAILURE;
     }
-    // OpenCV 側の制約。ArUco3 有効時にどちらも 0 だと detectMarkers が失敗する。
+    // Constraint imposed by OpenCV. With ArUco3 enabled, detectMarkers fails
+    // when both are 0.
     if (config.use_aruco3_detection_ && config.min_side_length_canonical_img_px_ == 0 &&
         config.min_marker_length_ratio_original_img_ == 0.0F) {
-        std::cerr << "--use-aruco3 1 では min-side-length-canonical と "
-                     "min-marker-length-ratio の両方を 0 にできない\n";
+        std::cerr << "with --use-aruco3 1, min-side-length-canonical and "
+                     "min-marker-length-ratio cannot both be 0\n";
         return EXIT_FAILURE;
     }
 
@@ -252,24 +257,26 @@ int main(int argc, char** argv) {
 
     if (output_path.empty()) {
         aruco3cuda::reference::write_results_json(std::cout, config, environment, results);
-        // 書き込み失敗を成功として報告しない。pipe が閉じられた場合などに起きる。
+        // Never report a write failure as success. It happens for instance when
+        // the pipe has been closed.
         std::cout.flush();
         if (!std::cout) {
-            std::cerr << "標準出力への書き込みに失敗した\n";
+            std::cerr << "failed to write to standard output\n";
             return EXIT_FAILURE;
         }
         return EXIT_SUCCESS;
     }
     std::ofstream output(output_path);
     if (!output) {
-        std::cerr << "出力 file を開けない: " << output_path << '\n';
+        std::cerr << "cannot open the output file: " << output_path << '\n';
         return EXIT_FAILURE;
     }
     aruco3cuda::reference::write_results_json(output, config, environment, results);
-    // close まで行って状態を確認する。buffer に残ったまま失敗する場合があるため。
+    // Close first and then check the state, because a write can still fail
+    // while data is sitting in the buffer.
     output.close();
     if (!output) {
-        std::cerr << "出力 file への書き込みに失敗した: " << output_path << '\n';
+        std::cerr << "failed to write to the output file: " << output_path << '\n';
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

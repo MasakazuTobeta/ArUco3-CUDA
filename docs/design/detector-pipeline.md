@@ -1,459 +1,459 @@
-# 検出パイプライン設計
+# Detection Pipeline Design
 
-## 目的
+## Purpose
 
-ArUco3 検出戦略を CUDA へ分解する際の段階定義、段階ごとの並列化方針、可変長出力の扱い、同期点、CPU 基準結果との互換条件を定義します。
+This document defines the stage breakdown used when decomposing the ArUco3 detection strategy onto CUDA, the parallelization approach for each stage, the handling of variable-length output, the synchronization points, and the compatibility conditions against the CPU baseline results.
 
-## 対象範囲
+## Scope
 
-detector core の段階分解、各段階の GPU 適性評価、四角形候補抽出の設計案、workspace 設計、機種差の扱いを対象とします。姿勢推定、ChArUco board、AprilTag 専用経路は対象外です。
+The scope covers the stage breakdown of the detector core, the GPU suitability assessment of each stage, the design options for quadrilateral candidate extraction, the workspace design, and the handling of machine differences. Pose estimation, ChArUco boards, and the AprilTag-specific route are out of scope.
 
-## 現状
+## Current state
 
-S1 から S11 まで全て CUDA で実装済みです。`aruco3cuda::Detector` が 1 本に繋いでおり、host 同期なしで device 上の結果を返します。OpenCV との一致度は経路で異なります。**hybrid 経路は 91 枚中 91 枚が一致し四隅の差は 0.0000 px** ですが、**GPU 常駐経路は 91 枚中 90 枚の一致で、遮蔽ありの 1 枚だけ 3.804 px 違います** (真値に対しては GPU 側の方が近い)。詳細は [正確性評価の結果](../accuracy-report.md) にあります。
+S1 through S11 are all implemented in CUDA. `aruco3cuda::Detector` chains them into a single path and returns results on the device without host synchronization. The degree of agreement with OpenCV differs by route. **The hybrid route matches on 91 of 91 images with a corner difference of 0.0000 px**, whereas **the GPU-resident route matches on 90 of 91 images, differing by 3.804 px on the single image with occlusion** (relative to the ground truth, the GPU side is the closer one). The details are in [the accuracy evaluation results](../accuracy-report.md).
 
-互換対象である OpenCV 4.x の ArUco3 検出戦略については、Apache-2.0 の公開 header と source から次の観測仕様を確認しています。取得元と hash は [Code Provenance 記録](../code-provenance.md) を参照してください。
+For the ArUco3 detection strategy of OpenCV 4.x, which is the compatibility target, the following observed specification has been confirmed from the Apache-2.0 public headers and sources. For the retrieval sources and hashes, see [the Code Provenance record](../code-provenance.md).
 
-### OpenCV 4.x ArUco3 経路の観測仕様
+### Observed specification of the OpenCV 4.x ArUco3 route
 
-| 記号 | 対応する parameter | 既定値 |
+| Symbol | Corresponding parameter | Default |
 | --- | --- | --- |
 | `S` | `minSideLengthCanonicalImg` | 32 |
 | `tau_i` | `minMarkerLengthRatioOriginalImg` | 0.0 |
-| `W`、`H` | 入力 grayscale の幅と高さ | - |
+| `W`, `H` | Width and height of the input grayscale | - |
 
-1. 縮小率を `fxfy = S / (S + max(W, H) * tau_i)` で求める。`useAruco3Detection` が false の場合は `fxfy = 1` とする。
-2. `num_levels = (int)(log2(W * H / S^2) / 2)` 段の grayscale pyramid を、level ごとの scale 2 で構築する。
-3. 四隅の upsampling 開始 level を `closest_pyr_image_idx = round(log2(1 / fxfy^2) / 2)` で求める。
-4. `fxfy != 1` の場合、入力を `round(fxfy * W) x round(fxfy * H)` へ縮小する。候補抽出はこの segmentation 画像だけで行う。
-5. 適応的二値化の window 数は `nScales = (winMax - winMin) / winStep + 1`。既定は window size 3、13、23 の 3 通り。
-6. window ごとに二値化し、輪郭抽出と多角形近似で四角形候補を求め、全 window の候補を結合する。
-7. 近接候補を `minMarkerDistanceRate` と `minGroupDistance` で grouping し、代表候補を残す。
-8. 候補ごとに、辺長に対応する pyramid level で射影変換とセル sampling を行い、border 検証と Dictionary 照合をする。
-9. ArUco3 有効時、corner refinement は subpixel 方式へ強制される。四隅は pyramid level を 1 段ずつ 2 倍しながら各 level で subpixel 補正され、window は最大辺が 1080 を超える場合 5、それ以外は 3 となる。
-10. `useAruco3Detection` が true で `S == 0` かつ `tau_i == 0.0` の組み合わせは OpenCV 側で拒否される。
+1. Compute the downscale factor as `fxfy = S / (S + max(W, H) * tau_i)`. When `useAruco3Detection` is false, set `fxfy = 1`.
+2. Build a grayscale pyramid of `num_levels = (int)(log2(W * H / S^2) / 2)` levels, with a scale of 2 per level.
+3. Compute the level at which corner upsampling starts as `closest_pyr_image_idx = round(log2(1 / fxfy^2) / 2)`.
+4. When `fxfy != 1`, downscale the input to `round(fxfy * W) x round(fxfy * H)`. Candidate extraction is performed only on this segmentation image.
+5. The number of adaptive thresholding windows is `nScales = (winMax - winMin) / winStep + 1`. The default is the three window sizes 3, 13, and 23.
+6. Threshold per window, obtain quadrilateral candidates by contour extraction and polygonal approximation, and merge the candidates from all windows.
+7. Group nearby candidates using `minMarkerDistanceRate` and `minGroupDistance`, and keep a representative candidate.
+8. For each candidate, perform the perspective transform and cell sampling at the pyramid level corresponding to the side length, then run border verification and Dictionary matching.
+9. When ArUco3 is enabled, corner refinement is forced to the subpixel method. The corners are subpixel-corrected at each level while doubling one pyramid level at a time, and the window is 5 when the longest side exceeds 1080 and 3 otherwise.
+10. The combination of `useAruco3Detection` being true with `S == 0` and `tau_i == 0.0` is rejected by OpenCV.
 
-上記のうち縮小率と segmentation 画像 size は、CPU 基準 runner の自動テストで実測確認しています。1280x720、`S = 32`、`tau_i = 0.05` の場合、`fxfy = 0.3333` となり segmentation 画像は 427x240 になります。
+Of the above, the downscale factor and the segmentation image size have been confirmed by measurement in the automated tests of the CPU baseline runner. For 1280x720 with `S = 32` and `tau_i = 0.05`, `fxfy = 0.3333` and the segmentation image is 427x240.
 
-ArUco3 が検出対象とする最小辺長は次の式で決まります。縮小後の辺長が `S` 以上である必要があることから導かれます。
+The minimum side length that ArUco3 can detect is determined by the following expression. It follows from the requirement that the side length after downscaling be at least `S`.
 
 ```
 side_px >= S + max(W, H) * tau_i
 ```
 
-`tau_i` そのものが下限ではない点に注意が必要です。1280x720、`S = 32`、`tau_i = 0.05` の場合の下限は 96 pixel です。実測では 96 pixel のマーカーは検出されず、128 pixel は検出されました。境界値ちょうどでは再標本化の影響を受けます。
+Note that `tau_i` itself is not the lower bound. For 1280x720 with `S = 32` and `tau_i = 0.05`, the lower bound is 96 pixels. In measurements, a 96 pixel marker was not detected, while a 128 pixel one was. Exactly at the boundary value, the result is affected by resampling.
 
-同一画像に対する CPU 基準実装の検出時間は、`tau_i = 0.05` で 1.112 ms、`tau_i = 0`（縮小なし）で 5.917 ms でした。検出された ID は両者で一致します。これは ArUco3 検出戦略が CPU 側でも有効に働くことを示すと同時に、`tau_i` の既定値 0.0 のままでは効果が得られないことを示します。
+For the same image, the detection time of the CPU baseline implementation was 1.112 ms at `tau_i = 0.05` and 5.917 ms at `tau_i = 0` (no downscaling). The detected IDs agree between the two. This shows that the ArUco3 detection strategy is effective on the CPU side as well, and at the same time that no benefit is obtained while `tau_i` is left at its default of 0.0.
 
-上記は互換性の基準であり、ground truth ではありません。`tau_i` の既定値は 0.0 であり、この場合 `fxfy = 1` となって縮小は発生しません。ArUco3 の速度効果を評価するには `tau_i` を明示的に設定する必要があります。
+The above is a compatibility baseline, not ground truth. The default value of `tau_i` is 0.0, in which case `fxfy = 1` and no downscaling occurs. Evaluating the speed benefit of ArUco3 requires setting `tau_i` explicitly.
 
-## 目標
+## Goals
 
-### 前処理と OpenCV の一致度
+### Agreement of preprocessing with OpenCV
 
-S1 と S2 について、OpenCV との差を実測しています。
+For S1 and S2, the differences from OpenCV have been measured.
 
-| 段階 | OpenCV の対応処理 | 差 |
+| Stage | Corresponding OpenCV processing | Difference |
 | --- | --- | --- |
-| S1 pyramid | `buildPyramid` (`pyrDown`) | 全 level で完全一致 |
-| S2 segmentation | `resize` の `INTER_LINEAR` | 最大 1 階調。不一致率は縮小率により 0 から 0.372 |
-| S3 適応的二値化 | `adaptiveThreshold` の `ADAPTIVE_THRESH_MEAN_C` と `THRESH_BINARY_INV` | 完全一致 |
+| S1 pyramid | `buildPyramid` (`pyrDown`) | Exact match at every level |
+| S2 segmentation | `INTER_LINEAR` of `resize` | At most 1 gray level. The mismatch rate ranges from 0 to 0.372 depending on the downscale factor |
+| S3 adaptive thresholding | `ADAPTIVE_THRESH_MEAN_C` and `THRESH_BINARY_INV` of `adaptiveThreshold` | Exact match |
 
-pyramid は `[1,4,6,4,1]` の整数演算であり、境界を `BORDER_REFLECT_101`、丸めを `(sum + 128) >> 8` とすることで完全に再現できます。四隅の subpixel 補正は pyramid 上で行われるため、ここが一致することは精度の前提になります。
+The pyramid is integer arithmetic with `[1,4,6,4,1]`, and it can be reproduced exactly by using `BORDER_REFLECT_101` at the borders and `(sum + 128) >> 8` for rounding. Since the subpixel correction of the corners is performed on the pyramid, agreement here is a precondition for accuracy.
 
-segmentation は完全一致にできません。OpenCV の 8-bit `INTER_LINEAR` は `INTER_LINEAR_EXACT` と同じ結果を返し、その実体は `softdouble` による軟件浮動小数点と `ufixedpoint16` で構成された bit exact 経路です。平台間で同じ結果を得ることを目的とした設計であり、kernel 内で再現するにはこの 2 つの数値型を移植する必要があります。前処理段階の代償として見合わないため、1 階調の差を受け入れます。
+Segmentation cannot be made an exact match. The 8-bit `INTER_LINEAR` of OpenCV returns the same result as `INTER_LINEAR_EXACT`, and its substance is a bit-exact path built from `softdouble` software floating point and `ufixedpoint16`. It is a design intended to obtain the same result across platforms, and reproducing it inside a kernel would require porting those two numeric types. This is not worth the cost for a preprocessing stage, so we accept the 1 gray level difference.
 
-この差が下流の二値化へ与える影響は、S3 を実装したうえで実測しました。1280x720 を 427x240 へ縮小し、window 3、13、23 で二値化した場合、画素の白黒が入れ替わる割合は 0.039% から 0.054% です。無作為な 1 階調の付加を仮定した見積もりでは 0.45% でしたが、実際の差は構造を持ち、局所平均も同じ方向へ動くため影響はその 10 分の 1 に収まります。
+The effect of this difference on the downstream thresholding was measured after implementing S3. When 1280x720 is downscaled to 427x240 and thresholded with windows 3, 13, and 23, the fraction of pixels whose black/white flips ranges from 0.039% to 0.054%. An estimate assuming a random 1 gray level perturbation gave 0.45%, but the actual difference has structure and the local mean moves in the same direction, so the effect stays at one tenth of that.
 
-候補の差異分類では、この分を候補抽出の設計差と区別して扱います。将来ビット単位の一致が必要になった場合は、係数表を host 側で OpenCV と同じ手順で計算して転送し、kernel は整数演算だけを行う構成が候補になります。
+In the classification of candidate differences, this amount is treated separately from design differences in candidate extraction. Should bit-level agreement become necessary in the future, one option is a configuration in which the coefficient tables are computed on the host by the same procedure as OpenCV and transferred, with the kernel performing only integer arithmetic.
 
-S3 は OpenCV と完全に一致します。平均は `boxFilter` を正規化ありで適用したものであり、境界は `BORDER_REPLICATE`、丸めは最近接偶数、判定は「画素 - 平均 <= -floor(定数)」で 255 とします。window の偶数は奇数へ切り上げます。行方向と列方向へ分けて合計するため、中間で丸めが入らず 2 次元の総和と同じ値になります。
+S3 matches OpenCV exactly. The mean is `boxFilter` applied with normalization, the border is `BORDER_REPLICATE`, rounding is round-half-to-even, and the test is "pixel - mean <= -floor(constant)" for 255. An even window is rounded up to an odd one. Because the sums are taken separately in the row and column directions, no rounding enters in between and the value equals the two-dimensional total.
 
-### 案 C ハイブリッド経路と OpenCV の一致度
+### Agreement of the option C hybrid route with OpenCV
 
-案 C について、CPU 基準との差を実測しています。合成 12 場面 (マーカー数、辺長、面内回転、射影歪み、ぼけ、noise、照度勾配、解像度 640x480 から 1920x1080) と設定 3 通り (ArUco3 有効、OpenCV 既定、OpenCV 既定 + subpixel 補正) の計 36 比較で、未検出 0、過検出 0、四隅の最大差 0.0000 pixel です。マーカーを黒枠が囲む入れ子の場面でも一致します。DGX Spark と Jetson AGX Orin で同じ結果を得ました。
+For option C, the difference from the CPU baseline has been measured. Across 36 comparisons made up of 12 synthetic scenes (varying marker count, side length, in-plane rotation, projective distortion, blur, noise, illumination gradient, and resolution from 640x480 to 1920x1080) and 3 settings (ArUco3 enabled, OpenCV default, OpenCV default + subpixel correction), there were 0 missed detections, 0 extra detections, and a maximum corner difference of 0.0000 pixels. Scenes in which a marker is nested inside a surrounding black frame also match. The same results were obtained on DGX Spark and Jetson AGX Orin.
 
-S2 に最大 1 階調の差があるにもかかわらず四隅まで一致するのは、二値化の反転が輪郭の頂点へ届いていないためです。将来の corpus で差が現れる可能性は残るため、テストは実測値そのものではなく 0.5 pixel の上限で判定します。
+The reason the corners match despite the up to 1 gray level difference in S2 is that the thresholding flips do not reach the contour vertices. Since differences may still appear with a future corpus, the tests judge against an upper bound of 0.5 pixels rather than against the measured values themselves.
 
-一致には S6 の近接統合を OpenCV と同じ規則にする必要がありました。S3 は window を 3 通り試すため、同じマーカーから少しずつ異なる候補が得られます。OpenCV は候補を周長の降順へ並べ、四隅の平均距離が `perimeter * minMarkerDistanceRate` 未満のものを 1 グループとし、グループ内で**最大周長**の候補を代表に選びます。代表を選ばずに最初に見つかった候補を残すと、最小 window 由来の小さい候補が残り、四隅が内側へ寄ります。1280x720 で辺 160 pixel のマーカーの場合、この差は原寸換算で 7.9 pixel でした。縮小率 1/3 の segmentation 上では 2.6 pixel であり、S2 の 1 階調差では説明できない大きさです。
+Agreement required making the proximity merging of S6 follow the same rule as OpenCV. Because S3 tries three windows, slightly different candidates are obtained from the same marker. OpenCV sorts the candidates in descending order of perimeter, groups those whose mean corner distance is below `perimeter * minMarkerDistanceRate`, and selects the candidate with the **largest perimeter** within the group as the representative. If no representative is selected and the first candidate found is kept instead, the small candidate originating from the smallest window remains and the corners move inward. For a marker with a 160 pixel side at 1280x720, this difference was 7.9 pixels in original-size terms. On the segmentation image at a downscale factor of 1/3 it is 2.6 pixels, a magnitude that the 1 gray level difference of S2 cannot explain.
 
-代表以外の候補のうち代表から `minGroupDistance * moduleSize` より離れているものは捨てずに保持し、代表の識別が失敗した場合の代替として使います。あわせて候補の包含関係を木として持ち、内側の候補から識別して、マーカーが確定したらその外側 (親) を識別対象から外します。マーカーの黒枠は外周と内周の両方が候補になるため、この打ち切りが無いと同じマーカーを二重に数えます。
+Among the non-representative candidates, those farther from the representative than `minGroupDistance * moduleSize` are kept rather than discarded, and are used as alternatives when identification of the representative fails. In addition, the containment relations among the candidates are held as a tree; identification proceeds from the inner candidates, and once a marker is confirmed, its outer (parent) candidate is excluded from identification. Since both the outer and inner boundaries of a marker's black frame become candidates, without this suppression the same marker would be counted twice.
 
-`useAruco3Detection` が有効な場合、OpenCV は corner refinement の指定を `CORNER_REFINE_SUBPIX` へ上書きします。縮小画像で得た四隅を原寸へ戻す手段が subpixel 補正しか無いためです。本 project も同じ上書きを行います。
+When `useAruco3Detection` is enabled, OpenCV overrides the corner refinement setting to `CORNER_REFINE_SUBPIX`, because subpixel correction is the only means of mapping corners obtained on the downscaled image back to the original size. This project performs the same override.
 
-### S7 射影変換と OpenCV の一致度
+### Agreement of the S7 perspective transform with OpenCV
 
-S7 について、OpenCV の `getPerspectiveTransform` と `warpPerspective` を `INTER_NEAREST` で呼んだ場合と突き合わせました。
+For S7, we compared against calling OpenCV's `getPerspectiveTransform` and `warpPerspective` with `INTER_NEAREST`.
 
-| 比較対象 | 不一致画素 |
+| Comparison target | Mismatching pixels |
 | --- | --- |
-| x86_64 の OpenCV | **0 / 40960** |
-| aarch64 の OpenCV | 1 / 40960 (0.0024%) |
+| OpenCV on x86_64 | **0 / 40960** |
+| OpenCV on aarch64 | 1 / 40960 (0.0024%) |
 
-#### OpenCV 自身が機種間でビット一致しない
+#### OpenCV itself does not match bit-for-bit across machines
 
-`warpPerspective` の `INTER_NEAREST` には経路が 3 つあります。
+`INTER_NEAREST` of `warpPerspective` has three routes.
 
-| 経路 | 選択条件 | 積和 |
+| Route | Selection condition | Multiply-add |
 | --- | --- | --- |
-| `WarpPerspectiveLine_SSE4::processNN` | x86_64 で SSE4.1 が使える | 融合しない |
-| `WarpPerspectiveLine_ProcessNN_CV_SIMD` | `CV_SIMD128_64F` が有効。aarch64 の NEON が該当 | `v_muladd` が `vfmaq_f64` へ落ちて**融合する** |
-| scalar | 上記が使えない場合 | 融合しない |
+| `WarpPerspectiveLine_SSE4::processNN` | SSE4.1 is available on x86_64 | Not fused |
+| `WarpPerspectiveLine_ProcessNN_CV_SIMD` | `CV_SIMD128_64F` is enabled; the NEON of aarch64 falls here | `v_muladd` lowers to `vfmaq_f64` and **is fused** |
+| scalar | When neither of the above is available | Not fused |
 
-同じ入力画像と同じ四隅に対する canonical 画像の SHA256 を 2 機で取ったところ、異なりました。
+Taking the SHA256 of the canonical image for the same input image and the same corners on two machines, the values differed.
 
 ```
 DGX Spark GB10 (aarch64)   0042a7b7c3a3b1263796c7d8
 GeForce RTX 5070 Ti (x86)  b60c6c57a26e0910ba6d9cba
 ```
 
-したがって「OpenCV と bit 単位で一致させる」は、機種を指定しない限り定義できません。
+Therefore "match OpenCV bit-for-bit" cannot be defined without specifying a machine.
 
-#### 本 project の選択
+#### The choice made in this project
 
-積和を融合しない側 (scalar と SSE4.1 の意味論) に合わせます。`cell_sample.cu` は `-fmad=false` で compile します。
+We align with the non-fusing side (the semantics of scalar and SSE4.1). `cell_sample.cu` is compiled with `-fmad=false`.
 
-- x86_64 の OpenCV とは完全に一致します。
-- aarch64 の OpenCV とは、丸め境界のごく一部が異なります。実測で 40960 画素中 1 画素です。
+- It matches OpenCV on x86_64 exactly.
+- It differs from OpenCV on aarch64 in a very small part of the rounding boundary. In measurement, this is 1 pixel out of 40960.
 
-融合する側へ合わせる選択もありえますが、その場合 x86_64 と一致しなくなります。どちらを選んでも片方とは合いません。融合しない側を選んだのは、scalar 経路が OpenCV の意味論の基準であり、SIMD の有無に依存しないためです。
+Aligning with the fusing side is also possible, but it would then not match x86_64. Either choice fails to match one of the two. We chose the non-fusing side because the scalar route is the reference for OpenCV's semantics and does not depend on the presence of SIMD.
 
-#### 一致に効く細部
+#### Details that matter for agreement
 
-実装で守る必要がある点です。いずれも外すと丸め境界で参照画素が 1 つずれます。
+These are the points that the implementation must observe. Dropping any of them shifts the referenced pixel by one at a rounding boundary.
 
-1. 係数行列の `a[i][6]` と `a[i][7]` は**単精度の積**を倍精度へ広げる。倍精度で掛けると行列が相対 1.9e-3 までずれる。
-2. 8 元 1 次方程式は部分ピボット付き Gauss 消去で解く。同値なら添字の小さい行を残す。消去は `d = -1/A[i][i]` を 1 度だけ作って掛ける。
-3. 逆行列は 3x3 の余因子式で作る。余因子を先に作り、最後に `1/det` を掛ける。
-4. 射影除算は逆数を先に取ってから掛ける。除算で書くと約 26% の画素で 1 ULP 異なる。
-5. 丸めは最近接偶数丸め。`floor(v + 0.5)` は tie と負値の両方で誤る。
-6. 分母が厳密に 0 のときは境界値ではなく入力の (0, 0) を参照する。
+1. `a[i][6]` and `a[i][7]` of the coefficient matrix widen a **single-precision product** to double precision. Multiplying in double precision shifts the matrix by up to 1.9e-3 relative.
+2. The 8-variable linear system is solved by Gaussian elimination with partial pivoting. On ties, the row with the smaller index is kept. The elimination forms `d = -1/A[i][i]` once and multiplies by it.
+3. The inverse matrix is built with the 3x3 cofactor formula. The cofactors are formed first, and `1/det` is multiplied last.
+4. The projective division takes the reciprocal first and then multiplies. Writing it as a division makes about 26% of the pixels differ by 1 ULP.
+5. Rounding is round-half-to-even. `floor(v + 0.5)` is wrong for both ties and negative values.
+6. When the denominator is exactly 0, the input at (0, 0) is referenced rather than a boundary value.
 
-canonical の 1 辺が 32 以下なら、OpenCV の水平 block 分割 (`bw0`) は 1 辺と一致するため原点が常に 0 になり、部分和の順序を再現する必要はありません。既定設定と DICT_ARUCO_MIP_36h12 では 1 辺 32 です。1 辺が 64 を超える設定では分割の再現が要ります。
+If one side of the canonical is at most 32, the horizontal block split of OpenCV (`bw0`) coincides with the side, so the origin is always 0 and there is no need to reproduce the ordering of the partial sums. With the default settings and DICT_ARUCO_MIP_36h12, the side is 32. Settings with a side greater than 64 require reproducing the split.
 
-### S8 前半 Otsu と border 検証
+### First half of S8: Otsu and border verification
 
-canonical 画像からセル比を求め、外周セルの誤り数で候補を篩います。3 機すべてで CPU 基準と完全に一致します (比 0 / 4096 セル、誤り数 0 / 64 候補)。
+Cell ratios are computed from the canonical image, and candidates are filtered by the number of errors in the outer ring of cells. All three machines match the CPU baseline exactly (ratios 0 / 4096 cells, error counts 0 / 64 candidates).
 
-S7 と違い機種差が出ませんでした。この段の計算は次の 3 つで、いずれも SIMD の積和融合が結果へ届きません。
+Unlike S7, no machine difference appeared. The computations in this stage are the following three, and in none of them does SIMD multiply-add fusion reach the result.
 
-| 計算 | 型 | 融合の影響 |
+| Computation | Type | Effect of fusion |
 | --- | --- | --- |
-| 256 階調の histogram | 整数の計数 | なし |
-| 内側領域の和と二乗和 | `int` の加算 (8-bit 画素なので厳密) | なし |
-| Otsu の漸化式 | `double` | OpenCV も scalar で計算する |
+| 256-level histogram | Integer counting | None |
+| Sum and sum of squares of the inner region | `int` addition (exact, since the pixels are 8-bit) | None |
+| Otsu recurrence | `double` | OpenCV computes it in scalar as well |
 
-`cv::meanStdDev` は母分散 (N で割る) を使い、平均を `S * (1/N)` と求めます。`S / N` ではありません。順序を変えると最終桁が変わるため、同じ順序で書いています。Otsu の閾値更新は厳密な大なりで、同値なら小さい階調が残ります。二値化は「画素 > 閾値」であり、等しい画素は 0 側です。
+`cv::meanStdDev` uses the population variance (dividing by N) and computes the mean as `S * (1/N)`, not `S / N`. Since changing the order changes the last digit, we write it in the same order. The Otsu threshold update uses a strict greater-than, so on ties the smaller gray level is kept. The thresholding is "pixel > threshold", so equal pixels fall on the 0 side.
 
-`cell_decode.cu` も `-fmad=false` で compile します。融合を許すと分散が `minOtsuStdDev` の境界でずれ、低分散の分岐 (全セルを 1.0 か 0.0 で埋める経路) へ入るかどうかが変わります。
+`cell_decode.cu` is also compiled with `-fmad=false`. Allowing fusion shifts the variance at the `minOtsuStdDev` boundary and changes whether the low-variance branch (the route that fills all cells with 1.0 or 0.0) is taken.
 
-CPU 基準が暗黙に使っていた「セル比を bit とみなす閾値 0.49」は、`DetectorConfig::valid_bit_threshold_` として明示しました。border 検証と Dictionary 照合の両方が同じ値を使います。
+The threshold of 0.49 for treating a cell ratio as a bit, which the CPU baseline used implicitly, has been made explicit as `DetectorConfig::valid_bit_threshold_`. Both border verification and Dictionary matching use the same value.
 
-外周誤り数の上限は外周セル数ではなく `markerSize` の 2 乗に `maxErroneousBitsInBorderRate` を掛けた値です。既定 (36h12、border 1、rate 0.35) では 12 で、12 は通り 13 で落ちます。
+The upper bound on the number of outer-ring errors is not the number of outer-ring cells but `markerSize` squared multiplied by `maxErroneousBitsInBorderRate`. With the defaults (36h12, border 1, rate 0.35) it is 12: 12 passes and 13 fails.
 
-### S8 後半 Dictionary 照合
+### Second half of S8: Dictionary matching
 
-照合は GPU 上で行います。全 250 ID の 4 回転 (1000 件) で CPU 基準とも OpenCV とも一致します。
+Matching is performed on the GPU. For all 250 IDs across 4 rotations (1000 cases), it matches both the CPU baseline and OpenCV.
 
-OpenCV の `Dictionary::identify` には、bit 列を前提にすると再現できない規則が 2 つあります。
+OpenCV's `Dictionary::identify` has two rules that cannot be reproduced if a bit string is assumed.
 
-#### セル比は 1 つの bit 列へ潰せない
+#### Cell ratios cannot be collapsed into a single bit string
 
-OpenCV は候補を 2 つの mask で表します。
+OpenCV represents a candidate with two masks.
 
-| mask | 立つ条件 | 意味 |
+| Mask | Condition to be set | Meaning |
 | --- | --- | --- |
-| `not0` | 比 > `validBitIdThreshold` | 黒ではない |
-| `not1` | 比 < `1 - validBitIdThreshold` | 白ではない |
+| `not0` | ratio > `validBitIdThreshold` | Not black |
+| `not1` | ratio < `1 - validBitIdThreshold` | Not white |
 
-既定の閾値 0.49 では上限が 0.51 になります。比が 0.49 以下なら黒、0.51 以上なら白と決まりますが、**その間の比は両方の mask に立ち、期待する bit が 0 でも 1 でも誤りとして数えられます**。1 つの bit 列へ潰すとこの第 3 の状態が消え、境界にある候補の距離が変わります。
+With the default threshold of 0.49, the upper bound is 0.51. A ratio of 0.49 or below is determined black and 0.51 or above white, but **a ratio between the two sets both masks and is counted as an error whether the expected bit is 0 or 1**. Collapsing this into a single bit string erases that third state and changes the distance for candidates on the boundary.
 
-誤り数は次の式で求まります。分岐がないため、そのまま `__popcll` へ渡せます。
-
-```
-誤り = not0 ^ ((not0 ^ not1) & codeword)
-```
-
-`codeword` が 0 のとき右辺は `not0`、1 のとき `not1` になります。OpenCV は `hal::and8u` と `hal::normHamming` の組で同じ式を計算しています。
-
-上限は float で求めます。OpenCV の `1 - validBitIdThreshold` は float 演算であり、倍精度で求めると閾値が 1 ULP 動きます。
-
-#### 最小距離の ID ではなく、最初に条件を満たした ID を採る
-
-OpenCV は ID の昇順に見て、許容距離 `int(maxCorrectionBits * errorCorrectionRate)` を満たした時点で打ち切ります。全 ID の最小距離を探すのではありません。
-
-DICT_ARUCO_MIP_36h12 は収録間の最小距離が 12、許容距離が 3 なので、条件を満たす ID は高々 1 つであり両者は一致します。しかし規則としては別物であり、距離の小さい Dictionary では結果が変わります。
-
-既存の `match_dictionary` は最小距離を返す API です。この違いを潰さないため、検出経路には別の `identify_marker` を用意しました。GPU 側は条件を満たした ID の `atomicMin` を取ることで、昇順の打ち切りと同じ結果を得ます。
-
-回転は 4 つを順に見て、厳密な小なりで更新します。同値なら小さい回転が残り、距離 0 で打ち切ります。これも OpenCV と同じです。
-
-### S9 識別の打ち切りと compaction
-
-この段は GPU 上で行います。**OpenCV に「重複除去」という段階はありません。** `detectMarkers` を全行読み、`identifyCandidates` より後に走るのは corner refinement、Multi dictionary 専用の rejected 掃除、fxfy の逆スケール、出力の複製だけであることを確認しています。ID による重複除去はどこにもなく、同じ ID のマーカーが離れた位置に 2 枚あれば 2 件とも出ます。
-
-重複が消えるのは包含木による識別の打ち切りの結果です。黒枠の外周と内周が両方候補になるため、内側でマーカーが見つかったら、それを囲む候補は識別せずに済ませます。
-
-#### 包含木
-
-`selectedCandidates` は周長の降順に並んでいます。OpenCV は index の降順に走り、各候補について自分より小さい index を降順に見て、最初に見つかった「自分を囲む候補」を親にします。
+The number of errors is obtained by the following expression. Since it is branch-free, it can be passed directly to `__popcll`.
 
 ```
-parent[i] = max { j : j < i かつ i が j の内側 }   (無ければ -1)
+error = not0 ^ ((not0 ^ not1) & codeword)
+```
+
+When `codeword` is 0, the right-hand side becomes `not0`; when it is 1, it becomes `not1`. OpenCV computes the same expression with the combination of `hal::and8u` and `hal::normHamming`.
+
+The upper bound is computed in float. OpenCV's `1 - validBitIdThreshold` is a float operation, and computing it in double precision moves the threshold by 1 ULP.
+
+#### The ID taken is the first one to satisfy the condition, not the one with the minimum distance
+
+OpenCV scans IDs in ascending order and stops as soon as the allowed distance `int(maxCorrectionBits * errorCorrectionRate)` is satisfied. It does not search for the minimum distance over all IDs.
+
+For DICT_ARUCO_MIP_36h12, the minimum distance between entries is 12 and the allowed distance is 3, so at most one ID satisfies the condition and the two agree. As rules, however, they are different, and for a dictionary with a smaller distance the result changes.
+
+The existing `match_dictionary` is an API that returns the minimum distance. To avoid collapsing this distinction, a separate `identify_marker` was provided for the detection route. The GPU side takes the `atomicMin` of the IDs that satisfy the condition, obtaining the same result as the ascending-order suppression.
+
+Rotations are examined in order over the four, updating on a strict less-than. On ties the smaller rotation is kept, and the scan stops at distance 0. This too is the same as OpenCV.
+
+### S9 identification suppression and compaction
+
+This stage runs on the GPU. **OpenCV has no stage called "duplicate removal."** Reading all of `detectMarkers`, we have confirmed that the only things running after `identifyCandidates` are corner refinement, the Multi dictionary-specific rejected cleanup, the inverse scaling by fxfy, and the duplication of the output. There is no ID-based duplicate removal anywhere, and if two markers with the same ID are present at separate positions, both are emitted.
+
+Duplicates disappear as a result of identification suppression via the containment tree. Since both the outer and inner boundaries of a black frame become candidates, once a marker is found on the inner one, the candidate surrounding it can be left unidentified.
+
+#### Containment tree
+
+`selectedCandidates` is sorted in descending order of perimeter. OpenCV scans in descending order of index and, for each candidate, examines indices smaller than its own in descending order, making the first "candidate that surrounds it" that is found its parent.
+
+```
+parent[i] = max { j : j < i and i is inside j }   (-1 if none)
 depth[j]  = max(depth[j], depth[i] + 1)
 ```
 
-**`parent[i]` は最小の j ではなく最大の j です。** index が小さいほど周長が大きいので、これは「自分を囲むもののうち最も内側」を意味します。段数の伝播は index の降順に行う必要があります。並列にすると、まだ確定していない段数を読みます。
+**`parent[i]` is the largest j, not the smallest j.** Since a smaller index means a larger perimeter, this means "the innermost among those that surround it." The propagation of depths must be done in descending order of index. Doing it in parallel would read depths that are not yet finalized.
 
-包含判定は `cv::pointPolygonTest` を `measureDist = false` で呼んだものそのままです。四隅が 4 つとも内側か境界上なら内側とみなします。
+The containment test is exactly `cv::pointPolygonTest` called with `measureDist = false`. If all four corners are inside or on the boundary, it is regarded as inside.
 
-- **境界 (戻り値 0) は内側**です。頂点が一致する場合、水平な辺の上に乗る場合、斜辺の上に乗る場合の 3 つの早期 return があり、どれも落とせません。
-- **凸性を仮定した符号一致では代用できません。** 極点探索で作る四角形は c0 の内角が優角になりうるため凹になります。実測で 400 組中 283 組が凹でした。
-- **交差積は 64 bit 整数で計算します。** OpenCV は倍精度です。座標が整数であれば符号が厳密に一致しますが、単精度では座標差の積が丸まって符号が変わります。
+- **The boundary (return value 0) counts as inside.** There are three early returns — when a vertex coincides, when the point lies on a horizontal edge, and when it lies on a slanted edge — and none of them can be dropped.
+- **A sign agreement test that assumes convexity cannot substitute for it.** The quadrilateral built by extreme point search can be concave, since the interior angle at c0 may be reflex. In measurement, 283 of 400 sets were concave.
+- **The cross product is computed in 64-bit integers.** OpenCV uses double precision. If the coordinates are integers the signs match exactly, but in single precision the product of coordinate differences is rounded and the sign changes.
 
-#### 打ち切り
+#### Suppression
 
-OpenCV は段数 0 から順に識別し、到達した候補の数が全体に届いた時点で止めます。
+OpenCV identifies from depth 0 onward and stops once the number of candidates reached covers the whole set.
 
 ```
 depth = 0; counter = 0;
 while (counter < ncandidates) {
-    depths[depth] の全 v を識別し was[v] = true
+    identify all v in depths[depth] and set was[v] = true
     for (v in depths[depth]) {
-        if (識別できた) { 祖先を辿り、未訪問なら was を立てて counter++ }
-        counter++;                     // 識別の成否によらず無条件
+        if (identified) { walk up the ancestors, and for unvisited ones set was and counter++ }
+        counter++;                     // unconditional, regardless of identification success
     }
     depth++;
 }
 ```
 
-保存すべき点が 2 つあります。
+There are two points to preserve.
 
-1. **`was[]` は識別を飛ばす条件として参照されません。** 祖先として印が付いた候補でも、その段に到達すれば普通に識別されます。抑止の粒度は候補単位ではなく段単位です。
-2. **到達数は二重計上されます。** 祖先として数えた候補は、自分の段に来たときもう一度数えます。これは打ち切りを早める方向に働くため、「候補単位の厳密な抑止」へ書き換えると結果が変わります。
+1. **`was[]` is not consulted as a condition for skipping identification.** Even a candidate marked as an ancestor is identified normally once its depth is reached. The granularity of suppression is the depth, not the candidate.
+2. **The reached count is double-counted.** A candidate counted as an ancestor is counted again when its own depth comes around. Since this works in the direction of stopping earlier, rewriting it into "strict per-candidate suppression" changes the result.
 
-段を飛ばさないため、この走査は**打ち切りの段数 1 つに縮約できます**。
+Because no depth is skipped, this scan **can be reduced to a single suppression depth**.
 
-> 識別された候補 = { v : depth[v] < stop_depth }
+> Identified candidates = { v : depth[v] < stop_depth }
 
-GPU では 1 block の逐次走査で `stop_depth` を求め、あとは通常の compaction にします。CPU 経路のように「識別をやらない」ことはできません。GPU の S7 と S8 は全候補に対して無条件に走るためです。しかし識別結果は候補の四隅と画像だけの関数であり走査順に依存しないため、全候補分の結果を先に持っていれば走査を後から再現できます。
+On the GPU, `stop_depth` is obtained by a sequential scan in a single block, and the rest becomes an ordinary compaction. Unlike the CPU route, "not performing identification" is not possible, because S7 and S8 on the GPU run unconditionally over all candidates. However, the identification result is a function of only the candidate's corners and the image and does not depend on the scan order, so if the results for all candidates are held in advance the scan can be reproduced afterward.
 
-#### 出力
+#### Output
 
-採用の条件は「走査が届いている」かつ「ID が付いている」ことです。四隅は Dictionary 照合で得た回転を打ち消してから出します。
+The conditions for acceptance are that "the scan has reached it" and that "an ID is attached." The corners are emitted after undoing the rotation obtained from Dictionary matching.
 
 ```
 new[i] = old[(i + 4 - rotation) % 4]
 ```
 
-打ち消しは subpixel 補正 (S10) の**前**です。OpenCV も識別の直後に打ち消してから補正を呼びます。順序を入れ替えると補正が別の隅に掛かります。
+The undoing comes **before** subpixel correction (S10). OpenCV also undoes it immediately after identification and then calls the correction. Swapping the order would apply the correction to a different corner.
 
-出力の並びは候補の並びをそのまま保ちます。統合後の候補は周長の降順なので、検出も周長の降順になります。最終的な並べ替えは S11 の責務であり、S9 では行いません。CPU 経路の並べ替えは subpixel 補正の後に走るため、S9 で並べ替えると補正が四隅を動かした後に順序が変わりえます。
+The output ordering preserves the candidate ordering as is. Since the merged candidates are in descending order of perimeter, the detections are also in descending order of perimeter. The final sorting is the responsibility of S11 and is not done in S9. Because the sorting on the CPU route runs after subpixel correction, sorting in S9 could change the order after the correction has moved the corners.
 
-### S10 四隅の subpixel 補正と原寸への復元
+### S10 subpixel correction of the corners and restoration to original size
 
-この段は GPU 上で行います。OpenCV の `findCornerInPyrImage` と `cv::cornerSubPix` を再現します。
+This stage runs on the GPU. It reproduces OpenCV's `findCornerInPyrImage` and `cv::cornerSubPix`.
 
-#### 段を登る手順
+#### Procedure for climbing the levels
 
 ```
-四隅 *= scale_init                     // scale_init = 開始段の幅 / segmentation の幅
-for (level = 開始段 - 1; level >= 0; --level) {
-    四隅 *= 2
-    cornerSubPix(pyramid[level], 四隅, 窓)
+corners *= scale_init                     // scale_init = width of the starting level / width of the segmentation
+for (level = starting level - 1; level >= 0; --level) {
+    corners *= 2
+    cornerSubPix(pyramid[level], corners, window)
 }
 ```
 
-**pyramid は縮小前の原寸から作ります。** `buildPyramid` は segmentation 画像へ縮小する前の画像に対して呼ばれるため、段 0 は原寸です。登り切った時点で四隅は原寸の座標になっており、`fxfy` の逆数を別に掛けてはいけません。逆スケールの分岐は ArUco3 の有無どちらでも到達しないためです。
+**The pyramid is built from the original size, before downscaling.** Since `buildPyramid` is called on the image before it is downscaled to the segmentation image, level 0 is the original size. By the time the climb finishes the corners are already in original-size coordinates, and the reciprocal of `fxfy` must not be applied separately. The inverse-scaling branch is not reached whether or not ArUco3 is in use.
 
-**窓の半径は設定ではなく段の大きさで決まります。** `max(段の幅, 段の高さ) > 1080 ? 5 : 3` です。`cornerRefinementWinSize` と `relativeCornerRefinmentWinSize` は ArUco3 が無効な経路でしか使われません。
+**The window radius is determined by the size of the level, not by configuration.** It is `max(level width, level height) > 1080 ? 5 : 3`. `cornerRefinementWinSize` and `relativeCornerRefinmentWinSize` are used only on the route where ArUco3 is disabled.
 
-#### 1 反復
+#### One iteration
 
-重みは `exp(-((i-r)/r)^2) * exp(-((j-r)/r)^2)` を単精度で評価したものです。`zeroZone` は `Size(-1, -1)` で呼ばれるため中央を 0 にする分岐へは入りません。
+The weights are `exp(-((i-r)/r)^2) * exp(-((j-r)/r)^2)` evaluated in single precision. Since `zeroZone` is called with `Size(-1, -1)`, the branch that zeroes the center is not entered.
 
-patch は `getRectSubPix` で切り出します。**素直な双一次補間ではありません。** 1 行を左から右へ辿り、直前の項に `(1-a)/a` を掛けて持ち回ります。
+The patch is cut out with `getRectSubPix`. **This is not a straightforward bilinear interpolation.** It traverses a row from left to right, carrying the previous term multiplied by `(1-a)/a`.
 
 ```
 prev = (1-a) * (b1*src[0] + b2*src[step])
 for j:
     t = a12*src[j+1] + a22*src[j+1+step]
     dst[j] = prev + t
-    prev = (float)(t * s)          // s = (1-a)/a を倍精度で
+    prev = (float)(t * s)          // s = (1-a)/a in double precision
 ```
 
-数学的には双一次と同じですが丸めが積み上がるため、双一次の式で置き換えると値が変わります。窓が画像からはみ出す場合は別の経路 (`adjustRect`) になり、矩形の外は端の値を縦方向にだけ補間して埋めます。
+Mathematically it is the same as bilinear, but the rounding accumulates, so replacing it with the bilinear expression changes the values. When the window extends outside the image, a different route (`adjustRect`) is taken, and the area outside the rectangle is filled by interpolating the edge values in the vertical direction only.
 
-正規方程式は倍精度で、row-major に 1 要素ずつ積みます。**並列に畳み込むと丸めが変わり、反復回数や打ち切りの採否まで変わります。** そのため 1 thread が 1 隅を担当し、内側は逐次にしています。隅は検出あたり 4 つ、検出は多くても 1024 なので、隅の間の並列だけで十分です。
+The normal equations are in double precision and are accumulated one element at a time in row-major order. **Folding them in parallel changes the rounding and changes even the iteration count and whether the suppression is taken.** For that reason one thread handles one corner, and the inside is kept sequential. There are 4 corners per detection and at most 1024 detections, so parallelism across corners alone is sufficient.
 
-誤差は単精度で求めてから倍精度へ広げます。`err = (dx*dx) + (dy*dy)` は float 演算であり、その結果が `double err` へ入ります。
+The error is computed in single precision and then widened to double. `err = (dx*dx) + (dy*dy)` is a float operation, and its result goes into a `double err`.
 
-#### 反復解法をどう検証したか
+#### How the iterative solver was verified
 
-これまでの段と違い、1 ULP の差が離散的な差になります。反復回数が 1 回変わり、収束不良で初期位置へ戻す分岐が反転すると窓の半径だけ四隅が動きます。そのため検証を 2 段に分けました。
+Unlike the preceding stages, a 1 ULP difference becomes a discrete difference. The iteration count changes by one, and if the branch that restores the initial position on convergence failure flips, the corners move by the window radius. For that reason the verification was split into two parts.
 
-**第 1 に、写し間違いが無いこと。** `cv::cornerSubPix` と `cv::getRectSubPix` を host へ逐語で写した oracle を test 内に置き、bit 一致を要求します。oracle は `-ffp-contract=off` で compile し、GPU 側の `-fmad=false` と同じ意味論にします。退化した入力を含めて 3 機すべてで 128/128 が一致しました。
+**First, that there is no transcription error.** An oracle transcribing `cv::cornerSubPix` and `cv::getRectSubPix` verbatim to the host is placed in the tests, and bit agreement is required. The oracle is compiled with `-ffp-contract=off`, giving it the same semantics as `-fmad=false` on the GPU side. Including degenerate inputs, all three machines matched 128/128.
 
-**第 2 に、OpenCV との差。** 実際の `cv::cornerSubPix` との差は機種で変わります。実運用に近い入力では 3 機とも RMSE 0.000012 px 以下ですが、行列式が 0 に近くなる退化した入力では aarch64 で最大 6.72 px の差が出ます。収束不良の判定が反転し、段を登るときに 2 倍されるためです。実装の誤りではなく、丸めの差が離散的な分岐へ増幅された結果です。
+**Second, the difference from OpenCV.** The difference from the actual `cv::cornerSubPix` varies by machine. On inputs close to real use, all three machines are within an RMSE of 0.000012 px, but on degenerate inputs where the determinant approaches 0, a difference of up to 6.72 px appears on aarch64. This is because the convergence-failure decision flips and is then doubled while climbing the levels. It is not an implementation error but the result of a rounding difference amplified into a discrete branch.
 
-### 段階分解
+### Stage breakdown
 
 ```mermaid
 flowchart TD
-    S0["S0 入力検証"] --> S1["S1 grayscale pyramid 構築"]
-    S1 --> S2["S2 segmentation 画像生成"]
-    S2 --> S3["S3 適応的二値化 nScales 枚"]
-    S3 --> S4["S4 連結成分ラベリング"]
-    S4 --> S5["S5 四角形候補抽出"]
-    S5 --> S6["S6 候補フィルタと近接統合"]
-    S6 --> S7["S7 射影変換とセル sampling"]
-    S7 --> S8["S8 border 検証と Dictionary 照合"]
-    S8 --> S9["S9 重複整理と compaction"]
-    S9 --> S10["S10 四隅の subpixel 補正と upsampling"]
-    S10 --> S11["S11 結果出力"]
+    S0["S0 input validation"] --> S1["S1 grayscale pyramid construction"]
+    S1 --> S2["S2 segmentation image generation"]
+    S2 --> S3["S3 adaptive thresholding, nScales images"]
+    S3 --> S4["S4 connected component labeling"]
+    S4 --> S5["S5 quadrilateral candidate extraction"]
+    S5 --> S6["S6 candidate filtering and proximity merging"]
+    S6 --> S7["S7 perspective transform and cell sampling"]
+    S7 --> S8["S8 border verification and Dictionary matching"]
+    S8 --> S9["S9 duplicate cleanup and compaction"]
+    S9 --> S10["S10 subpixel correction of corners and upsampling"]
+    S10 --> S11["S11 result output"]
 ```
 
-### 段階ごとの並列化方針
+### Parallelization approach per stage
 
-| 段階 | 並列単位 | 主な手法 | GPU 適性 |
+| Stage | Unit of parallelism | Main technique | GPU suitability |
 | --- | --- | --- | --- |
-| S0 入力検証 | - | host 側の境界検証 | 対象外 (host で行う) |
-| S1 pyramid | 出力 pixel | 分離型 downsample kernel を level ごとに起動 | 高 |
-| S2 segmentation | 出力 pixel | bilinear または area 縮小 | 高 |
-| S3 二値化 | 出力 pixel | integral image による定数時間 box mean、または shared memory の sliding window | 高 |
-| S4 ラベリング | pixel と label | block 単位 union-find と block 間 merge | 中 |
-| S5 候補抽出 | label | 極点探索による四隅推定 | 中 |
-| S6 フィルタ | 候補 | 述語評価と stream compaction | 高 |
-| S7 warp と sampling | 候補 | 1 候補 1 block、セル単位 sampling | 高 |
-| S8 border 検証 | 候補 | 1 候補 1 block、共有 memory の histogram と整数の和 | 高 |
-| S8 Dictionary 照合 | 候補と codeword | packed codeword に対する popcount と最小値 reduction | 高 |
-| S9 打ち切りと compaction | 候補 | 包含判定は候補ごと、走査は 1 block の逐次、詰め直しは scan | 中 |
-| S10 四隅補正 | 隅 | 1 thread が 1 隅。反復は逐次にする | 中 |
-| S11 出力 | - | device buffer または host 転送 | - |
+| S0 input validation | - | Boundary validation on the host | Out of scope (done on the host) |
+| S1 pyramid | Output pixel | Launch a separable downsample kernel per level | High |
+| S2 segmentation | Output pixel | Bilinear or area downscaling | High |
+| S3 thresholding | Output pixel | Constant-time box mean via an integral image, or a sliding window in shared memory | High |
+| S4 labeling | Pixel and label | Per-block union-find and inter-block merge | Medium |
+| S5 candidate extraction | Label | Corner estimation by extreme point search | Medium |
+| S6 filtering | Candidate | Predicate evaluation and stream compaction | High |
+| S7 warp and sampling | Candidate | One block per candidate, per-cell sampling | High |
+| S8 border verification | Candidate | One block per candidate, histogram in shared memory and integer sums | High |
+| S8 Dictionary matching | Candidate and codeword | Popcount over packed codewords and a minimum reduction | High |
+| S9 suppression and compaction | Candidate | Containment test per candidate, scan sequential in a single block, repacking by scan | Medium |
+| S10 corner correction | Corner | One thread per corner; the iteration is kept sequential | Medium |
+| S11 output | - | Device buffer or host transfer | - |
 
-S3 は既定で 3 通りの window size を評価します。CPU 実装では window ごとに輪郭抽出まで実行して結果を結合しますが、CUDA では S3 から S5 までを window 方向の 3 次元目として同時に処理し、S6 で統合する構成を初期案とします。
+S3 evaluates three window sizes by default. The CPU implementation runs everything up to contour extraction per window and merges the results, but in CUDA the initial plan is to process S3 through S5 simultaneously with the window direction as a third dimension and merge in S6.
 
-### 四角形候補抽出の設計案
+### Design options for quadrilateral candidate extraction
 
-S4 と S5 は、輪郭追跡が候補ごとに逐次的であるため、この pipeline で最も GPU に不向きな部分です。次の 3 案を比較対象とします。
+S4 and S5 are the parts of this pipeline least suited to the GPU, because contour tracing is sequential per candidate. The following three options are the comparison targets.
 
-| 案 | 内容 | 位置付け |
+| Option | Content | Positioning |
 | --- | --- | --- |
-| A | 連結成分ラベリングと極点探索で四隅を直接求める | 主案。[ADR-0003](../adr/0003-candidate-extraction-approach.md) で確定 |
-| B | GPU 上で境界追跡を行い、多角形近似を適用する | 未実装。案 A が要件を満たさなくなった場合に再検討 |
-| C | ラベリングまで GPU、四隅抽出を CPU へ委譲する | 互換性の基準かつ fallback。差分検証に使い続ける |
+| A | Obtain the corners directly by connected component labeling and extreme point search | Primary option. Settled in [ADR-0003](../adr/0003-candidate-extraction-approach.md) |
+| B | Perform boundary tracing on the GPU and apply polygonal approximation | Not implemented. To be reconsidered if option A stops meeting the requirements |
+| C | GPU up to labeling, delegating corner extraction to the CPU | Compatibility baseline and fallback. Kept in continued use for differential verification |
 
-#### 案 A の手順
+#### Procedure of option A
 
 ```mermaid
 flowchart TD
-    T["二値化画像"] --> L["block 単位 union-find"]
-    L --> M["block 間 merge と label 圧縮"]
-    M --> A1["label ごとの bbox・pixel 数・重心を atomics で集計"]
-    A1 --> F1["面積と bbox 比による粗いフィルタ"]
-    F1 --> P1["pass1 重心から最遠の点 c0"]
-    P1 --> P2["pass2 c0 から最遠の点 c2"]
-    P2 --> P3["pass3 直線 c0c2 の左右で最遠の点 c1・c3"]
-    P3 --> V["四角形としての妥当性検証"]
+    T["thresholded image"] --> L["per-block union-find"]
+    L --> M["inter-block merge and label compaction"]
+    M --> A1["aggregate bbox, pixel count, and centroid per label with atomics"]
+    A1 --> F1["coarse filter by area and bbox ratio"]
+    F1 --> P1["pass1: point c0 farthest from the centroid"]
+    P1 --> P2["pass2: point c2 farthest from c0"]
+    P2 --> P3["pass3: points c1 and c3 farthest on each side of line c0c2"]
+    P3 --> V["validity verification as a quadrilateral"]
 ```
 
-1. マーカーの黒枠は、二値化画像上で内側に穴を持つ正方形の連結成分になります。極点探索は成分の全 pixel を対象にするため、穴を特別扱いする必要がありません。
-2. 各 pass は距離と pixel index を 64-bit へ packing した `atomicMax` で実装し、label 単位に完全並列化します。
-3. 四隅の順序を一定の回り方へ正規化し、`minCornerDistanceRate` と `minDistanceToBorder` に相当する条件で篩います。
-4. 妥当性検証では、成分 pixel が推定四角形の内側へ収まる割合と、四角形面積に対する成分の bbox 占有率を確認します。CPU 実装の `polygonalApproxAccuracyRate` に相当する判定をここへ写像します。
+1. The black frame of a marker becomes a square connected component with a hole inside on the thresholded image. Since extreme point search targets all pixels of the component, there is no need to treat the hole specially.
+2. Each pass is implemented with an `atomicMax` over the distance and the pixel index packed into 64 bits, fully parallelized per label.
+3. The corner ordering is normalized to a fixed winding, and candidates are filtered by conditions corresponding to `minCornerDistanceRate` and `minDistanceToBorder`.
+4. Validity verification checks the fraction of component pixels that fall inside the estimated quadrilateral, and the bbox occupancy of the component relative to the quadrilateral area. The decision corresponding to `polygonalApproxAccuracyRate` in the CPU implementation is mapped onto this.
 
-#### 案 A の利点と制約
+#### Benefits and limitations of option A
 
-- 利点: 輪郭の順序付けと可変長 contour buffer が不要になり、label 単位で完全並列化できます。公式 ArUco GPLv3 実装の構造を移植しない独自設計として記録できます。
-- 制約: 多角形近似そのものではないため、CPU 基準結果と候補集合が一致しない場合があります。特に、遮蔽で角が欠けた成分や、複数マーカーが接触して 1 成分になった場合の挙動が異なります。
-- 判断: 案 A を主案とすることを [ADR-0003](../adr/0003-candidate-extraction-approach.md) で決定しました。ArUco3 有効時に案 C と候補集合が完全に一致し、四隅の差も 1.414 pixel 以内であることが根拠です。撤回条件も同 ADR にあります。
+- Benefit: Contour ordering and variable-length contour buffers become unnecessary, and full parallelization per label is possible. It can be recorded as an independent design that does not port the structure of the official ArUco GPLv3 implementation.
+- Limitation: Since it is not polygonal approximation itself, the candidate set may not match the CPU baseline results. In particular, the behavior differs for components whose corners are missing due to occlusion, and for cases where multiple markers touch and become a single component.
+- Conclusion: Making option A the primary option was decided in [ADR-0003](../adr/0003-candidate-extraction-approach.md). The grounds are that with ArUco3 enabled the candidate set matches option C exactly and the corner difference is within 1.414 pixels. The withdrawal conditions are in the same ADR.
 
-#### 案 A の実測
+#### Measurements of option A
 
-合成 9 場面 x 設定 2 通りで案 C と突き合わせました。前処理と二値化は共通の入力であるため、計測から除いています。
+Option A was compared against option C over 9 synthetic scenes x 2 settings. Since preprocessing and thresholding are common inputs, they are excluded from the measurement.
 
-| 設定 | 真値に対する検出 | 案 C だけが出した候補 | 案 A だけが出した候補 | 四隅の最大差 |
+| Setting | Detections against ground truth | Candidates emitted only by option C | Candidates emitted only by option A | Maximum corner difference |
 | --- | --- | --- | --- | --- |
-| ArUco3 有効 (縮小画像で抽出) | 38/38 | 0 | 0 | 1.414 px |
-| ArUco3 無効 (原寸で抽出) | 38/38 | 7 から 58 | 0 | 1.414 px |
+| ArUco3 enabled (extraction on the downscaled image) | 38/38 | 0 | 0 | 1.414 px |
+| ArUco3 disabled (extraction at original size) | 38/38 | 7 to 58 | 0 | 1.414 px |
 
-ArUco3 無効で案 C の候補が多いのは、案 C が輪郭ごとに候補を作るためです。黒枠の外周と内周、内部セルの輪郭がそれぞれ候補になります。案 A は連結成分ごとに 1 つの四隅しか作らないため内周が現れません。ArUco3 有効では縮小により内周の周長が下限を下回り、案 C 側でも落ちるため差が出ません。
+The reason option C has more candidates with ArUco3 disabled is that option C creates a candidate per contour. The outer and inner boundaries of the black frame and the contours of the inner cells each become candidates. Since option A creates only one set of corners per connected component, no inner boundary appears. With ArUco3 enabled, downscaling puts the perimeter of the inner boundary below the lower bound, so it is dropped on the option C side as well and no difference appears.
 
-時間は場面の内容で優劣が変わります。DGX Spark、ArUco3 有効、マーカー 4 枚の素の場面で案 A 0.543 ms に対し案 C 0.168 ms、同じ場面へ noise を加えると案 A 0.530 ms に対し案 C 1.728 ms です。案 A は画素数でほぼ決まり、案 C は輪郭の数と長さに比例します。
+Which is faster depends on the content of the scene. On DGX Spark with ArUco3 enabled, on a plain scene with 4 markers, option A takes 0.543 ms against 0.168 ms for option C; adding noise to the same scene gives 0.530 ms for option A against 1.728 ms for option C. Option A is determined almost entirely by the pixel count, while option C is proportional to the number and length of the contours.
 
-#### 案 A の四角形らしさの判定
+#### Quadrilateral-likeness decision of option A
 
-`polygonalApproxAccuracyRate` に相当する判定を 2 つの比へ写像しています。合成図形での実測値は次のとおりです。
+The decision corresponding to `polygonalApproxAccuracyRate` is mapped onto two ratios. The measured values on synthetic shapes are as follows.
 
-| 形 | 内側比 | 辺の裏付け | 判定 |
+| Shape | Inside ratio | Edge support | Decision |
 | --- | --- | --- | --- |
-| 正方形 (回転 11 通り) | 0.987 から 1.000 | 2.52 から 3.03 | 通す |
-| 枠 (回転 4 通り) | 0.973 から 1.000 | 2.60 から 3.02 | 通す |
-| 小さい枠 (辺 32) | 0.875 | 2.61 | 通す |
-| 円 | 0.642 | 4.97 | 落とす |
-| 楕円 | 0.639 | 3.99 | 落とす |
-| 六角形 | 0.665 | 3.01 | 落とす |
-| L 字 | 0.941 から 0.956 | 1.32 から 1.39 | 落とす |
-| 十字 | 0.850 | 1.71 | 落とす |
+| Square (11 rotations) | 0.987 to 1.000 | 2.52 to 3.03 | Pass |
+| Frame (4 rotations) | 0.973 to 1.000 | 2.60 to 3.02 | Pass |
+| Small frame (side 32) | 0.875 | 2.61 | Pass |
+| Circle | 0.642 | 4.97 | Reject |
+| Ellipse | 0.639 | 3.99 | Reject |
+| Hexagon | 0.665 | 3.01 | Reject |
+| L shape | 0.941 to 0.956 | 1.32 to 1.39 | Reject |
+| Cross | 0.850 | 1.71 | Reject |
 
-内側比だけでは L 字と十字を、辺の裏付けだけでは円と楕円を落とせません。両方を課すことで分離できます。三角形は直線 c0c2 が 1 辺に重なり、片側に点が残らないため四隅が定まらず無効になります。
+The inside ratio alone cannot reject the L shape and the cross, and the edge support alone cannot reject the circle and the ellipse. Imposing both separates them. For a triangle, the line c0c2 coincides with one side and no point remains on one side of it, so the corners are not determined and it becomes invalid.
 
-### 可変長出力と overflow
+### Variable-length output and overflow
 
-- 候補数と検出数は入力依存で可変です。上限付き device buffer と device 上の counter を使用します。
-- 上限は `DetectorConfig` の `max_candidates_` と `max_markers_` から決め、source の固定値にしません。
-- counter が上限を超えた場合は、書き込みを打ち切ったうえで overflow flag を立て、結果に明示的な状態値として返します。無言の切り捨てを行いません。
-- compaction は、まず atomic counter による素朴な実装で正しさを固定し、その後 prefix sum 方式と比較します。
+- The candidate count and the detection count are input-dependent and variable. A bounded device buffer and a counter on the device are used.
+- The bounds are determined from `max_candidates_` and `max_markers_` of `DetectorConfig`, not from fixed values in the source.
+- If a counter exceeds its bound, writing is stopped, an overflow flag is raised, and it is returned in the result as an explicit status value. No silent truncation is performed.
+- For compaction, correctness is first pinned down with a naive implementation using an atomic counter, after which it is compared with a prefix sum approach.
 
-### workspace と memory 方針
+### Workspace and memory policy
 
-- 想定する最大解像度、最大 pyramid 段数、`nScales`、候補上限から必要量を算出し、detector 生成時に一括確保します。
-- フレームごとの `cudaMalloc` と `cudaFree` を行いません。入力解像度が変わった場合のみ再確保し、再確保が発生したことを統計として記録します。
-- 中間 buffer は段階間で再利用し、同時に生存する必要がある buffer だけを別領域とします。
-- DGX Spark GB10 と Jetson Orin はいずれも統合 GPU であり、host と device が同一物理 memory を共有します。pageable host、pinned host、managed、device 常駐の 4 経路を実装で選択でき、[評価計画](../evaluation-plan.md) で個別に測定できるようにします。
+- The required amount is computed from the assumed maximum resolution, maximum number of pyramid levels, `nScales`, and the candidate bound, and is allocated all at once when the detector is created.
+- No per-frame `cudaMalloc` or `cudaFree` is performed. Reallocation happens only when the input resolution changes, and the occurrence of a reallocation is recorded as a statistic.
+- Intermediate buffers are reused across stages, and only buffers that must be alive at the same time are given separate regions.
+- DGX Spark GB10 and Jetson Orin both have integrated GPUs, where the host and device share the same physical memory. The four routes — pageable host, pinned host, managed, and device-resident — can be selected in the implementation, so that each can be measured individually in [the evaluation plan](../evaluation-plan.md).
 
-### 同期と stream
+### Synchronization and streams
 
-- 公開 API は caller 所有の `cudaStream_t` を受け取り、全 kernel をその stream へ発行します。
-- core は `cudaDeviceSynchronize()` を呼びません。
-- host 側で結果件数が必要になる時点でのみ同期が発生します。件数を host へ戻さずに済むよう、device 側の結果 buffer をそのまま返す API を用意します。
-- benchmark では、段階ごとの CUDA event と wall-clock を分離して記録します。
+- The public API takes a caller-owned `cudaStream_t` and issues all kernels to that stream.
+- The core never calls `cudaDeviceSynchronize()`.
+- Synchronization occurs only at the point where the host needs the result count. An API that returns the device-side result buffer as is is provided so that the count need not be brought back to the host.
+- In benchmarks, per-stage CUDA events and wall-clock time are recorded separately.
 
-### 機種差の扱い
+### Handling of machine differences
 
-- 共通経路を正本とし、`sm_87` と `sm_121` で同じアルゴリズムと同じ正確性テストを適用します。
-- tile size、block size、shared memory 使用量、L2 を意識した分割は compile 時定数ではなく設定値とし、機種ごとに測定で決めます。
-- `__CUDA_ARCH__` による分岐は kernel specialization として局所化し、共通経路の挙動を変えません。
+- The common route is the authoritative one, and the same algorithm and the same accuracy tests are applied on `sm_87` and `sm_121`.
+- Tile size, block size, shared memory usage, and L2-aware partitioning are configuration values rather than compile-time constants, and are determined per machine by measurement.
+- Branching on `__CUDA_ARCH__` is localized as kernel specialization and does not change the behavior of the common route.
 
-## 実装上の判断
+## Design decisions
 
-- 候補抽出は案 A を主案とし、案 C を互換性の基準かつ fallback として常に維持します。
-- S3 から S5 までを window size 方向に同時実行し、CPU 実装のように window ごとの逐次結合を行いません。
-- Dictionary 照合は 4 回転分を事前展開した packed codeword に対する popcount で行い、回転探索を分岐にしません。
-- 四隅の subpixel 補正は、ArUco3 の精度に直結するため CPU 委譲を許容せず GPU で実装します。
-- 入力は 8-bit grayscale に限定し、色変換は adapter の責務とします。
+- Option A is the primary option for candidate extraction, and option C is always maintained as the compatibility baseline and fallback.
+- S3 through S5 are executed simultaneously along the window size direction, without the per-window sequential merging of the CPU implementation.
+- Dictionary matching is done by popcount over packed codewords with the 4 rotations expanded in advance, so that the rotation search is not a branch.
+- Subpixel correction of the corners is implemented on the GPU without permitting delegation to the CPU, because it is directly tied to the accuracy of ArUco3.
+- The input is limited to 8-bit grayscale, and color conversion is the responsibility of the adapter.
 
-### block size を設定にしない判断
+### The decision not to make block size configurable
 
-`DetectorConfig::cuda_block_dim_` は 2 次元 kernel の block 1 辺を上書きする設定ですが、**届くのは 12 個のうち 5 個だけ**です (`preprocess.cu` の 3 個と `threshold.cu` の 2 個)。`labeling.cu`、`candidate_filter.cu`、`quad_extract.cu` は 16 を固定しています。
+`DetectorConfig::cuda_block_dim_` is a setting that overrides the block side for 2D kernels, but **it reaches only 5 out of 12** (3 in `preprocess.cu` and 2 in `threshold.cu`). `labeling.cu`, `candidate_filter.cu`, and `quad_extract.cu` fix it at 16.
 
-届く範囲を広げることも、設定そのものを消すことも**しません**。3 機で 8 / 16 / 32 を振った実測で、**16 がすべての機で最適**であり、32 は 3 から 8% 遅くなるためです。設定として露出しても変える理由がなく、届く範囲を広げても得るものがありません。
+We will **neither** widen the reach nor remove the setting itself. In measurements sweeping 8 / 16 / 32 on three machines, **16 was optimal on every machine**, and 32 was 3 to 8% slower. There is no reason to change it even though it is exposed as a setting, and widening its reach would gain nothing.
 
-同じ sweep をやり直さないよう、測定した事実をここに残します。
+To avoid redoing the same sweep, the measured facts are left here.
 
-機に依存する値のうち、実際に効くのは S10 の補正で起こす block 数だけでした。これは設定ではなく **device の SM 数から導いて**います。詳細は [実装の構成と検証](../implementation-plan.md) にあります。
+Among the machine-dependent values, the only one that actually mattered was the number of blocks launched for the S10 correction. That is not a setting but is **derived from the SM count of the device**. The details are in [Implementation structure and verification](../implementation-plan.md).
 
-## 未確定事項
+## Open questions
 
-- 案 A の妥当性検証しきい値を実写でどう調整するか。現在の内側比 0.80 と辺の裏付け 2.0 は合成図形の実測に基づく。
-- 二値化に integral image と sliding window のどちらが対象機で有利か。
-- `detectInvertedMarker` 相当の白マーカー検出を初期 scope に含めるか。
-- Dictionary を constant memory へ置く上限 size と、超過時の配置。
+- How to tune the validity verification thresholds of option A on real images. The current inside ratio of 0.80 and edge support of 2.0 are based on measurements on synthetic shapes.
+- Whether an integral image or a sliding window is advantageous for thresholding on the target machines.
+- Whether to include white marker detection equivalent to `detectInvertedMarker` in the initial scope.
+- The maximum size for placing the Dictionary in constant memory, and where to place it when that is exceeded.
 
-## 関連
+## See also
 
-- [アーキテクチャ](../architecture.md)
-- [公開 API 草案](public-api.md)
-- [実装計画](../implementation-plan.md)
-- [評価計画](../evaluation-plan.md)
-- [Code Provenance 記録](../code-provenance.md)
+- [Architecture](../architecture.md)
+- [Public API draft](public-api.md)
+- [Implementation plan](../implementation-plan.md)
+- [Evaluation plan](../evaluation-plan.md)
+- [Code Provenance record](../code-provenance.md)

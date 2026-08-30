@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""測定結果 JSONL を集計して表と crossover point を出力する。
+"""Aggregate measurement JSONL into tables and crossover points.
 
-目的:
-    benchmark harness が出力した JSONL を読み、経路ごとの遅延と throughput を
-    比較できる形へまとめる。有利な結果だけを選ばないよう、指定された全 file の
-    全 measurement を対象とする。
+Purpose:
+    Read the JSONL emitted by the benchmark harness and arrange it so that
+    latency and throughput can be compared per route. Every measurement in every
+    file that was given is included, so that favorable results cannot be
+    cherry-picked.
 
-使用方法:
+Usage:
     aggregate.py results.jsonl [more.jsonl ...] [--format table|csv|json]
 """
 import argparse
@@ -15,27 +16,29 @@ import json
 import sys
 from collections import defaultdict
 
-# 読める schema 版。version が違う結果を黙って混ぜると、同じ key が違う
-# 測定区間を指すことになる。version 3 で CPU 経路の測定区間から画像の
-# 読み込みと checksum を外したため、2 以前の値とは比較できない。
+# Schema versions that can be read. Silently mixing results of different
+# versions would make the same key refer to a different measured interval.
+# Version 3 removed image loading and checksumming from the measured interval of
+# the CPU route, so values from version 2 and earlier are not comparable.
 SUPPORTED_SCHEMA_VERSIONS = {4}
 
 
 def short_name(path):
-    """表示用に画像 path の file 名だけを取り出す。"""
+    """Take only the file name of an image path, for display."""
     if not path:
-        return "(不明)"
+        return "(unknown)"
     return path.rsplit("/", 1)[-1]
 
 
 def machine_label(environment):
-    """測定結果を機体で区別するための短い名前。
+    """Short name that distinguishes measurements by machine.
 
-    複数機の結果を並べる場合、どの行がどの機体かが判別できないと比較にならない。
-    基板名が取れる機種はそれを使い、取れない場合は GPU 名で代替する。
+    When results from several machines are listed together, there is nothing to
+    compare unless it is clear which row belongs to which machine. Machines that
+    report a board name use it; the others fall back to the GPU name.
     """
     if environment is None:
-        return "(不明)"
+        return "(unknown)"
     model = environment.get("platform_model")
     if model:
         # "Jetson AGX Orin Developer Kit" -> "Jetson AGX Orin"
@@ -43,15 +46,17 @@ def machine_label(environment):
     gpu = environment.get("gpu_name")
     if gpu:
         return gpu
-    return environment.get("hostname") or "(不明)"
+    return environment.get("hostname") or "(unknown)"
 
 
 def load_records(paths):
-    """JSONL を読み、環境情報と測定結果へ分ける。
+    """Read the JSONL and split it into environment information and measurements.
 
-    JSONL は 1 行目が環境情報、以降が測定結果である。測定結果には直前に
-    現れた環境情報を対応付ける。1 つの file に複数の環境情報が現れる場合
-    (複数機の結果を連結した場合) も、行の順序で正しく対応する。
+    In the JSONL the first line is environment information and the rest are
+    measurements. Each measurement is associated with the environment record that
+    appeared most recently before it. This keeps the association correct, by line
+    order, even when one file contains several environment records (for example
+    when results from several machines were concatenated).
     """
     environments = []
     measurements = []
@@ -65,18 +70,18 @@ def load_records(paths):
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError as error:
-                    raise SystemExit(f"{path}:{line_number}: JSON として読めない: {error}")
+                    raise SystemExit(f"{path}:{line_number}: not readable as JSON: {error}")
                 version = record.get("schema_version")
                 if version not in SUPPORTED_SCHEMA_VERSIONS:
                     raise SystemExit(
-                        f"{path}:{line_number}: schema_version {version} は読めない。"
-                        f"対応するのは {sorted(SUPPORTED_SCHEMA_VERSIONS)}。"
-                        "測定し直すか、古い結果は別に集計すること")
+                        f"{path}:{line_number}: schema_version {version} cannot be read. "
+                        f"Supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}. "
+                        "Measure again, or aggregate old results separately")
                 kind = record.get("type")
                 if kind == "environment":
                     record["_source"] = path
                     current_environment = record
-                    # 同一機体の環境行が繰り返し現れる場合は 1 つにまとめる。
+                    # Collapse repeated environment lines for the same machine.
                     key = (record.get("hostname"), record.get("gpu_name"),
                            record.get("cuda_toolkit"), record.get("power_mode"))
                     if key not in {(e.get("hostname"), e.get("gpu_name"),
@@ -87,17 +92,17 @@ def load_records(paths):
                     record["_source"] = path
                     if current_environment is None:
                         raise SystemExit(
-                            f"{path}:{line_number}: 環境行より前に measurement がある")
+                            f"{path}:{line_number}: a measurement appears before any environment line")
                     record["_environment"] = current_environment
                     measurements.append(record)
                 else:
-                    raise SystemExit(f"{path}:{line_number}: 未知の type: {kind}")
+                    raise SystemExit(f"{path}:{line_number}: unknown type: {kind}")
     return environments, measurements
 
 
 def format_environment(environment):
-    gpu = environment.get("gpu_name") or "(GPU なし)"
-    integrated = "統合" if environment.get("gpu_integrated") else "非統合"
+    gpu = environment.get("gpu_name") or "(no GPU)"
+    integrated = "integrated" if environment.get("gpu_integrated") else "discrete"
     return (
         f"host={environment.get('hostname')} os={environment.get('os')}\n"
         f"  arch={environment.get('architecture')} cores={environment.get('cpu_online_cores')}"
@@ -110,10 +115,10 @@ def format_environment(environment):
         f"  cpu={environment.get('cpu_topology') or '-'}"
         f" affinity={environment.get('cpu_affinity') or '-'}"
         f" aslr={environment.get('address_randomization') or '-'}\n"
-        f"  cuda_context={environment.get('cuda_context_ms') or 0:.1f} ms (process ごとに 1 度)\n"
-        f"  power_mode={environment.get('power_mode') or '(未取得)'}"
+        f"  cuda_context={environment.get('cuda_context_ms') or 0:.1f} ms (once per process)\n"
+        f"  power_mode={environment.get('power_mode') or '(not collected)'}"
         f" clock={environment.get('gpu_max_clock_mhz') or '-'} MHz (max)"
-        f" / {environment.get('gpu_current_clock_mhz') or '-'} MHz (現在)"
+        f" / {environment.get('gpu_current_clock_mhz') or '-'} MHz (current)"
     )
 
 
@@ -180,22 +185,24 @@ def print_table(rows):
 
 
 def print_crossover(rows):
-    """同じ条件で複数経路がある場合に、経路間の比を示す。
+    """Show the ratio between routes when several routes share a condition.
 
-    CPU が速い条件も必ず表に残す。有利な結果だけを選ばないため。
+    Conditions where the CPU is faster are always kept in the table, so that
+    favorable results are not the only ones shown.
     """
     grouped = defaultdict(dict)
     for row in rows:
-        # 機体をまたいだ経路比較は意味が異なるため、機体を key へ含める。
+        # Comparing routes across machines means something different, so the
+        # machine is part of the key.
         key = (row["machine"], row["image"], row["resolution"], row["markers"], row["fxfy"])
         grouped[key][(row["route"], row["memory_mode"])] = row
 
     comparable = {key: value for key, value in grouped.items() if len(value) > 1}
     if not comparable:
-        print("\n経路が 1 つのみのため crossover point は算出しない。")
+        print("\nOnly one route is present, so no crossover point is computed.")
         return
 
-    print("\n=== 経路比較 (CPU の p50 を 1 とする比) ===")
+    print("\n=== Route comparison (ratio against the CPU p50) ===")
     for key, routes in sorted(comparable.items(), key=lambda item: str(item[0])):
         cpu = next((row for (route, _), row in routes.items() if route == "CPU"), None)
         if cpu is None or not cpu["p50_ms"]:
@@ -206,25 +213,27 @@ def print_crossover(rows):
                 continue
             ratio = row["p50_ms"] / cpu["p50_ms"]
             if row is cpu:
-                print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  (基準)")
+                print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  (baseline)")
                 continue
-            # 5% 以内は測定のばらつきに埋もれるため、速い遅いを主張しない。
-            # 判定の順序を誤ると、1.00 を僅かに超えただけで「CPU が速い」に
-            # なり、同等の帯が片側にしか効かなくなる。
+            # Differences within 5% are buried in measurement spread, so make no
+            # claim about which is faster. Getting the order of these checks
+            # wrong would turn a hair above 1.00 into "CPU is faster" and leave
+            # the equivalence band effective on one side only.
             if abs(ratio - 1.0) < 0.05:
-                verdict = "同等"
+                verdict = "equivalent"
             elif ratio > 1.0:
-                verdict = "CPU が速い"
+                verdict = "CPU is faster"
             else:
-                verdict = "こちらが速い"
-            print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  比={ratio:.3f}  {verdict}")
+                verdict = "this route is faster"
+            print(f"  {route:<14} {memory:<12} p50={row['p50_ms']:.3f} ms  ratio={ratio:.3f}  {verdict}")
 
 
 def print_startup(rows):
-    """起動の費用を経路ごとに示す。
+    """Show the startup cost per route.
 
-    warm-up 後の分位点には現れない。単発の検出や短い burst では、定常状態の
-    差より起動の費用が支配する。定常との差から、元が取れる frame 数も出す。
+    It does not appear in the post-warm-up quantiles. For a single detection or a
+    short burst, the startup cost dominates the steady-state difference. From
+    that difference, also report how many frames it takes to pay the cost back.
     """
     grouped = defaultdict(dict)
     for row in rows:
@@ -233,7 +242,7 @@ def print_startup(rows):
         if row["first_result_ms"] is not None:
             entry.append(row)
 
-    # CUDA の文脈生成は process ごとの費用であり、画像ごとには現れない。
+    # CUDA context creation is a per-process cost and does not show up per image.
     context_ms = 0.0
     for row in rows:
         value = (row.get("_context_ms") or 0.0)
@@ -250,39 +259,40 @@ def print_startup(rows):
                 continue
             row = items[0]
             if not printed:
-                print("\n=== 起動の費用 (warm-up 後の分位点には現れない) ===")
-                print("経路ごとに、1 枚目の結果が出るまでの時間と、定常との差で")
-                print("元が取れる frame 数を示す。")
+                print("\n=== Startup cost (does not appear in the post-warm-up quantiles) ===")
+                print("Per route: the time until the first result is available, and how many")
+                print("frames the steady-state difference needs to pay that cost back.")
                 printed = True
             gain = cpu["p50_ms"] - row["p50_ms"]
-            # CUDA の文脈生成を CUDA 経路側にのみ加える。process ごとに 1 度
-            # 発生し、画像ごとの測定には現れないためである。
+            # Add CUDA context creation to the CUDA routes only. It happens once
+            # per process and does not show up in the per-image measurements.
             extra = (row["first_result_ms"] + context_ms) - cpu["first_result_ms"]
             print(f"{key[0]} {short_name(key[1])} {key[2]} markers={key[3]}")
-            print(f"  CPU            1 枚目まで {cpu['first_result_ms']:8.3f} ms "
-                  f"(検出 {cpu['first_frame_ms']:.3f} ms)  定常 {cpu['p50_ms']:.3f} ms")
-            print(f"  {route:<14} 1 枚目まで {row['first_result_ms']:8.3f} ms "
-                  f"(検出 {row['first_frame_ms']:.3f} ms)  定常 {row['p50_ms']:.3f} ms  "
+            print(f"  CPU            to first frame {cpu['first_result_ms']:8.3f} ms "
+                  f"(detect {cpu['first_frame_ms']:.3f} ms)  steady {cpu['p50_ms']:.3f} ms")
+            print(f"  {route:<14} to first frame {row['first_result_ms']:8.3f} ms "
+                  f"(detect {row['first_frame_ms']:.3f} ms)  steady {row['p50_ms']:.3f} ms  "
                   f"[{memory}]")
-            print(f"    + CUDA 文脈生成 {context_ms:.1f} ms (process ごとに 1 度)")
+            print(f"    + CUDA context creation {context_ms:.1f} ms (once per process)")
             if gain > 0:
-                print(f"    起動の追加費用 {extra:.1f} ms / 1 frame あたりの利得 "
-                      f"{gain:.3f} ms -> 約 {extra / gain:.0f} frame で相殺")
+                print(f"    extra startup cost {extra:.1f} ms / gain per frame "
+                      f"{gain:.3f} ms -> paid back after about {extra / gain:.0f} frames")
             else:
-                print(f"    起動の追加費用 {extra:.1f} ms。定常でも速くならないため相殺しない")
+                print(f"    extra startup cost {extra:.1f} ms. Not faster in steady state either, so it is never paid back")
 
 
 def print_run_variance(rows):
-    """同一条件を複数回実行した場合の、実行間ばらつきを示す。
+    """Show the run-to-run spread when the same condition was measured repeatedly.
 
-    process ごとの memory 配置 (ASLR) や core 割り当てで p50 自体が動くため、
-    1 回の実行内の分位点だけでは測定値の再現性を判断できない。
+    Per-process memory layout (ASLR) and core assignment move p50 itself, so the
+    quantiles within a single run are not enough to judge the reproducibility of
+    a measurement.
     """
     grouped = defaultdict(list)
     for row in rows:
-        # 画像を key へ含める。同じ解像度でマーカー数も同じ別の画像があると、
-        # 含めない場合に別条件の値が 1 つの group へ入り、実行間ばらつきを
-        # 実際より大きく見せる。
+        # The image is part of the key. If it were not, a different image with
+        # the same resolution and marker count would land in the same group and
+        # make the run-to-run spread look larger than it is.
         key = (row["machine"], row["route"], row["memory_mode"], row["image"],
                row["resolution"], row["markers"], row["fxfy"], row["aruco3"])
         if row["p50_ms"] is not None:
@@ -292,21 +302,22 @@ def print_run_variance(rows):
     if not repeated:
         return
 
-    print("\n=== 実行間ばらつき (同一条件を複数回実行した場合の p50) ===")
+    print("\n=== Run-to-run spread (p50 when the same condition was run several times) ===")
     for key, values in sorted(repeated.items(), key=lambda item: str(item[0])):
         values = sorted(values)
         middle = values[len(values) // 2]
         spread = (values[-1] - values[0]) / middle * 100.0 if middle else 0.0
         print(f"{key[0]} {key[1]} {key[2]} {short_name(key[3])} {key[4]} "
               f"markers={key[5]} fxfy={key[6]} aruco3={key[7]}")
-        print(f"  n={len(values)} 中央 {middle:.3f} ms  範囲 {values[0]:.3f} - {values[-1]:.3f} ms"
-              f"  幅 {spread:.1f}%")
+        print(f"  n={len(values)} median {middle:.3f} ms  range {values[0]:.3f} - {values[-1]:.3f} ms"
+              f"  width {spread:.1f}%")
 
 
 def print_machine_comparison(rows):
-    """同じ条件を複数機体で測った場合に、機体間の比を示す。
+    """Show the ratio between machines when the same condition was measured on several.
 
-    どちらが速いかだけでなく、条件ごとに差が変わることを見えるようにする。
+    Beyond which one is faster, this makes it visible that the gap changes with
+    the condition.
     """
     grouped = defaultdict(dict)
     for row in rows:
@@ -317,7 +328,7 @@ def print_machine_comparison(rows):
     if not comparable:
         return
 
-    print("\n=== 機体比較 (同一条件) ===")
+    print("\n=== Machine comparison (same condition) ===")
     for key, machines in sorted(comparable.items(), key=lambda item: str(item[0])):
         print(f"{key[0]} {key[1]} markers={key[2]} fxfy={key[3]}")
         baseline_name, baseline = sorted(machines.items())[0]
@@ -325,20 +336,20 @@ def print_machine_comparison(rows):
             if not row["p50_ms"] or not baseline["p50_ms"]:
                 continue
             ratio = row["p50_ms"] / baseline["p50_ms"]
-            note = "(基準)" if name == baseline_name else f"基準比 {ratio:.2f}x"
+            note = "(baseline)" if name == baseline_name else f"{ratio:.2f}x baseline"
             print(f"  {name:<22} p50={row['p50_ms']:>8.3f} ms  "
                   f"fps={row['fps'] or 0:>7.1f}  {note}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paths", nargs="+", help="測定結果 JSONL")
+    parser.add_argument("paths", nargs="+", help="measurement JSONL")
     parser.add_argument("--format", choices=["table", "csv", "json"], default="table")
     arguments = parser.parse_args()
 
     environments, measurements = load_records(arguments.paths)
     if not measurements:
-        raise SystemExit("measurement が 1 件も無い")
+        raise SystemExit("no measurement records at all")
 
     rows = measurement_rows(measurements)
 
@@ -354,10 +365,10 @@ def main():
             print(",".join("" if row[name] is None else str(row[name]) for name in names))
         return
 
-    print("=== 環境 ===")
+    print("=== Environment ===")
     for environment in environments:
         print(format_environment(environment))
-    print("\n=== 測定結果 ===")
+    print("\n=== Measurement results ===")
     print_table(rows)
     print_startup(rows)
     print_run_variance(rows)

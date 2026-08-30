@@ -1,25 +1,25 @@
 # docs AGENTS Guide
 
-このファイルは `docs/**` を作成・更新するエージェント向けの補足ルールです。repo root の `AGENTS.md` と `CONTRIBUTING.md` を前提とします。
+This file holds supplementary rules for agents creating and updating `docs/**`. It assumes the `AGENTS.md` and `CONTRIBUTING.md` in the repo root.
 
 ## Language And Structure
 
-- 文書は原則として日本語で記述する。
-- `docs/terminology.md` の推奨表現を使用する。
-- 設計、計画、評価文書には `目的`、`対象範囲`、`現状`、`目標`、`未確定事項` を設ける。
-- 未実装の内容を現在の機能として記載しない。
-- 未確定事項は推測で埋めず、`TODO` または `未確定事項` として残す。
-- 他の文書は相対パスで参照する。
+- As a rule, write documents in English.
+- Use the preferred wording in `docs/terminology.md`.
+- Design, planning, and evaluation documents must have `Purpose`, `Scope`, `Current state`, `Goals`, and `Open questions`.
+- Do not describe unimplemented content as a current feature.
+- Do not fill in open questions with guesses; leave them as `TODO` or under `Open questions`.
+- Reference other documents by relative path.
 
 ## Diagram Rules
 
-- データフロー、責務、処理段階の説明には Mermaid を優先する。
-- 図の前後に短い説明を付ける。
-- 1 つの図へ情報を詰め込みすぎず、必要に応じて分割する。
-- 外部画像を追加する場合は `docs/img/` に配置し、出典とライセンスを記録する。
+- Prefer Mermaid for explaining data flow, responsibilities, and processing stages.
+- Add a short explanation before and after each diagram.
+- Do not pack too much information into a single diagram; split it up where necessary.
+- When adding an external image, place it in `docs/img/` and record its source and license.
 
 ## Synchronization
 
-- 公開 API、設定、対応 hardware、評価条件を変更した場合は関連文書を同じ変更で更新する。
-- ADR で決定を置き換える場合は、古い ADR を削除せず `Superseded` として後継 ADR をリンクする。
-- ベンチマーク結果には再現に必要な環境情報を含める。
+- When the public API, configuration, supported hardware, or evaluation conditions change, update the related documents in the same change.
+- When an ADR supersedes a decision, do not delete the old ADR; mark it `Superseded` and link to the successor ADR.
+- Include the environment information needed to reproduce a benchmark result alongside it.

@@ -88,10 +88,11 @@ cv::aruco::DetectorParameters to_detector_parameters(const DetectorConfig& confi
 }
 
 
-/// 候補の周長から、識別に使う pyramid level を選ぶ。
+/// Picks the pyramid level used for identification from the perimeter of a
+/// candidate.
 ///
-/// OpenCV の _findOptPyrImageForCanonicalImg と同じ。距離が正のものだけを
-/// 対象とし、より大きい level を優先する。
+/// Same as OpenCV's _findOptPyrImageForCanonicalImg. Only levels with a
+/// positive distance are considered, and larger levels win.
 std::size_t find_optimal_level(const std::vector<cv::Mat>& pyramid, int scaled_width,
                                int contour_size, int min_perimeter) {
     std::size_t optimal = 0;
@@ -108,7 +109,8 @@ std::size_t find_optimal_level(const std::vector<cv::Mat>& pyramid, int scaled_w
     return optimal;
 }
 
-/// セルごとの白画素比を求める。OpenCV の _extractCellPixelRatio と同じ。
+/// Computes the ratio of white pixels per cell. Same as OpenCV's
+/// _extractCellPixelRatio.
 cv::Mat extract_cell_pixel_ratio(const cv::Mat& image, const std::vector<cv::Point2f>& corners,
                                  int marker_size, int border_bits, int cell_size,
                                  double cell_margin_rate, double min_std_dev) {
@@ -135,7 +137,8 @@ cv::Mat extract_cell_pixel_ratio(const cv::Mat& image, const std::vector<cv::Poi
                                   .rowRange(cell_size / 2, canonical.rows - cell_size / 2);
     cv::meanStdDev(inner, mean, stddev);
     if (stddev.ptr<double>(0)[0] < min_std_dev) {
-        // 分散が小さい候補は全て白か全て黒とみなす。Otsu が意味を持たない。
+        // A candidate with little variance is taken as all white or all black.
+        // Otsu carries no meaning there.
         ratio.setTo(mean.ptr<double>(0)[0] > 127.0 ? 1.0 : 0.0);
         return ratio;
     }
@@ -152,7 +155,7 @@ cv::Mat extract_cell_pixel_ratio(const cv::Mat& image, const std::vector<cv::Poi
     return ratio;
 }
 
-/// 外周セルの誤り数を数える。OpenCV の _getBorderErrors と同じ。
+/// Counts the errors in the border cells. Same as OpenCV's _getBorderErrors.
 int count_border_errors(const cv::Mat& ratio, int marker_size, int border_bits,
                         float valid_bit_threshold) {
     const int size_with_borders = marker_size + 2 * border_bits;
@@ -182,11 +185,12 @@ int count_border_errors(const cv::Mat& ratio, int marker_size, int border_bits,
 }
 
 
-/// host 側の受け取りに必要な pinned memory の量を求める。
+/// Computes how much pinned memory the host side needs to receive the results.
 ///
-/// 二値化画像は window ごとに segmentation の大きさ、pyramid は level ごとに
-/// 半分ずつ小さくなる。level 0 は原寸であり、ここが最大を占める。
-/// 桁溢れや設定不正では 0 を返す。
+/// There is one binarized image of the segmentation size per window, and each
+/// pyramid level is half the size of the previous one. Level 0 is at full
+/// resolution and accounts for the largest share. Returns 0 on overflow or on
+/// an invalid configuration.
 std::size_t host_receive_bytes(const DetectorConfig& config, const detail::ScalePlan& plan,
                                int max_width_px, int max_height_px) {
     if (max_width_px < 1 || max_height_px < 1) {
@@ -198,7 +202,7 @@ std::size_t host_receive_bytes(const DetectorConfig& config, const detail::Scale
                                        &window_count) != Status::kOk) {
         return 0U;
     }
-    // 行ごとに整列させるため、1 平面あたり少し余裕を積む。
+    // Add a little slack per plane so that each row can be aligned.
     constexpr std::size_t kRowAlignment = 512U;
     const auto plane_bytes = [](int width, int height) {
         return align_up(static_cast<std::size_t>(width), kRowAlignment) *
@@ -213,14 +217,16 @@ std::size_t host_receive_bytes(const DetectorConfig& config, const detail::Scale
         level_width = std::max(1, (level_width + 1) / 2);
         level_height = std::max(1, (level_height + 1) / 2);
     }
-    // 端数の整列で不足しないよう 1 平面分の余裕を持たせる。
+    // Keep one extra plane in reserve so that alignment remainders never make
+    // the arena come up short.
     return total + plane_bytes(max_width_px, 1);
 }
 
-/// pinned arena から 1 平面を切り出し、cv::Mat として参照する。
+/// Carves one plane out of the pinned arena and wraps it in a cv::Mat.
 ///
-/// cv::Mat は外部 memory を指すだけで所有しない。arena を reset すると
-/// 参照先が無効になるため、frame の途中で reset しないこと。
+/// The cv::Mat only points at external memory; it does not own it. Resetting
+/// the arena invalidates what it points at, so do not reset it in the middle of
+/// a frame.
 Status reserve_host_plane(Workspace& workspace, int width_px, int height_px, cv::Mat* out) {
     constexpr std::size_t kRowAlignment = 512U;
     const std::size_t step = align_up(static_cast<std::size_t>(width_px), kRowAlignment);
@@ -237,7 +243,8 @@ Status reserve_host_plane(Workspace& workspace, int width_px, int height_px, cv:
 
 }  // namespace
 
-/// 実装本体。公開 header が OpenCV へ依存しないよう pimpl とする。
+/// The implementation itself. Kept behind a pimpl so the public header does
+/// not depend on OpenCV.
 class HybridDetector::Impl {
 public:
     Impl() = default;
@@ -265,15 +272,17 @@ private:
     cv::aruco::Dictionary dictionary_;
     cv::aruco::DetectorParameters parameters_;
     Workspace workspace_;
-    /// host 側の受け取り先。pinned memory を arena として確保する。
+    /// Destination on the host side. Pinned memory is allocated as an arena.
     ///
-    /// 非同期転送は pinned memory を要求する。pageable memory を指定すると
-    /// driver が内部で一時 buffer へ複製するため、同期転送と変わらない。
+    /// Asynchronous transfers require pinned memory. With pageable memory the
+    /// driver internally copies through a staging buffer, which is no better
+    /// than a synchronous transfer.
     Workspace host_workspace_;
-    /// 転送と kernel を載せる stream。
+    /// The stream the transfers and kernels are issued on.
     ///
-    /// 既定 stream を使うと、同一 process 内の他の作業と直列化する。
-    /// また転送を 1 つずつ blocking すると、8 回分の呼び出し費用が積み上がる。
+    /// Using the default stream would serialize with the other work in the same
+    /// process. Blocking on the transfers one at a time would also pile up the
+    /// call overhead of all 8 of them.
     cudaStream_t stream_ = nullptr;
     detail::ScalePlan plan_;
     detail::PreprocessBuffers preprocess_;
@@ -291,14 +300,14 @@ Status HybridDetector::Impl::initialize(const DetectorConfig& config,
     }
     if (max_width_px < 1 || max_height_px < 1) {
         if (out_message != nullptr) {
-            *out_message = "最大解像度は 1 以上である必要がある";
+            *out_message = "the maximum resolution must be at least 1";
         }
         return Status::kInvalidArgument;
     }
     const auto entry = dictionary_table().find(dictionary_name);
     if (entry == dictionary_table().end()) {
         if (out_message != nullptr) {
-            *out_message = "未対応の Dictionary: " + dictionary_name;
+            *out_message = "unsupported dictionary: " + dictionary_name;
         }
         return Status::kUnsupportedDictionary;
     }
@@ -307,7 +316,8 @@ Status HybridDetector::Impl::initialize(const DetectorConfig& config,
     this->dictionary_ = cv::aruco::getPredefinedDictionary(entry->second);
     this->parameters_ = to_detector_parameters(config);
 
-    // 最大解像度から必要な容量を求め、初期化時に一括で確保する。
+    // Derive the required capacity from the maximum resolution and allocate it
+    // all at once during initialization.
     detail::ScalePlan plan;
     const Status plan_status = detail::plan_scales(config, max_width_px, max_height_px, &plan);
     if (plan_status != Status::kOk) {
@@ -319,7 +329,7 @@ Status HybridDetector::Impl::initialize(const DetectorConfig& config,
             config, plan.segmentation_width_px_, plan.segmentation_height_px_);
     if (preprocess_bytes == 0U || threshold_bytes == 0U) {
         if (out_message != nullptr) {
-            *out_message = "workspace の必要量を算出できない";
+            *out_message = "cannot compute the required workspace size";
         }
         return Status::kInvalidConfig;
     }
@@ -329,11 +339,12 @@ Status HybridDetector::Impl::initialize(const DetectorConfig& config,
         return capacity_status;
     }
 
-    // host 側の受け取り先も初期化時に確保する。frame ごとの確保を避けるため。
+    // The host-side destination is allocated during initialization as well, to
+    // avoid a per-frame allocation.
     const std::size_t host_bytes = host_receive_bytes(config, plan, max_width_px, max_height_px);
     if (host_bytes == 0U) {
         if (out_message != nullptr) {
-            *out_message = "host 側 buffer の必要量を算出できない";
+            *out_message = "cannot compute the required host buffer size";
         }
         return Status::kInvalidConfig;
     }
@@ -348,7 +359,8 @@ Status HybridDetector::Impl::initialize(const DetectorConfig& config,
         const cudaError_t created = cudaStreamCreate(&this->stream_);
         if (created != cudaSuccess) {
             if (out_message != nullptr) {
-                *out_message = std::string("stream を作れない: ") + cudaGetErrorString(created);
+                *out_message =
+                        std::string("cannot create the stream: ") + cudaGetErrorString(created);
             }
             return Status::kCudaError;
         }
@@ -363,14 +375,16 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
     if (plan_status != Status::kOk) {
         return plan_status;
     }
-    // フレームの先頭で切り出し位置を戻す。容量は保持されるため確保は起きない。
+    // Rewind the bump pointer at the start of the frame. The capacity is kept,
+    // so no allocation happens.
     this->workspace_.reset();
 
     const Status reserve_status = detail::reserve_preprocess(this->plan_, image, this->workspace_,
                                                              &this->preprocess_);
     if (reserve_status != Status::kOk) {
         if (out_message != nullptr) {
-            *out_message = "前処理の領域を確保できない。初期化時の最大解像度を超えている";
+            *out_message = "cannot reserve the preprocessing region; the image exceeds the "
+                           "maximum resolution given at initialization";
         }
         return reserve_status;
     }
@@ -379,7 +393,8 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
             this->workspace_, &this->threshold_);
     if (threshold_reserve != Status::kOk) {
         if (out_message != nullptr) {
-            *out_message = "二値化の領域を確保できない。初期化時の最大解像度を超えている";
+            *out_message = "cannot reserve the binarization region; the image exceeds the "
+                           "maximum resolution given at initialization";
         }
         return threshold_reserve;
     }
@@ -403,9 +418,10 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
         return status;
     }
 
-    // 転送を stream へ積んでから 1 度だけ同期する。1 つずつ blocking すると
-    // 8 回分の呼び出し費用が積み上がり、DGX Spark では複製そのものの 3 倍以上に
-    // なる。受け取り先は pinned memory であり、非同期転送が成立する。
+    // Queue all transfers on the stream and synchronize only once. Blocking on
+    // them one at a time piles up the call overhead of all 8, which on DGX Spark
+    // comes to more than three times the cost of the copies themselves. The
+    // destination is pinned memory, so the asynchronous transfers do apply.
     this->host_workspace_.reset();
     this->binary_images_.resize(static_cast<std::size_t>(this->threshold_.window_count_));
     for (int i = 0; i < this->threshold_.window_count_; ++i) {
@@ -415,7 +431,7 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
                                                    plane.height_px_, &destination);
         if (reserved != Status::kOk) {
             if (out_message != nullptr) {
-                *out_message = "二値化画像の受け取り先を確保できない";
+                *out_message = "cannot reserve the destination for the binarized image";
             }
             return reserved;
         }
@@ -425,7 +441,7 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
                               static_cast<std::size_t>(plane.height_px_),
                               cudaMemcpyDeviceToHost, this->stream_) != cudaSuccess) {
             if (out_message != nullptr) {
-                *out_message = "二値化画像を host へ戻せない";
+                *out_message = "cannot copy the binarized image back to the host";
             }
             return Status::kCudaError;
         }
@@ -439,7 +455,7 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
                                                    view.height_px_, &destination);
         if (reserved != Status::kOk) {
             if (out_message != nullptr) {
-                *out_message = "pyramid の受け取り先を確保できない";
+                *out_message = "cannot reserve the destination for the pyramid";
             }
             return reserved;
         }
@@ -449,17 +465,17 @@ Status HybridDetector::Impl::run_gpu_stages(const ImageViewU8& image, std::strin
                               static_cast<std::size_t>(view.height_px_),
                               cudaMemcpyDeviceToHost, this->stream_) != cudaSuccess) {
             if (out_message != nullptr) {
-                *out_message = "pyramid を host へ戻せない";
+                *out_message = "cannot copy the pyramid back to the host";
             }
             return Status::kCudaError;
         }
     }
 
-    // kernel と転送の完了をここで 1 度だけ待つ。
+    // Wait here, exactly once, for the kernels and the transfers to finish.
     const cudaError_t sync = cudaStreamSynchronize(this->stream_);
     if (sync != cudaSuccess) {
         if (out_message != nullptr) {
-            *out_message = std::string("GPU の同期に失敗した: ") + cudaGetErrorString(sync);
+            *out_message = std::string("GPU synchronization failed: ") + cudaGetErrorString(sync);
         }
         return Status::kCudaError;
     }
@@ -486,14 +502,16 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
         reorder_corners(candidate);
     }
 
-    // 二値化 window ごとに同じマーカーが複数回検出されるため、近接候補を
-    // まとめて 1 つに絞る。ここで最大周長の候補を選ばないと四隅が内側へ
-    // 寄り、原寸へ戻したときに数 px の誤差になる。
+    // The same marker is detected once per binarization window, so nearby
+    // candidates are merged down to one. Unless the candidate with the largest
+    // perimeter is picked here, the corners drift inward and end up several
+    // pixels off once they are scaled back to full resolution.
     std::vector<CandidateNode> nodes = filter_too_close_candidates(
             cv::Size(segmentation_width, segmentation_height), candidates, contours,
             this->config_, marker_size);
 
-    // 1 つの候補を識別する。成功したら id と rotation を書き込む。
+    // Identifies a single candidate. On success the id and rotation are
+    // written out.
     const auto identify_one = [&](const std::vector<cv::Point2f>& corners, const cv::Mat& level,
                                   float scale, int* out_id, int* out_rotation) {
         std::vector<cv::Point2f> scaled(4);
@@ -531,9 +549,10 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
         by_depth[static_cast<std::size_t>(nodes[i].depth_)].push_back(i);
     }
 
-    // 内側の候補から識別し、マーカーが確定したらその外側 (親) を数え上げ
-    // 済みとして扱う。マーカーの黒枠は外側の輪郭も候補になるため、内側が
-    // 当たった時点で外側を識別する必要がない。
+    // Identify from the innermost candidates outward, and once a marker is
+    // confirmed, treat everything outside it (its parents) as already counted.
+    // The outer contour of a marker's black frame also becomes a candidate, so
+    // once the inner one hits there is no need to identify the outer one.
     std::size_t counter = 0;
     std::size_t depth = 0;
     while (counter < node_count && depth < by_depth.size()) {
@@ -553,7 +572,8 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
                 valid[v] = 1U;
                 continue;
             }
-            // 代表で失敗した場合、同じ group の離れた候補を試す。
+            // When the representative fails, try the candidates of the same
+            // group that sit farther away.
             for (const MarkerCandidate& close : nodes[v].close_contours_) {
                 if (identify_one(close.corners_, level_image, scale, &ids[v], &rotations[v])) {
                     nodes[v].corners_ = close.corners_;
@@ -580,8 +600,9 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
         ++depth;
     }
 
-    // ArUco3 は縮小画像で輪郭を取るため、原寸へ戻すには subpixel 補正が要る。
-    // OpenCV も useAruco3Detection が有効なら補正方法の指定を上書きする。
+    // ArUco3 takes contours from a downscaled image, so subpixel refinement is
+    // needed to get back to full resolution. OpenCV likewise overrides the
+    // requested refinement method when useAruco3Detection is enabled.
     const bool use_subpix = this->config_.use_aruco3_detection_ ||
                             this->config_.corner_refine_method_ == CornerRefineMethod::kSubpix;
     for (std::size_t v = 0; v < node_count; ++v) {
@@ -589,13 +610,15 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
             continue;
         }
         std::vector<cv::Point2f> corners = nodes[v].corners_;
-        // Dictionary 照合で得た回転を打ち消す。OpenCV の correctCornerPosition と同じ。
+        // Undo the rotation reported by the dictionary match. Same as OpenCV's
+        // correctCornerPosition.
         std::rotate(corners.begin(),
                     corners.begin() + (4 - static_cast<std::ptrdiff_t>(rotations[v])),
                     corners.end());
 
-        // 四隅を原寸座標へ戻す。ArUco3 は pyramid を 1 段ずつ上げながら
-        // 各 level で subpixel 補正する。
+        // Scale the corners back to full-resolution coordinates. ArUco3 climbs
+        // the pyramid one level at a time, refining at subpixel accuracy on
+        // each level.
         if (this->config_.use_aruco3_detection_) {
             const int closest = this->plan_.closest_level_index_;
             const float initial_scale =
@@ -618,8 +641,9 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
                                                   this->config_.corner_refinement_min_accuracy_px_));
             }
         } else if (use_subpix) {
-            // ArUco3 無効時は原寸画像で 1 度だけ補正する。window はセル 1 辺
-            // から決め、上限で頭打ちにする。OpenCV の非 ArUco3 経路と同じ。
+            // With ArUco3 disabled, refine once on the full-resolution image.
+            // The window is derived from one cell edge and capped at the
+            // configured upper bound, as in OpenCV's non-ArUco3 route.
             const float module_size =
                     average_module_size(corners, marker_size, border_bits);
             int window = std::max(
@@ -634,7 +658,8 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
                                               this->config_.corner_refinement_max_iterations_,
                                               this->config_.corner_refinement_min_accuracy_px_));
         }
-        // ArUco3 が無効なら縮小しないため、原寸へ戻す拡大は不要である。
+        // With ArUco3 disabled nothing is downscaled, so no scaling back up to
+        // full resolution is needed.
 
         HybridDetection detection;
         detection.id_ = ids[v];
@@ -647,7 +672,8 @@ void HybridDetector::Impl::run_cpu_stages(const ImageViewU8& image, HybridResult
         out->detections_.push_back(detection);
     }
 
-    // 結果の順序を入力順序に依存させないため、ID と位置で整列する。
+    // Sort by ID and position so that the order of the results does not depend
+    // on the order of the input.
     std::sort(out->detections_.begin(), out->detections_.end(),
               [](const HybridDetection& a, const HybridDetection& b) {
                   if (a.id_ != b.id_) {
@@ -668,7 +694,7 @@ Status HybridDetector::Impl::detect(const ImageViewU8& image, HybridResult* out,
     }
     if (!this->initialized_) {
         if (out_message != nullptr) {
-            *out_message = "initialize() が呼ばれていない";
+            *out_message = "initialize() has not been called";
         }
         return Status::kNotInitialized;
     }

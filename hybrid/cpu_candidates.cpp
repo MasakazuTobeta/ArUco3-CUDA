@@ -68,7 +68,7 @@ std::vector<CandidateNode> filter_too_close_candidates(
         nodes[i].contour_ = std::move(contours[i]);
         nodes[i].perimeter_ = quad_perimeter(nodes[i].corners_);
     }
-    // 周長の降順へ並べる。同じ周長のときの順序は window の順序を保つ。
+    // Sort by decreasing perimeter. Ties keep the order of the windows.
     std::stable_sort(nodes.begin(), nodes.end(),
                      [](const CandidateNode& lhs, const CandidateNode& rhs) {
                          return lhs.perimeter_ > rhs.perimeter_;
@@ -97,10 +97,11 @@ std::vector<CandidateNode> filter_too_close_candidates(
                 group_id[i] = group_id[j];
                 groups[static_cast<std::size_t>(group_id[j])].push_back(i);
             }
-            // 双方が別の group に属する場合は統合しない。OpenCV と同じ挙動。
+            // When both already belong to different groups, they are not
+            // merged. This matches OpenCV's behavior.
         }
         if (selected[i]) {
-            // どの候補とも近接しなかったものは 1 つだけの group とする。
+            // A candidate close to nothing else forms a group of its own.
             selected[i] = false;
             group_id[i] = static_cast<int>(groups.size());
             groups.push_back({i});
@@ -108,7 +109,8 @@ std::vector<CandidateNode> filter_too_close_candidates(
     }
 
     for (std::vector<std::size_t>& group : groups) {
-        // index は周長の降順なので、昇順に並べると先頭が最大周長になる。
+        // The indices follow decreasing perimeter, so sorting them ascending
+        // puts the largest perimeter first.
         std::stable_sort(group.begin(), group.end());
         std::size_t current = group[0];
         bool too_near_border = false;
@@ -146,8 +148,9 @@ std::vector<CandidateNode> filter_too_close_candidates(
         }
     }
 
-    // 包含関係を辿って親と段数を決める。result は周長の降順なので、
-    // 内側の候補ほど後ろにある。
+    // Walk the containment relations to assign each parent and depth. result is
+    // ordered by decreasing perimeter, so the more deeply nested a candidate is,
+    // the later it appears.
     for (int i = static_cast<int>(result.size()) - 1; i >= 0; --i) {
         for (int j = i - 1; j >= 0; --j) {
             const auto outer = static_cast<std::size_t>(j);
@@ -209,7 +212,8 @@ void find_quad_candidates(const cv::Mat& binary, const DetectorConfig& config,
 }
 
 void reorder_corners(std::vector<cv::Point2f>& candidate) {
-    // 差を float で取ってから double へ広げる。OpenCV と同じ丸めにする。
+    // Take the differences in float and only then widen to double, so the
+    // rounding matches OpenCV.
     const double dx1 = static_cast<double>(candidate[1].x - candidate[0].x);
     const double dy1 = static_cast<double>(candidate[1].y - candidate[0].y);
     const double dx2 = static_cast<double>(candidate[2].x - candidate[0].x);

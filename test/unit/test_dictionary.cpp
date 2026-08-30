@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Dictionary の packed 表現と照合処理を検証する。
-// OpenCV へ依存しない範囲の検証であり、OpenCV との一致は
-// test/reference/test_dictionary_conformance.cpp が担当する。
+// Verifies the packed dictionary representation and the matching routine.
+// These checks stay within what can be verified without OpenCV; agreement with
+// OpenCV is covered by test/reference/test_dictionary_conformance.cpp.
 #include "aruco3cuda/dictionary.hpp"
 
 #include <gtest/gtest.h>
@@ -23,7 +23,7 @@ const aruco3cuda::DictionaryTable& mip_table() {
     return *table;
 }
 
-// 正常系: 収録 Dictionary の metadata が公称値と一致する。
+// Nominal: the metadata of the bundled dictionary matches its nominal values.
 TEST(DictionaryTest, builtin_table_metadata_matches_specification) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     EXPECT_STREQ(table.name_, "DICT_ARUCO_MIP_36h12");
@@ -34,7 +34,7 @@ TEST(DictionaryTest, builtin_table_metadata_matches_specification) {
     ASSERT_NE(table.codes_, nullptr);
 }
 
-// 正常系: 収録数と index 参照が一致する。
+// Nominal: the registry count and index-based lookup agree.
 TEST(DictionaryTest, registry_lists_all_builtin_tables) {
     ASSERT_GE(aruco3cuda::builtin_dictionary_count(), 1U);
     for (std::size_t i = 0; i < aruco3cuda::builtin_dictionary_count(); ++i) {
@@ -45,7 +45,7 @@ TEST(DictionaryTest, registry_lists_all_builtin_tables) {
     EXPECT_EQ(aruco3cuda::find_builtin_dictionary(nullptr), nullptr);
 }
 
-// 正常系: pack と unpack が往復する。
+// Nominal: pack and unpack round-trip.
 TEST(DictionaryTest, pack_and_unpack_roundtrip) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     std::uint8_t bits[kMaxBits] = {};
@@ -60,7 +60,7 @@ TEST(DictionaryTest, pack_and_unpack_roundtrip) {
     }
 }
 
-// 正常系: 4 回転すると元へ戻る。
+// Nominal: four rotations return the code to its original value.
 TEST(DictionaryTest, four_rotations_return_to_original) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     for (int id = 0; id < table.code_count_; ++id) {
@@ -74,8 +74,9 @@ TEST(DictionaryTest, four_rotations_return_to_original) {
     }
 }
 
-// 正常系: table の 4 回転が rotate_marker_code の連鎖と一致する。
-// CUDA 側は事前展開した table を使うため、この一致が rotation 比較の前提になる。
+// Nominal: the four rotations stored in the table agree with repeated calls to
+// rotate_marker_code. The CUDA side uses the pre-expanded table, so this agreement
+// is the precondition for comparing rotations there.
 TEST(DictionaryTest, table_rotations_match_rotate_function) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     for (int id = 0; id < table.code_count_; ++id) {
@@ -90,7 +91,7 @@ TEST(DictionaryTest, table_rotations_match_rotate_function) {
     }
 }
 
-// 正常系: 正しい codeword は距離 0 で一致する。
+// Nominal: an exact codeword matches at distance 0.
 TEST(DictionaryTest, exact_codeword_matches_with_zero_distance) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     for (int id = 0; id < table.code_count_; ++id) {
@@ -108,7 +109,7 @@ TEST(DictionaryTest, exact_codeword_matches_with_zero_distance) {
     }
 }
 
-// 境界値: 許容誤り数の内側では一致し、外側では一致しない。
+// Boundary: a code matches within the allowed error count and not beyond it.
 TEST(DictionaryTest, matches_within_correction_limit_only) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     constexpr int kId = 42;
@@ -127,7 +128,7 @@ TEST(DictionaryTest, matches_within_correction_limit_only) {
         EXPECT_EQ(match.distance_, flips);
     }
 
-    // 許容数を 0 にすると 1 bit 反転でも一致しない。
+    // With zero errors allowed, even a single flipped bit no longer matches.
     aruco3cuda::MarkerCode one_flip = original ^ 1U;
     aruco3cuda::DictionaryMatch strict_match;
     ASSERT_EQ(aruco3cuda::match_dictionary(table, one_flip, 0, &strict_match),
@@ -136,8 +137,8 @@ TEST(DictionaryTest, matches_within_correction_limit_only) {
     EXPECT_EQ(strict_match.distance_, 1);
 }
 
-// 正常系: 最小 Hamming 距離が公称値と一致する。
-// DICT_ARUCO_MIP_36h12 の公称値は 12。
+// Nominal: the minimum Hamming distance matches the nominal value.
+// For DICT_ARUCO_MIP_36h12 the nominal value is 12.
 TEST(DictionaryTest, minimum_hamming_distance_matches_nominal_value) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     int distance = 0;
@@ -145,7 +146,7 @@ TEST(DictionaryTest, minimum_hamming_distance_matches_nominal_value) {
     EXPECT_EQ(distance, 12);
 }
 
-// 異常系: 不正な引数を拒否する。
+// Error case: invalid arguments are rejected.
 TEST(DictionaryTest, rejects_invalid_arguments) {
     const aruco3cuda::DictionaryTable& table = mip_table();
     std::uint8_t bits[kMaxBits] = {};
@@ -167,7 +168,7 @@ TEST(DictionaryTest, rejects_invalid_arguments) {
     EXPECT_EQ(aruco3cuda::minimum_hamming_distance(table, nullptr),
               aruco3cuda::Status::kInvalidArgument);
 
-    // codes_ が無い table は照合できない。
+    // A table without codes_ cannot be matched against.
     aruco3cuda::DictionaryTable empty;
     EXPECT_EQ(aruco3cuda::match_dictionary(empty, 0U, 3, &match),
               aruco3cuda::Status::kInvalidArgument);
@@ -175,8 +176,8 @@ TEST(DictionaryTest, rejects_invalid_arguments) {
               aruco3cuda::Status::kInvalidArgument);
 }
 
-// 境界値: marker_size の有効範囲は全関数で一致する。
-// pack_marker_code だけを検査すると、他の関数の範囲外検査漏れに気付けない。
+// Boundary: the valid range of marker_size is the same across all functions.
+// Checking only pack_marker_code would hide a missing range check in the others.
 TEST(DictionaryTest, marker_size_bounds_are_consistent_across_functions) {
     std::uint8_t bits[kMaxBits] = {};
     aruco3cuda::MarkerCode code = 0U;
@@ -192,7 +193,7 @@ TEST(DictionaryTest, marker_size_bounds_are_consistent_across_functions) {
                   aruco3cuda::Status::kInvalidArgument)
                 << "marker_size=" << size;
     }
-    // 有効範囲の両端は受理される。
+    // Both ends of the valid range are accepted.
     for (const int size : {1, 7}) {
         EXPECT_EQ(aruco3cuda::pack_marker_code(bits, size, &code), aruco3cuda::Status::kOk)
                 << "marker_size=" << size;
@@ -203,7 +204,7 @@ TEST(DictionaryTest, marker_size_bounds_are_consistent_across_functions) {
     }
 }
 
-// 境界値: match_dictionary は marker_size が範囲外の table を拒否する。
+// Boundary: match_dictionary rejects a table whose marker_size is out of range.
 TEST(DictionaryTest, match_rejects_table_with_invalid_marker_size) {
     const aruco3cuda::MarkerCode codes[4] = {0U, 0U, 0U, 0U};
     aruco3cuda::DictionaryMatch match;

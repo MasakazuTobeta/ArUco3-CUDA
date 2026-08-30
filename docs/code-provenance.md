@@ -1,187 +1,189 @@
-# Code Provenance 記録
+# Code Provenance Record
 
-## 目的
+## Purpose
 
-[知的財産・ライセンス方針](ip-and-licensing.md) の `Code provenance 記録` に従い、実装および設計の根拠として参照した外部資料を追跡可能な形で記録します。
+Following the `Code provenance record` section of the [Intellectual Property and Licensing Policy](ip-and-licensing.md), this document records, in a traceable form, the external materials referenced as the basis for the implementation and the design.
 
-## 対象範囲
+## Scope
 
-論文、公開仕様、permissive license の source code、定義済み Dictionary data、CPU 基準実装として実行した software を対象とします。
+The scope covers papers, published specifications, source code under permissive licenses, predefined Dictionary data, and software executed as a CPU baseline.
 
-## 現状
+## Current state
 
-GPU 側は前処理、二値化、候補抽出、射影変換とセル sampling、Otsu と border 検証、Dictionary 照合、識別の打ち切りと compaction、四隅の subpixel 補正までが記録の対象です。hybrid 経路の CPU 側も対象に含みます。
+On the GPU side, the recorded subjects are preprocessing, thresholding, candidate extraction, the projective transform and cell sampling, Otsu and border verification, Dictionary matching, identification suppression and compaction, and subpixel refinement of the corners. The CPU side of the hybrid route is also included.
 
-## 記録
+## Records
 
-### PR-000: ArUco3 互換仕様の調査
+### PR-000: Investigation of the ArUco3 compatibility specification
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
-| Implementation | [検出パイプライン設計](design/detector-pipeline.md)、[公開 API 草案](design/public-api.md) |
-| Basis | OpenCV 公開 header および source の観測仕様、ArUco3 論文 |
-| Source version | `opencv/opencv` branch `4.x`、branch head `6dc8e409035489769b4fe7edf3cd63f55bd23ec0`（2026-08-27 取得） |
+| Implementation | [Detection pipeline design](design/detector-pipeline.md), [Public API draft](design/public-api.md) |
+| Basis | The specification observed from OpenCV's public headers and source, and the ArUco3 paper |
+| Source version | `opencv/opencv` branch `4.x`, branch head `6dc8e409035489769b4fe7edf3cd63f55bd23ec0` (retrieved 2026-08-27) |
 | License | Apache-2.0 |
-| Reused expression | なし。parameter 名、既定値、段階の順序、縮小率と pyramid 段数の算出式を仕様として記述した。source code の control flow、関数分割、コメントは複製していない |
-| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
+| Reused expression | None. Parameter names, default values, the order of the stages, and the formulas for the downscale factor and the number of pyramid levels were written down as a specification. The control flow, function decomposition, and comments of the source code were not reproduced |
+| Patent review | Per the procedure in the [Intellectual Property and Licensing Policy](ip-and-licensing.md). The results are not published |
 
-参照した file と取得時 hash は次のとおりです。
+The referenced files and their hashes at retrieval time are as follows.
 
 | File | SHA-256 |
 | --- | --- |
 | `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` |
 | `modules/objdetect/src/aruco/aruco_detector.cpp` | `329ac3f0fd90939a23e1cbf21096352e2229a01998bd08d70ca50e17b99f11ed` |
 
-公式 ArUco の GPLv3 source code は参照していません。
+The official ArUco GPLv3 source code has not been referenced.
 
-### PR-001: 開発 container への OpenCV 組み込み
+### PR-001: Incorporating OpenCV into the development container
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
-| Implementation | `docker/scripts/build-opencv.sh`、[Docker 環境設計](design/docker-environment.md) |
-| Basis | CPU 基準実装として実行するための build。source code の改変なし |
-| Source version | `opencv/opencv` tag `4.14.0`、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
+| Implementation | `docker/scripts/build-opencv.sh`, [Docker environment design](design/docker-environment.md) |
+| Basis | A build for execution as the CPU baseline. No modification of the source code |
+| Source version | `opencv/opencv` tag `4.14.0`, commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
 | License | Apache-2.0 |
-| Reused expression | なし。改変せず build して image へ install するのみ |
-| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
+| Reused expression | None. Only built without modification and installed into the image |
+| Patent review | Per the procedure in the [Intellectual Property and Licensing Policy](ip-and-licensing.md). The results are not published |
 
-build option は `BUILD_LIST=core,imgproc,imgcodecs,calib3d,objdetect`、`WITH_CUDA=OFF` です。取得元 commit と build option は image 内の `/opt/opencv/share/aruco3cuda/opencv-provenance.json` へ記録し、`record-environment.sh` が出力する環境情報 JSON へ埋め込みます。
+The build options are `BUILD_LIST=core,imgproc,imgcodecs,calib3d,objdetect` and `WITH_CUDA=OFF`. The source commit and the build options are recorded in `/opt/opencv/share/aruco3cuda/opencv-provenance.json` inside the image, and are embedded into the environment information JSON that `record-environment.sh` emits.
 
-script は clone した commit が指定値と一致することを確認し、不一致の場合は build を中止します。
+The script confirms that the cloned commit matches the specified value, and aborts the build if it does not.
 
-### PR-002: 開発 container への CUDA Toolkit 組み込み
+### PR-002: Incorporating the CUDA Toolkit into the development container
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
 | Implementation | `docker/scripts/install-cuda-toolkit.sh` |
-| Basis | NVIDIA が配布する CUDA Toolkit の apt package。改変なし |
-| Source version | `cuda-nvcc-13-0` 13.0.88-1 ほか。実際の version は image 内 `/opt/aruco3cuda/cuda-provenance.json` に記録 |
+| Basis | The apt packages of the CUDA Toolkit distributed by NVIDIA. No modification |
+| Source version | `cuda-nvcc-13-0` 13.0.88-1 and others. The actual versions are recorded in `/opt/aruco3cuda/cuda-provenance.json` inside the image |
 | License | NVIDIA CUDA Toolkit EULA |
-| Reused expression | なし。再配布せず、image build 時に NVIDIA の repository から取得する |
-| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
+| Reused expression | None. Not redistributed; retrieved from NVIDIA's repository at image build time |
+| Patent review | Per the procedure in the [Intellectual Property and Licensing Policy](ip-and-licensing.md). The results are not published |
 
-image を第三者へ配布する場合は、CUDA Toolkit の再配布条件を EULA で確認する必要があります。現時点では各機で build する運用を前提とします。
+If the image is distributed to a third party, the redistribution conditions of the CUDA Toolkit must be checked against the EULA. At present, the assumed practice is to build on each machine.
 
-### PR-003: Dictionary packed table の生成
+### PR-003: Generating the Dictionary packed table
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
-| Implementation | `tools/dictgen`、`src/dictionary/generated/dict_aruco_mip_36h12.cpp` |
-| Basis | OpenCV の `getPredefinedDictionary()` と `Dictionary::getBitsFromByteList()` の出力 |
-| Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
+| Implementation | `tools/dictgen`, `src/dictionary/generated/dict_aruco_mip_36h12.cpp` |
+| Basis | The output of OpenCV's `getPredefinedDictionary()` and `Dictionary::getBitsFromByteList()` |
+| Source version | OpenCV 4.14.0, commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
 | License | Apache-2.0 |
-| Reused expression | codeword data を packed 表現へ変換して格納した。source code の複製はない |
-| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
+| Reused expression | The codeword data was converted into a packed representation and stored. No source code was reproduced |
+| Patent review | Per the procedure in the [Intellectual Property and Licensing Policy](ip-and-licensing.md). The results are not published |
 
-生成物には取得元 OpenCV version と再生成手順を header comment として記録しています。公式 ArUco の GPLv3 配布物からは抽出していません。生成物が OpenCV と整合することは `aruco3cuda_dictgen --check` と `test/reference/test_dictionary_conformance.cpp` で継続的に検証します。
+The generated output records the source OpenCV version and the regeneration procedure as header comments. Nothing was extracted from the official ArUco GPLv3 distribution. That the generated output is consistent with OpenCV is continuously verified by `aruco3cuda_dictgen --check` and `test/reference/test_dictionary_conformance.cpp`.
 
-### PR-004: 案 C ハイブリッド経路の CPU 側段階
+### PR-004: CPU-side stages of the option C hybrid route
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
 | Implementation | `hybrid/hybrid_detector.cpp` |
-| Basis | OpenCV `objdetect` の ArUco 検出器。互換性の検証に必要な範囲で振る舞いを再実装した |
-| Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
+| Basis | The ArUco detector of OpenCV `objdetect`. The behavior was reimplemented to the extent required for verifying compatibility |
+| Source version | OpenCV 4.14.0, commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
 | License | Apache-2.0 |
-| Reused expression | 振る舞いの再実装。判定式、閾値の適用順序、候補の並び替え規則は OpenCV と同一にした。識別子、コメント、関数分割は本 project の規約に従って独自に書いた |
-| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
+| Reused expression | Reimplementation of the behavior. The decision formulas, the order in which thresholds are applied, and the candidate reordering rules were made identical to OpenCV. Identifiers, comments, and function decomposition were written independently, following this project's conventions |
+| Patent review | Per the procedure in the [Intellectual Property and Licensing Policy](ip-and-licensing.md). The results are not published |
 
-対応関係は次のとおりです。左が本 project、右が OpenCV の関数です。
+The correspondence is as follows. The left column is this project, the right column is the OpenCV function.
 
-| 本 project | OpenCV |
+| This project | OpenCV |
 | --- | --- |
 | `find_quad_candidates` | `_findMarkerContours` |
 | `reorder_corners` | `_reorderCandidatesCorners` |
-| `quad_perimeter`、`average_quad_distance` | `MarkerCandidateTree` の周長計算、`getAverageDistance` |
+| `quad_perimeter`, `average_quad_distance` | the perimeter computation in `MarkerCandidateTree`, `getAverageDistance` |
 | `average_module_size` | `getAverageModuleSize` |
 | `quad_inside_quad` | `checkMarker1InMarker2` |
 | `filter_too_close_candidates` | `ArucoDetectorImpl::filterTooCloseCandidates` |
 | `find_optimal_level` | `_findOptPyrImageForCanonicalImg` |
 | `extract_cell_pixel_ratio` | `_extractCellPixelRatio` |
 | `count_border_errors` | `_getBorderErrors` |
-| `run_cpu_stages` の depth 走査 | `ArucoDetectorImpl::identifyCandidates` |
-| `run_cpu_stages` の四隅復元 | `findCornerInPyrImage`、`performCornerSubpixRefinement` |
+| the depth traversal in `run_cpu_stages` | `ArucoDetectorImpl::identifyCandidates` |
+| the corner restoration in `run_cpu_stages` | `findCornerInPyrImage`, `performCornerSubpixRefinement` |
 
-出力の同一性を要求する以上、判定式と適用順序は一致させる以外にありません。一方で、同一にしたのは観測可能な振る舞いであり、source code の表現は複製していません。参照した file と取得時 hash は PR-000 と同じです。
+Since identical output is required, there is no choice but to make the decision formulas and the order of application match. At the same time, what was made identical is the observable behavior; the expression of the source code was not reproduced. The referenced files and their hashes at retrieval time are the same as in PR-000.
 
-OpenCV は `detectInvertedMarker` と複数 Dictionary の同時検出にも対応しますが、本 project は現時点でどちらも実装していません。`filter_too_close_candidates` は `detectInvertedMarker` が偽の場合の分岐のみを持ちます。
+OpenCV also supports `detectInvertedMarker` and simultaneous detection with multiple Dictionaries, but this project currently implements neither. `filter_too_close_candidates` has only the branch for the case where `detectInvertedMarker` is false.
 
-公式 ArUco の GPLv3 source code は参照していません。
+The official ArUco GPLv3 source code has not been referenced.
 
-### PR-005: GPU decode 段 (S7 から S8)
+### PR-005: GPU decode stages (S7 through S8)
 
-| 項目 | 内容 |
+| Item | Content |
 | --- | --- |
-| Implementation | `src/core/cell_sample.{hpp,cu}`、`src/core/cell_decode.{hpp,cu}`、`src/core/dictionary_match.{hpp,cu}`、`src/core/candidate_tree.{hpp,cu}`、`src/core/detection_emit.{hpp,cu}`、`src/core/corner_refine.{hpp,cu}`、`src/dictionary/dictionary.cpp` の `build_cell_masks` と `identify_marker`、`test/reference/test_corner_refine.cpp` の oracle |
-| Basis | OpenCV `objdetect` の ArUco 検出器と `Dictionary::identify`、および `imgproc` の `warpPerspective`、`getPerspectiveTransform`、`threshold` の Otsu 経路、`pointPolygonTest`、`cornerSubPix`、`getRectSubPix`、`core` の `meanStdDev` |
-| Source version | OpenCV 4.14.0、commit `0654a42e19215ef25b1d367d822f3c630447e7c7`（2026-08-28 取得） |
-| License | **file ごとに異なる。** `objdetect/aruco` と `core` の参照先は Apache-2.0。`imgproc` の `cornersubpix.cpp`、`samplers.cpp`、`thresh.cpp`、`imgwarp.cpp`、`geometry.cpp` は 3 条項 BSD の header を持つ。下の表を参照 |
-| Reused expression | 振る舞いの再実装。判定式、演算の順序、丸めの規則、打ち切りの位置は OpenCV と同一にした。識別子、コメント、関数分割、data 構造は本 project の規約に従って独自に書いた。ただし `test_corner_refine.cpp` の `oracle` namespace だけは演算と評価順序を逐語で写している |
-| Patent review | [知的財産・ライセンス方針](ip-and-licensing.md) の手順による。結果は非公開 |
+| Implementation | `src/core/cell_sample.{hpp,cu}`, `src/core/cell_decode.{hpp,cu}`, `src/core/dictionary_match.{hpp,cu}`, `src/core/candidate_tree.{hpp,cu}`, `src/core/detection_emit.{hpp,cu}`, `src/core/corner_refine.{hpp,cu}`, `build_cell_masks` and `identify_marker` in `src/dictionary/dictionary.cpp`, the oracle in `test/reference/test_corner_refine.cpp` |
+| Basis | The ArUco detector and `Dictionary::identify` of OpenCV `objdetect`; the Otsu route of `warpPerspective`, `getPerspectiveTransform`, and `threshold` in `imgproc`, plus `pointPolygonTest`, `cornerSubPix`, and `getRectSubPix`; and `meanStdDev` in `core` |
+| Source version | OpenCV 4.14.0, commit `0654a42e19215ef25b1d367d822f3c630447e7c7` (retrieved 2026-08-28) |
+| License | **Differs per file.** The referenced parts of `objdetect/aruco` and `core` are Apache-2.0. `cornersubpix.cpp`, `samplers.cpp`, `thresh.cpp`, `imgwarp.cpp`, and `geometry.cpp` in `imgproc` carry 3-clause BSD headers. See the table below |
+| Reused expression | Reimplementation of the behavior. The decision formulas, the order of operations, the rounding rules, and the position of the suppression were made identical to OpenCV. Identifiers, comments, function decomposition, and data structures were written independently, following this project's conventions. However, the `oracle` namespace in `test_corner_refine.cpp` alone copies the arithmetic and evaluation order verbatim |
+| Patent review | Per the procedure in the [Intellectual Property and Licensing Policy](ip-and-licensing.md). The results are not published |
 
-対応関係は次のとおりです。
+The correspondence is as follows.
 
-| 本 project | OpenCV |
+| This project | OpenCV |
 | --- | --- |
-| `cell_sample.cu` の `solve_lu8` | `getPerspectiveTransform` が使う `LUImpl` |
-| `cell_sample.cu` の `warp_canonical_kernel` | `warpPerspective` の `INTER_NEAREST` 経路 |
-| `cell_decode.cu` の `otsu_threshold` | `getThreshVal_Otsu_8u` |
-| `cell_decode.cu` の内側の和と二乗和 | `cv::meanStdDev` |
-| `cell_decode.cu` の外周走査 | `_getBorderErrors` |
-| `build_cell_masks` | `CellBitMasks` の構築部 |
-| `identify_marker`、`dictionary_match.cu` の `distance_to_id` | `Dictionary::identify`、`CellBitMasks::hammingDistanceToId` |
-| `candidate_tree.cu` の `point_in_quad` | `pointPolygonTest` の float 経路と `checkMarker1InMarker2` |
-| `candidate_tree.cu` の `parent_kernel`、`depth_kernel` | `filterTooCloseCandidates` 末尾の包含木の構築 |
-| `candidate_tree.cu` の `suppress_kernel` | `identifyCandidates` の depth 走査 |
-| `detection_emit.cu` の `emit_kernel` の回転打ち消し | `correctCornerPosition` |
-| `corner_refine.cu` の `refine_kernel` の段の走査 | `findCornerInPyrImage` |
-| `corner_refine.cu` の `corner_sub_pix` | `cv::cornerSubPix` |
-| `corner_refine.cu` の `sample_patch_inside`、`sample_patch_border` | `getRectSubPix_8u32f`、`getRectSubPix_Cn_`、`adjustRect` |
-| `test_corner_refine.cpp` の `oracle` namespace | 上記 2 つを host へ逐語で写したもの |
+| `solve_lu8` in `cell_sample.cu` | the `LUImpl` used by `getPerspectiveTransform` |
+| `warp_canonical_kernel` in `cell_sample.cu` | the `INTER_NEAREST` route of `warpPerspective` |
+| `otsu_threshold` in `cell_decode.cu` | `getThreshVal_Otsu_8u` |
+| the inner sum and sum of squares in `cell_decode.cu` | `cv::meanStdDev` |
+| the outer-border traversal in `cell_decode.cu` | `_getBorderErrors` |
+| `build_cell_masks` | the construction part of `CellBitMasks` |
+| `identify_marker`, `distance_to_id` in `dictionary_match.cu` | `Dictionary::identify`, `CellBitMasks::hammingDistanceToId` |
+| `point_in_quad` in `candidate_tree.cu` | the float route of `pointPolygonTest` and `checkMarker1InMarker2` |
+| `parent_kernel` and `depth_kernel` in `candidate_tree.cu` | the containment tree construction at the end of `filterTooCloseCandidates` |
+| `suppress_kernel` in `candidate_tree.cu` | the depth traversal in `identifyCandidates` |
+| the rotation cancellation in `emit_kernel` in `detection_emit.cu` | `correctCornerPosition` |
+| the stage traversal in `refine_kernel` in `corner_refine.cu` | `findCornerInPyrImage` |
+| `corner_sub_pix` in `corner_refine.cu` | `cv::cornerSubPix` |
+| `sample_patch_inside` and `sample_patch_border` in `corner_refine.cu` | `getRectSubPix_8u32f`, `getRectSubPix_Cn_`, `adjustRect` |
+| the `oracle` namespace in `test_corner_refine.cpp` | a verbatim copy of the above 2 to the host |
 
-出力の同一性を要求する以上、判定式と演算の順序は一致させる以外にありません。一方で、同一にしたのは観測可能な振る舞いであり、source code の表現は複製していません。とくに OpenCV が `hal::and8u` と `hal::normHamming` を byte 列に対して呼ぶところを、本 project は 64 bit の packed 表現に対する `__popcll` 1 回で書いています。
+Since identical output is required, there is no choice but to make the decision formulas and the order of operations match. At the same time, what was made identical is the observable behavior; the expression of the source code was not reproduced. In particular, where OpenCV calls `hal::and8u` and `hal::normHamming` on byte sequences, this project writes a single `__popcll` on a 64-bit packed representation.
 
-参照した file と取得時 hash は次のとおりです。
+The referenced files and their hashes at retrieval time are as follows.
 
-| File | SHA-256 | header の license | 挙げられている著作権者 |
+| File | SHA-256 | License in the header | Copyright holders listed |
 | --- | --- | --- | --- |
-| `modules/objdetect/src/aruco/aruco_dictionary.cpp` | `9fd90d079e62239683300625ad001f437278b75fce6523368ffa3e5a64198ac8` | top-level LICENSE (Apache-2.0) | 明記なし |
-| `modules/objdetect/include/opencv2/objdetect/aruco_dictionary.hpp` | `6b14b87c13dd3629d3fcfd82e63829e41f01f7cc60c166216e0ae99851f6f42e` | top-level LICENSE (Apache-2.0) | 明記なし |
-| `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` | top-level LICENSE (Apache-2.0) | 明記なし |
-| `modules/imgproc/src/imgwarp.cpp` | `d953cdd11db1bf7b562ba7cfb8b36f2aba3198f15714e5deb40840b01ae77912` | **3 条項 BSD** | Intel (2000-2008)、Willow Garage (2009)、Itseez (2014-2015)、AMD (2026) |
-| `modules/imgproc/src/thresh.cpp` | `ec40ffd08c842c946213cdd46c2b8036e43770445a4c4b797017c96fd3f91117` | **3 条項 BSD** | Intel (2000-2008)、Willow Garage (2009) |
-| `modules/imgproc/src/cornersubpix.cpp` | `7053a847022c929fdd638bb04c93e86eef163a5b1fc454b96f44f103b37bd56c` | **3 条項 BSD** | Intel (2000)、OpenCV Foundation (2013) |
-| `modules/imgproc/src/samplers.cpp` | `aaae361d7a4d9f7131cb4a63c179bb7ad80bc9adddaa0a4ab347dab156bd2ab7` | **3 条項 BSD** | Intel (2000)、OpenCV Foundation (2013) |
-| `modules/imgproc/src/geometry.cpp` | `05ec6cfba5ad82ac809118f7c9b657eee3bb2467f87046c6ed2f5606a2a59996` | **3 条項 BSD** | Intel (2000) |
-| `modules/objdetect/src/aruco/aruco_detector.cpp` | `329ac3f0fd90939a23e1cbf21096352e2229a01998bd08d70ca50e17b99f11ed` | top-level LICENSE (Apache-2.0) | 明記なし |
-| `modules/core/src/mean.dispatch.cpp` | `8e52e41c7bf7f1942a5c366683d2742040f6d82db770f253b7d61cb18205133a` | top-level LICENSE (Apache-2.0) | 明記なし |
-| `modules/core/src/matrix_decomp.cpp` | `887deb3905e1f4fbcab426be4346b4ada863051579f19e3011721704dd2ac596` | top-level LICENSE (Apache-2.0) | 明記なし |
+| `modules/objdetect/src/aruco/aruco_dictionary.cpp` | `9fd90d079e62239683300625ad001f437278b75fce6523368ffa3e5a64198ac8` | top-level LICENSE (Apache-2.0) | not stated |
+| `modules/objdetect/include/opencv2/objdetect/aruco_dictionary.hpp` | `6b14b87c13dd3629d3fcfd82e63829e41f01f7cc60c166216e0ae99851f6f42e` | top-level LICENSE (Apache-2.0) | not stated |
+| `modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp` | `9e2d5bae344e1bb8dc7636430cc63310f3a9fc4e4c6013bfdd95cbade295b54d` | top-level LICENSE (Apache-2.0) | not stated |
+| `modules/imgproc/src/imgwarp.cpp` | `d953cdd11db1bf7b562ba7cfb8b36f2aba3198f15714e5deb40840b01ae77912` | **3-clause BSD** | Intel (2000-2008), Willow Garage (2009), Itseez (2014-2015), AMD (2026) |
+| `modules/imgproc/src/thresh.cpp` | `ec40ffd08c842c946213cdd46c2b8036e43770445a4c4b797017c96fd3f91117` | **3-clause BSD** | Intel (2000-2008), Willow Garage (2009) |
+| `modules/imgproc/src/cornersubpix.cpp` | `7053a847022c929fdd638bb04c93e86eef163a5b1fc454b96f44f103b37bd56c` | **3-clause BSD** | Intel (2000), OpenCV Foundation (2013) |
+| `modules/imgproc/src/samplers.cpp` | `aaae361d7a4d9f7131cb4a63c179bb7ad80bc9adddaa0a4ab347dab156bd2ab7` | **3-clause BSD** | Intel (2000), OpenCV Foundation (2013) |
+| `modules/imgproc/src/geometry.cpp` | `05ec6cfba5ad82ac809118f7c9b657eee3bb2467f87046c6ed2f5606a2a59996` | **3-clause BSD** | Intel (2000) |
+| `modules/objdetect/src/aruco/aruco_detector.cpp` | `329ac3f0fd90939a23e1cbf21096352e2229a01998bd08d70ca50e17b99f11ed` | top-level LICENSE (Apache-2.0) | not stated |
+| `modules/core/src/mean.dispatch.cpp` | `8e52e41c7bf7f1942a5c366683d2742040f6d82db770f253b7d61cb18205133a` | top-level LICENSE (Apache-2.0) | not stated |
+| `modules/core/src/matrix_decomp.cpp` | `887deb3905e1f4fbcab426be4346b4ada863051579f19e3011721704dd2ac596` | top-level LICENSE (Apache-2.0) | not stated |
 
-**OpenCV 4.x は file ごとに license header が違います。** project 全体の LICENSE は
-Apache-2.0 ですが、`imgproc` の古い file は 3 条項 BSD の header を残しており、
-Intel Corporation ほかを著作権者として挙げています。3 条項 BSD の第 1 条は
-source の再配布に著作権表示・条件・免責の保持を求めます。
+**OpenCV 4.x uses different license headers on a per-file basis.** The
+project-wide LICENSE is Apache-2.0, but older files in `imgproc` retain
+3-clause BSD headers and list Intel Corporation and others as copyright
+holders. Clause 1 of the 3-clause BSD requires that redistribution in source
+form preserve the copyright notice, the conditions, and the disclaimer.
 
-本 project で写しの度合いが最も高いのは `test_corner_refine.cpp` の `oracle`
-namespace であり、写し元の 2 file はいずれも 3 条項 BSD です。**保守的な扱いとして、
-該当する著作権表示と license 本文を repository root の `NOTICE` へ置きました。**
-写しが法的に二次的著作物にあたるかの判断は本記録の範囲外であり、専門家の確認を
-要します。
+The highest degree of copying in this project is the `oracle` namespace in
+`test_corner_refine.cpp`, and both files it was copied from are 3-clause BSD.
+**As a conservative measure, the corresponding copyright notices and license
+text were placed in the `NOTICE` at the repository root.** Judging whether the
+copy legally constitutes a derivative work is outside the scope of this record
+and requires confirmation by a professional.
 
-公式 ArUco の GPLv3 source code は参照していません。
+The official ArUco GPLv3 source code has not been referenced.
 
-## 目標
+## Goals
 
-- 実装 PR ごとに 1 行以上の記録を追加し、根拠を後から説明できる状態を保つ。
-- 定義済み Dictionary を取り込む際は、取得元 file、commit、変換手順、変換前後の hash を同じ表へ記録する。
-- 第三者 code を改変利用する場合は、必要な copyright と notice を `NOTICE` へ反映する。**license は project 全体ではなく file の header で判断する。**
+- Add at least one line of record per implementation PR, keeping the basis explainable after the fact.
+- When incorporating a predefined Dictionary, record the source file, commit, conversion procedure, and the hashes before and after conversion in the same table.
+- When third-party code is used with modifications, reflect the required copyright and notices in `NOTICE`. **The license is determined by the file's header, not by the project as a whole.**
 
-## 未確定事項
+## Open questions
 
-- 記録の粒度を PR 単位とするか module 単位とするか。
-- `NOTICE` へ記載する粒度。現在は写し元 file と著作権者を列挙しているが、変換した Dictionary data の扱いを分けるかは決めていない。
+- Whether the granularity of the records should be per PR or per module.
+- The granularity of what is stated in `NOTICE`. At present the source files copied from and their copyright holders are listed, but whether to treat the converted Dictionary data separately has not been decided.
 
-## 関連
+## See also
 
-- [知的財産・ライセンス方針](ip-and-licensing.md)
-- [Dictionary 方針](dictionaries.md)
+- [Intellectual Property and Licensing Policy](ip-and-licensing.md)
+- [Dictionary policy](dictionaries.md)

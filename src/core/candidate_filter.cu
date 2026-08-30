@@ -20,14 +20,15 @@ namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
 constexpr int kLinearThreads = 256;
-/// 辺の裏付けを数えるときに、辺からどれだけ離れた画素まで含めるか。
+/// How far from an edge a pixel may lie and still count as supporting it.
 ///
-/// 二値化の輪郭は 1 画素の凹凸を持つため、辺の真上だけを見ると数え落とす。
-/// 2 画素まで含めると、通すべき形の裏付けが chain code 長の 2.5 倍以上に
-/// なることを合成図形で確かめている。
+/// A binarized contour wobbles by a pixel, so looking only directly on the edge
+/// undercounts. Measurements on synthetic shapes confirm that including pixels
+/// up to 2 away gives shapes that should pass a support of at least 2.5 times
+/// the chain code length.
 constexpr float kEdgeSupportBandPx = 2.0F;
 
-/// 篩の判定に必要な値をまとめて渡す。引数の数を抑えるため。
+/// Values the filter decision needs, bundled together to keep the argument count down.
 struct FilterCriteria {
     int min_perimeter_ = 0;
     int max_perimeter_ = 0;
@@ -39,7 +40,7 @@ struct FilterCriteria {
     int height_px_ = 0;
 };
 
-/// 線分の chain code 長。8 連結で辿ったときの歩数と同じ。
+/// Chain code length of a line segment. Equals the number of steps taken with 8-connectivity.
 __device__ std::int32_t chain_length(std::int32_t x0, std::int32_t y0, std::int32_t x1,
                                      std::int32_t y1) {
     const std::int32_t dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
@@ -47,7 +48,7 @@ __device__ std::int32_t chain_length(std::int32_t x0, std::int32_t y0, std::int3
     return (dx > dy) ? dx : dy;
 }
 
-/// 点が凸四角形の内側か。辺に載る点も内側として扱う。
+/// Whether a point lies inside a convex quadrilateral. A point on an edge counts as inside.
 __device__ bool inside_quad(const std::int32_t* xs, const std::int32_t* ys, std::int32_t px,
                             std::int32_t py) {
     bool has_positive = false;
@@ -66,7 +67,7 @@ __device__ bool inside_quad(const std::int32_t* xs, const std::int32_t* ys, std:
     return !(has_positive && has_negative);
 }
 
-/// 点から線分までの距離が band 以内で、かつ射影が線分上にあるか。
+/// Whether a point lies within band of a segment and projects onto the segment itself.
 __device__ bool near_segment(std::int32_t x0, std::int32_t y0, std::int32_t x1, std::int32_t y1,
                              std::int32_t px, std::int32_t py, float band) {
     const float ex = static_cast<float>(x1 - x0);
@@ -85,10 +86,11 @@ __device__ bool near_segment(std::int32_t x0, std::int32_t y0, std::int32_t x1, 
     return distance <= band;
 }
 
-/// 判定結果と作業領域を 0 で埋める。
+/// Fills the verdicts and the scratch space with 0.
 ///
-/// label 数を超える範囲も 0 にする。scan は確保数の全体を走査するため、
-/// 使わない範囲が 0 でないと書き込み先がずれる。
+/// The range beyond the label count is zeroed too. The scan walks the whole
+/// allocation, so a nonzero value in the unused range would shift the write
+/// positions.
 __global__ void reset_filter_kernel(std::int32_t* accepted, std::int32_t* offsets,
                                     std::int32_t* inside_count, std::int32_t* perimeter,
                                     std::int32_t* edge_support, int capacity) {
@@ -105,7 +107,7 @@ __global__ void reset_filter_kernel(std::int32_t* accepted, std::int32_t* offset
     }
 }
 
-/// 成分画素のうち推定四角形の内側にあるものと、各辺を裏付けるものを数える。
+/// Counts the component pixels inside the estimated quadrilateral and those supporting each edge.
 __global__ void count_inside_kernel(const std::int32_t* labels, const std::int32_t* corner_x,
                                     const std::int32_t* corner_y, const std::uint8_t* valid,
                                     std::int32_t* inside_count, std::int32_t* edge_support,
@@ -136,7 +138,7 @@ __global__ void count_inside_kernel(const std::int32_t* labels, const std::int32
     }
 }
 
-/// label ごとに篩の判定を行う。
+/// Runs the filter decision for one label.
 __global__ void evaluate_kernel(const std::int32_t* corner_x, const std::int32_t* corner_y,
                                 const std::uint8_t* valid, const std::int32_t* pixel_count,
                                 const std::int32_t* inside_count, const std::int32_t* edge_support,
@@ -174,7 +176,7 @@ __global__ void evaluate_kernel(const std::int32_t* corner_x, const std::int32_t
     if (total_length < criteria.min_perimeter_ || total_length > criteria.max_perimeter_) {
         return;
     }
-    // CPU 経路と同じく、辺の長さを周長に対する比で判定する。
+    // As in the CPU path, side length is judged as a ratio of the perimeter.
     const float min_corner_distance =
             static_cast<float>(total_length) * criteria.min_corner_distance_rate_;
     if (static_cast<float>(min_side_squared) < (min_corner_distance * min_corner_distance)) {
@@ -196,8 +198,8 @@ __global__ void evaluate_kernel(const std::int32_t* corner_x, const std::int32_t
     if (ratio < criteria.min_inlier_ratio_) {
         return;
     }
-    // 4 辺すべてが成分に裏付けられていることを求める。1 辺でも成分の外を
-    // 通っていれば、その形は四角形ではない。
+    // Require all four edges to be supported by the component. If even one
+    // edge runs outside the component, the shape is not a quadrilateral.
     for (int corner = 0; corner < kQuadCornerCount; ++corner) {
         const int next = (corner + 1) % kQuadCornerCount;
         const std::int32_t chain = chain_length(xs[corner], ys[corner], xs[next], ys[next]);
@@ -214,7 +216,7 @@ __global__ void evaluate_kernel(const std::int32_t* corner_x, const std::int32_t
     offsets[label] = 1;
 }
 
-/// 書き込みを始める位置を決める。append なら現在の件数、そうでなければ 0。
+/// Decides where writing starts: the current count when appending, otherwise 0.
 __global__ void capture_base_kernel(const std::int32_t* count, std::int32_t* base, bool append) {
     if (threadIdx.x != 0U || blockIdx.x != 0U) {
         return;
@@ -222,7 +224,7 @@ __global__ void capture_base_kernel(const std::int32_t* count, std::int32_t* bas
     *base = append ? *count : 0;
 }
 
-/// 合格した label を詰めて並べる。
+/// Packs the accepted labels into a dense array.
 __global__ void compact_kernel(const std::int32_t* corner_x, const std::int32_t* corner_y,
                                const std::int32_t* accepted, const std::int32_t* offsets,
                                const std::int32_t* perimeter, const std::int32_t* base,
@@ -236,7 +238,7 @@ __global__ void compact_kernel(const std::int32_t* corner_x, const std::int32_t*
     }
     const std::int32_t destination = *base + offsets[label];
     if (destination >= capacity) {
-        // 上限を超えた分は書かない。打ち切りは accepted_total_ から分かる。
+        // Anything past the limit is not written. accepted_total_ reveals the truncation.
         return;
     }
     for (int corner = 0; corner < kQuadCornerCount; ++corner) {
@@ -249,7 +251,7 @@ __global__ void compact_kernel(const std::int32_t* corner_x, const std::int32_t*
     candidates.perimeter_[destination] = perimeter[label];
 }
 
-/// 詰めた候補数と、篩を通った総数を書き出す。
+/// Writes out the packed candidate count and the total that passed the filter.
 __global__ void store_count_kernel(const std::int32_t* total, const std::int32_t* base,
                                    std::int32_t* count, std::int32_t* accepted_total, int capacity,
                                    bool append) {
@@ -263,7 +265,7 @@ __global__ void store_count_kernel(const std::int32_t* total, const std::int32_t
     *count = (written < capacity) ? written : capacity;
 }
 
-/// int32 配列の byte 数を求める。桁溢れなら 0 を返す。
+/// Returns the byte count of an int32 array. Returns 0 on overflow.
 std::size_t array_bytes_i32(std::size_t count) {
     if (count == 0U || count > std::numeric_limits<std::size_t>::max() / sizeof(std::int32_t)) {
         return 0U;
@@ -490,7 +492,8 @@ Status read_candidate_count(const DeviceCandidates& candidates, int* out_count,
         return status;
     }
     *out_count = static_cast<int>(values[0]);
-    // 打ち切りを必ず呼出側へ伝える。無言で捨てると原因の切り分けができない。
+    // Always report truncation to the caller. Dropping it silently would make
+    // the cause impossible to isolate.
     return (values[1] > values[0]) ? Status::kCandidateOverflow : Status::kOk;
 }
 

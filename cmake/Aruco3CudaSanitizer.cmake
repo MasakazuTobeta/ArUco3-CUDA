@@ -1,24 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   Compute Sanitizer を使用するテスト経路を用意する。
-#   memcheck、racecheck、initcheck、synccheck を別々の ctest として登録し、
-#   どの検査で失敗したかを切り分けられるようにする。
+# Purpose:
+#   Provide a test path that runs under Compute Sanitizer. memcheck, racecheck,
+#   initcheck, and synccheck are registered as separate ctest entries so that it
+#   is clear which check failed.
 include_guard(GLOBAL)
 
-option(ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER "Compute Sanitizer の ctest を登録する" OFF)
+option(ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER "Register the Compute Sanitizer ctest entries" OFF)
 
 set(ARUCO3CUDA_SANITIZER_TOOLS "memcheck;racecheck;initcheck;synccheck"
-    CACHE STRING "登録する Compute Sanitizer の tool")
+    CACHE STRING "Compute Sanitizer tools to register")
 
-# 指定した test 実行 file を Compute Sanitizer 経由で実行する ctest を追加する。
+# Add ctest entries that run the given test executable through Compute Sanitizer.
 #
-# 引数:
-#   target - 対象の test 実行 file target
+# Arguments:
+#   target - the target of the test executable to run
 #
-# 備考:
-#   sanitizer は実行速度が大きく低下するため、既定では無効とする。
-#   CI では日次または PR で有効化する運用を想定する。
+# Notes:
+#   The sanitizer slows execution down considerably, so it is disabled by
+#   default. In CI it is expected to be enabled on a daily schedule or per pull
+#   request.
 function(aruco3cuda_add_sanitizer_tests target)
   if(NOT ARUCO3CUDA_ENABLE_COMPUTE_SANITIZER)
     return()
@@ -27,36 +28,43 @@ function(aruco3cuda_add_sanitizer_tests target)
     NAMES compute-sanitizer
     HINTS "$ENV{CUDA_HOME}/bin" "${CUDAToolkit_BIN_DIR}" /usr/local/cuda/bin)
   if(NOT kComputeSanitizer)
-    message(WARNING "compute-sanitizer が見つからないため sanitizer test を登録しない")
+    message(WARNING "compute-sanitizer was not found, so the sanitizer tests are not registered")
     return()
   endif()
-  # 意図的に CUDA API を失敗させる test は除外する。Compute Sanitizer は
-  # 意図の有無に関わらず全ての API エラーを報告するため、
-  # 意図した失敗が sanitizer の指摘として現れ、本物の問題を埋もれさせる。
+  # Exclude tests that fail CUDA API calls on purpose. Compute Sanitizer reports
+  # every API error regardless of intent, so a deliberate failure shows up as a
+  # sanitizer report and buries the real problems.
   #
-  # 時間を測る test も除外する。暖機と繰り返しで同じ経路を何百回も通るため、
-  # sanitizer の下では実行時間が現実的でなくなる。同じ経路の正しさは
-  # 対応する検証用の test が確かめており、繰り返しても新しい経路は通らない。
+  # Exclude timing tests as well. Warm-up and repetition walk the same path
+  # hundreds of times, which makes the run time impractical under the sanitizer.
+  # The correctness of that same path is already confirmed by the corresponding
+  # verification tests, and repeating it does not reach any new path.
   #
-  # 対象は suite 名で識別する。該当が無い target では filter は何も除外しない。
+  # The exclusions are identified by suite name. On a target with no match the
+  # filter excludes nothing.
   set(kSanitizerGtestFilter "-*DeliberateError*.*:*Timing*.*")
   foreach(tool IN LISTS ARUCO3CUDA_SANITIZER_TOOLS)
-    # 資源の漏れと、握り潰された CUDA API error も見る。追加の費用はほぼ無い。
+    # Also look for resource leaks and swallowed CUDA API errors. The additional
+    # cost is close to nothing.
     set(kExtraArgs --leak-check full --report-api-errors all)
     set(kTimeout 600)
     if(tool STREQUAL "racecheck")
-      # racecheck は既定では block の完了まで解析を溜める。共有 memory を多く
-      # 使う kernel があると解析の状態が上限に達し、偽の指摘か失敗になる。
-      # 同期の粒度を下げて溜め込みを減らす。RTX Blackwell で必要だった。
+      # By default racecheck accumulates analysis state until a block completes.
+      # With kernels that use a lot of shared memory the analysis state hits its
+      # limit and turns into a false report or a failure. Lowering the
+      # synchronization granularity reduces the accumulation. This was required
+      # on RTX Blackwell.
       list(APPEND kExtraArgs --force-synchronization-limit 1)
-      # 同期を細かく入れるため実行時間が伸びる。実測 565 秒に対し余裕を持たせる。
+      # The fine-grained synchronization stretches the run time. Leave headroom
+      # over the 565 s that was measured.
       set(kTimeout 1800)
     endif()
     add_test(NAME "sanitizer.${tool}.${target}"
       COMMAND "${kComputeSanitizer}" --tool "${tool}" --error-exitcode 1 ${kExtraArgs}
               "$<TARGET_FILE:${target}>" "--gtest_filter=${kSanitizerGtestFilter}")
-    # sanitizer 経由では実行時間が延びるため timeout を個別に設定する。
-    # GPU を取り合うと時間が伸びて timeout するため直列で走らせる。
+    # Run time is longer under the sanitizer, so set the timeout individually.
+    # Contending for the GPU stretches the time until it hits the timeout, so run
+    # these serially.
     set_tests_properties("sanitizer.${tool}.${target}" PROPERTIES
       TIMEOUT ${kTimeout}
       RUN_SERIAL TRUE

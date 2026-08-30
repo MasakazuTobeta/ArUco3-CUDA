@@ -14,7 +14,7 @@
 namespace aruco3cuda::hybrid {
 namespace {
 
-/// 失敗理由を out_message へ入れる。nullptr なら何もしない。
+/// Stores the failure reason in out_message. Does nothing if it is nullptr.
 void set_message(std::string* out_message, const std::string& text) {
     if (out_message != nullptr) {
         *out_message = text;
@@ -23,7 +23,8 @@ void set_message(std::string* out_message, const std::string& text) {
 
 }  // namespace
 
-/// 実装本体。公開 header が CUDA へ依存しないよう pimpl とする。
+/// The implementation itself. Kept behind a pimpl so the public header does
+/// not depend on CUDA.
 class DeviceImage::Impl {
 public:
     Impl() = default;
@@ -33,12 +34,12 @@ public:
 
     Status reserve(MemorySpace space, int width_px, int height_px, std::string* out_message) {
         if (width_px <= 0 || height_px <= 0) {
-            set_message(out_message, "画像の寸法は 1 以上である必要がある");
+            set_message(out_message, "image dimensions must be at least 1");
             return Status::kInvalidArgument;
         }
         if (this->data_ != nullptr && space == this->space_ &&
             width_px <= this->capacity_width_px_ && height_px <= this->capacity_height_px_) {
-            // 既存の領域で足りる。frame ごとの確保を避ける。
+            // The existing region is large enough. Avoid a per-frame allocation.
             this->view_.width_px_ = width_px;
             this->view_.height_px_ = height_px;
             return Status::kOk;
@@ -49,8 +50,9 @@ public:
         std::size_t pitch = 0;
         cudaError_t error = cudaSuccess;
         if (space == MemorySpace::kManaged) {
-            // managed では中継を作らず、この領域へ直接書く。pitch は自分で
-            // 決める。128 byte 境界へ揃えて、device 側の合体読み出しを保つ。
+            // For managed memory there is no staging buffer; we write straight
+            // into this region. We pick the pitch ourselves and align it to a
+            // 128-byte boundary so device-side reads stay coalesced.
             pitch = ((static_cast<std::size_t>(width_px) + 127U) / 128U) * 128U;
             error = cudaMallocManaged(&this->data_,
                                       pitch * static_cast<std::size_t>(height_px));
@@ -60,8 +62,8 @@ public:
         }
         if (error != cudaSuccess) {
             this->data_ = nullptr;
-            set_message(out_message,
-                        std::string("device buffer を確保できない: ") + cudaGetErrorString(error));
+            set_message(out_message, std::string("cannot allocate the device buffer: ") +
+                                             cudaGetErrorString(error));
             return Status::kCudaError;
         }
         this->capacity_width_px_ = width_px;
@@ -82,27 +84,28 @@ public:
     Status upload(const std::uint8_t* data, int width_px, int height_px,
                   std::size_t source_pitch_bytes, std::string* out_message) {
         if (data == nullptr) {
-            set_message(out_message, "入力 pointer が nullptr である");
+            set_message(out_message, "the input pointer is nullptr");
             return Status::kInvalidArgument;
         }
         if (this->data_ == nullptr) {
-            set_message(out_message, "reserve() が呼ばれていない");
+            set_message(out_message, "reserve() has not been called");
             return Status::kNotInitialized;
         }
         if (width_px <= 0 || height_px <= 0 || width_px > this->capacity_width_px_ ||
             height_px > this->capacity_height_px_) {
-            set_message(out_message, "確保済みの寸法を超える転送はできない");
+            set_message(out_message, "cannot transfer more than the reserved dimensions");
             return Status::kInvalidArgument;
         }
         if (this->space_ == MemorySpace::kManaged) {
-            // managed は device と host が同じ領域を見る。転送は起きない。
-            // 移送の費用は device 側が最初に触ったときに現れる。
+            // With managed memory the device and the host see the same region,
+            // so no transfer happens here. The migration cost shows up when the
+            // device first touches the data.
             const cudaError_t copied = cudaMemcpy2D(
                     this->data_, this->view_.pitch_bytes_, data, source_pitch_bytes,
                     static_cast<std::size_t>(width_px), static_cast<std::size_t>(height_px),
                     cudaMemcpyHostToHost);
             if (copied != cudaSuccess) {
-                set_message(out_message, std::string("managed 領域へ写せない: ") +
+                set_message(out_message, std::string("cannot copy into the managed region: ") +
                                                  cudaGetErrorString(copied));
                 return Status::kCudaError;
             }
@@ -111,18 +114,19 @@ public:
             return Status::kOk;
         }
 
-        // 転送元が page-locked かどうかは呼出側が決める。この class は
-        // 渡された pointer をそのまま読む。page-locked な入力を用意するのは
-        // 呼出側の責務であり、ここで中継へ写すと「入力 buffer の種別」では
-        // なく「写しの費用」を測ることになる。
+        // Whether the source is page-locked is the caller's decision. This
+        // class reads the pointer it is given as is. Preparing a page-locked
+        // input is the caller's responsibility: staging it through an
+        // intermediate buffer here would measure the cost of that extra copy
+        // rather than the effect of the input buffer's memory space.
         const cudaError_t error = cudaMemcpy2D(this->data_, this->view_.pitch_bytes_, data,
                                                source_pitch_bytes,
                                                static_cast<std::size_t>(width_px),
                                                static_cast<std::size_t>(height_px),
                                                cudaMemcpyHostToDevice);
         if (error != cudaSuccess) {
-            set_message(out_message,
-                        std::string("device への転送に失敗した: ") + cudaGetErrorString(error));
+            set_message(out_message, std::string("transfer to the device failed: ") +
+                                             cudaGetErrorString(error));
             return Status::kCudaError;
         }
         this->view_.width_px_ = width_px;

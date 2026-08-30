@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 四隅の subpixel 補正を CPU 基準と突き合わせる。
+// Cross-checks the subpixel corner refinement against the CPU reference.
 //
-// この段は反復解法であり、これまでの段と違って浮動小数の演算順序が結果へ
-// 直接効く。1 ULP の差が反復回数や打ち切りの採否を変え、離散的な差になる。
-// そのため次の 2 段構えで測る。
+// Unlike the earlier stages, this one is an iterative solver, so the order of
+// the floating-point operations feeds straight into the result. A difference of
+// 1 ULP can change the iteration count or whether the termination test fires,
+// which turns into a discrete difference. We therefore measure it in two
+// layers:
 //
-// 1. OpenCV の cv::cornerSubPix を同じ手順で呼んだ結果と突き合わせ、
-//    一致した隅の数と最大差を表へ出す。
-// 2. 段を登る手順 (findCornerInPyrImage) そのものは決定的なので、
-//    scale と窓の半径の選び方を個別に固定する。
+// 1. Compare against the result of calling OpenCV's cv::cornerSubPix through
+//    the same procedure, and report the number of exactly matching corners and
+//    the maximum deviation.
+// 2. The pyramid-climbing procedure itself (findCornerInPyrImage) is
+//    deterministic, so the choice of scale and of the window radius is pinned
+//    down separately.
 //
-// 下の oracle namespace は OpenCV の cv::cornerSubPix と cv::getRectSubPix の
-// 演算と評価順序を写したものである。写し元の
-// modules/imgproc/src/cornersubpix.cpp と modules/imgproc/src/samplers.cpp は、
-// OpenCV 4.x 全体の Apache-2.0 ではなく 3 条項 BSD の header を持ち、
-// Intel Corporation と OpenCV Foundation を著作権者として挙げている。
-// 3 条項 BSD は source の再配布に著作権表示と免責の保持を求めるため、
-// 該当する表示を repository root の NOTICE へ置いた。
-// 詳細は docs/code-provenance.md の PR-005 を参照。
+// The oracle namespace below transcribes the arithmetic and the evaluation
+// order of OpenCV's cv::cornerSubPix and cv::getRectSubPix. The sources it was
+// transcribed from, modules/imgproc/src/cornersubpix.cpp and
+// modules/imgproc/src/samplers.cpp, carry a 3-clause BSD header rather than the
+// Apache-2.0 that covers OpenCV 4.x as a whole, and name Intel Corporation and
+// the OpenCV Foundation as copyright holders. Because 3-clause BSD requires
+// that source redistribution retain the copyright notice and the disclaimer,
+// the corresponding notice is placed in the NOTICE file at the repository root.
+// See PR-005 in docs/code-provenance.md for details.
 #include "corner_refine.hpp"
 
 #include <gtest/gtest.h>
@@ -60,18 +65,19 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 実際のマーカーを白地へ置いた場面を作る。
+/// Builds a scene with a real marker placed on a white background.
 ///
-/// 一様な黒い正方形では窓の中が平坦になり、行列式が 0 に近くなって解が
-/// 発散する。実際のマーカーは内部に模様があるため、この場面の方が実運用に
-/// 近い分岐を通る。
+/// With a uniform black square the window interior is flat, the determinant
+/// approaches 0, and the solution diverges. A real marker has a pattern inside
+/// it, so this scene exercises branches closer to production use.
 cv::Mat make_scene(int width, int height, const cv::Rect& square) {
     const cv::aruco::Dictionary dictionary =
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
     cv::Mat marker;
     dictionary.generateImageMarker(17, square.width, marker, 1);
     cv::Mat scene(height, width, CV_8UC1, cv::Scalar(235));
-    // 単調な背景だと外側の勾配が消える。緩やかな模様を足す。
+    // A perfectly flat background leaves no gradient outside the marker, so
+    // add a gentle pattern.
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             scene.at<std::uint8_t>(y, x) = cv::saturate_cast<std::uint8_t>(220 + ((x + y) % 16));
@@ -81,19 +87,21 @@ cv::Mat make_scene(int width, int height, const cv::Rect& square) {
     return scene;
 }
 
-/// cv::cornerSubPix と cv::getRectSubPix を host へ逐語で写したもの。
+/// A verbatim host transcription of cv::cornerSubPix and cv::getRectSubPix.
 ///
-/// 写し元は 3 条項 BSD である。著作権表示は repository root の NOTICE にある。
+/// The transcribed sources are 3-clause BSD; the copyright notice lives in the
+/// NOTICE file at the repository root.
 ///
-/// 目的は「実装が写し間違えていないか」を、機の違いから切り離して測ることに
-/// ある。cv::cornerSubPix そのものと比べると、OpenCV の build が積和を融合
-/// するかどうか (compiler と ISA で決まる) が結果へ混ざる。この oracle は
-/// GPU 側と同じく融合しない前提で compile する (CMakeLists.txt で
-/// -ffp-contract=off を指定)。GPU がこの oracle と bit 一致すれば、写し間違い
-/// は無いと言える。
+/// The purpose is to measure "did the implementation transcribe this
+/// correctly?" in isolation from machine-to-machine differences. Comparing
+/// against cv::cornerSubPix itself mixes in whether the OpenCV build fuses
+/// multiply-add (which the compiler and the ISA decide). This oracle is
+/// compiled under the same no-fusion assumption as the GPU side
+/// (-ffp-contract=off is set in CMakeLists.txt). If the GPU matches this oracle
+/// bit for bit, the transcription is faithful.
 namespace oracle {
 
-/// getRectSubPix_8u32f の内側の経路。
+/// The interior path of getRectSubPix_8u32f.
 void sample_inside(const cv::Mat& image, int ip_x, int ip_y, float a, float b, int patch_side,
                    std::vector<float>* patch) {
     const float a12 = a * (1.0F - b);
@@ -116,7 +124,7 @@ void sample_inside(const cv::Mat& image, int ip_x, int ip_y, float a, float b, i
     }
 }
 
-/// getRectSubPix_Cn_ の境界の経路。adjustRect の結果を含む。
+/// The border path of getRectSubPix_Cn_, including the result of adjustRect.
 void sample_border(const cv::Mat& image, int ip_x, int ip_y, float a, float b, int patch_side,
                    std::vector<float>* patch) {
     const float a11 = (1.0F - a) * (1.0F - b);
@@ -210,7 +218,7 @@ void sample_patch(const cv::Mat& image, float center_x, float center_y, int patc
                   patch_side, patch);
 }
 
-/// cv::cornerSubPix を 1 点について写したもの。
+/// Transcription of cv::cornerSubPix for a single point.
 void corner_sub_pix(const cv::Mat& image, int radius, int max_iterations, double eps,
                     cv::Point2f* point, std::vector<std::int32_t>* counters) {
     const int win_side = (radius * 2) + 1;
@@ -294,7 +302,7 @@ void corner_sub_pix(const cv::Mat& image, int radius, int max_iterations, double
     *point = current;
 }
 
-/// findCornerInPyrImage を写したもの。
+/// Transcription of findCornerInPyrImage.
 void refine(const std::vector<cv::Mat>& pyramid, int start_level, float scale_init,
             const DetectorConfig& config, std::vector<cv::Point2f>* corners,
             std::vector<std::int32_t>* counters = nullptr) {
@@ -327,7 +335,7 @@ void refine(const std::vector<cv::Mat>& pyramid, int start_level, float scale_in
 
 }  // namespace oracle
 
-/// OpenCV の findCornerInPyrImage と同じ手順を host で辿る。
+/// Walks the same procedure as OpenCV's findCornerInPyrImage on the host.
 void refine_reference(const std::vector<cv::Mat>& pyramid, int start_level, float scale_init,
                       const DetectorConfig& config, std::vector<cv::Point2f>* corners) {
     if (scale_init != 1.0F) {
@@ -351,7 +359,7 @@ void refine_reference(const std::vector<cv::Mat>& pyramid, int start_level, floa
     }
 }
 
-/// 画像と四隅を device へ渡して補正する。
+/// Hands the image and the corners to the device and refines them.
 class RefineRun {
 public:
     RefineRun() = default;
@@ -409,7 +417,7 @@ public:
             return false;
         }
 
-        // 四隅を直接注入する。上流の段は通さない。
+        // Inject the corners directly; the upstream stages are bypassed.
         std::vector<float> plane(static_cast<std::size_t>(detection_count));
         for (int corner = 0; corner < 4; ++corner) {
             for (int d = 0; d < detection_count; ++d) {
@@ -503,7 +511,7 @@ private:
     aruco3cuda::detail::ScalePlan plan_;
 };
 
-/// 突き合わせの結果。
+/// Result of a comparison.
 struct Comparison {
     std::size_t exact_ = 0;
     std::size_t total_ = 0;
@@ -534,7 +542,8 @@ Comparison compare(const std::vector<cv::Point2f>& expected,
     return result;
 }
 
-/// 場面と初期四隅を作る。四隅は正方形の角を少しずらしたものにする。
+/// Builds the scene and the initial corners. The corners are the square's
+/// corners nudged slightly.
 void make_case(int width, int height, const cv::Rect& square,
                const aruco3cuda::detail::ScalePlan& plan, std::vector<cv::Point2f>* corners) {
     const auto scale = static_cast<float>(plan.fxfy_);
@@ -542,7 +551,8 @@ void make_case(int width, int height, const cv::Rect& square,
     const float top = static_cast<float>(square.y) * scale;
     const float right = static_cast<float>(square.x + square.width) * scale;
     const float bottom = static_cast<float>(square.y + square.height) * scale;
-    // segmentation 座標での四隅。整数へ丸めて、候補抽出の出力と同じ形にする。
+    // Corners in segmentation coordinates. Round to integers so they have the
+    // same form as the output of candidate extraction.
     corners->clear();
     corners->emplace_back(std::round(left), std::round(top));
     corners->emplace_back(std::round(right), std::round(top));
@@ -552,10 +562,10 @@ void make_case(int width, int height, const cv::Rect& square,
     (void)height;
 }
 
-// 正常系: 段を登る補正が OpenCV の cornerSubPix と一致する。
+// Happy path: the pyramid-climbing refinement matches OpenCV's cornerSubPix.
 TEST(CornerRefineTest, matches_opencv_corner_subpix) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     struct Case {
@@ -582,7 +592,7 @@ TEST(CornerRefineTest, matches_opencv_corner_subpix) {
         RefineRun run;
         ASSERT_TRUE(run.run(scene, corners, config)) << item.width_ << "x" << item.height_;
 
-        // 同じ pyramid を OpenCV で作り、同じ手順を辿る。
+        // Build the same pyramid with OpenCV and walk the same procedure.
         std::vector<cv::Mat> pyramid;
         cv::buildPyramid(scene, pyramid, plan.level_count_ - 1);
         ASSERT_EQ(static_cast<int>(pyramid.size()), plan.level_count_);
@@ -594,27 +604,29 @@ TEST(CornerRefineTest, matches_opencv_corner_subpix) {
         refine_reference(pyramid, plan.closest_level_index_, scale_init, config, &expected);
 
         const Comparison result = compare(expected, run.corners());
-        std::printf("[refine] %dx%d: 一致 %zu/%zu、最大差 %.6f px、RMSE %.6f px\n", item.width_,
-                    item.height_, result.exact_, result.total_, result.max_distance_,
+        std::printf("[refine] %dx%d: exact %zu/%zu, max deviation %.6f px, RMSE %.6f px\n",
+                    item.width_, item.height_, result.exact_, result.total_, result.max_distance_,
                     result.rmse());
         total.exact_ += result.exact_;
         total.total_ += result.total_;
         total.max_distance_ = std::max(total.max_distance_, result.max_distance_);
         total.sum_square_ += result.sum_square_;
     }
-    std::printf("[refine] 合計: 一致 %zu/%zu、最大差 %.6f px、RMSE %.6f px\n", total.exact_,
-                total.total_, total.max_distance_, total.rmse());
+    std::printf("[refine] total: exact %zu/%zu, max deviation %.6f px, RMSE %.6f px\n",
+                total.exact_, total.total_, total.max_distance_, total.rmse());
     EXPECT_LT(total.rmse(), 0.01);
     EXPECT_LT(total.max_distance_, 0.5);
 }
 
-// 正常系: 初期位置をずらしても OpenCV と一致する。
+// Happy path: still matches OpenCV when the starting positions are perturbed.
 //
-// 初期位置を変えると反復回数と、収束不良で初期位置へ戻す分岐の採否が変わる。
-// 反復解法の分岐を実際に通すため、乱数で散らした初期位置を流す。
+// Changing the starting position changes the iteration count and whether the
+// branch that falls back to the starting position on poor convergence is taken.
+// To actually exercise the branches of the iterative solver, we feed in
+// randomly scattered starting positions.
 TEST(CornerRefineTest, matches_opencv_for_perturbed_starts) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     const cv::Rect square(400, 260, 160, 160);
@@ -634,7 +646,7 @@ TEST(CornerRefineTest, matches_opencv_for_perturbed_starts) {
     std::mt19937_64 rng(20260828U);
     std::uniform_int_distribution<int> shift(-1, 1);
     std::vector<cv::Point2f> corners;
-    // 24 個のマーカー分の四隅を 1 度に流す。
+    // Feed the corners of 24 markers through in a single call.
     for (int trial = 0; trial < 24; ++trial) {
         for (const cv::Point2f& point : base) {
             corners.emplace_back(point.x + static_cast<float>(shift(rng)),
@@ -649,31 +661,37 @@ TEST(CornerRefineTest, matches_opencv_for_perturbed_starts) {
     refine_reference(pyramid, plan.closest_level_index_, scale_init, config, &expected);
 
     const Comparison result = compare(expected, run.corners());
-    std::printf("[refine] ずらした初期位置 %zu 隅: 一致 %zu、最大差 %.6f px、RMSE %.6f px\n",
-                result.total_, result.exact_, result.max_distance_, result.rmse());
-    std::printf("[refine] counter 補正 %d、画像外 %d、収束不良 %d、特異 %d、反復 %d\n",
-                run.counters()[0], run.counters()[1], run.counters()[2], run.counters()[3],
-                run.counters()[4]);
+    std::printf(
+            "[refine] %zu corners with perturbed starts: exact %zu, max deviation %.6f px, "
+            "RMSE %.6f px\n",
+            result.total_, result.exact_, result.max_distance_, result.rmse());
+    std::printf(
+            "[refine] counters: refined %d, out of image %d, poor convergence %d, "
+            "singular %d, iterations %d\n",
+            run.counters()[0], run.counters()[1], run.counters()[2], run.counters()[3],
+            run.counters()[4]);
     EXPECT_LT(result.rmse(), 0.01);
     EXPECT_LT(result.max_distance_, 0.5);
-    // 実運用に近い入力では退化した分岐へ入らない。入るなら場面か初期位置が
-    // 悪く、この test が測っているものが変わっている。退化した分岐そのものは
-    // matches_transcribed_oracle_bit_exactly で固定する。
+    // Input close to production use must not enter the degenerate branches. If
+    // it does, the scene or the starting positions are bad and this test is no
+    // longer measuring what it intends to. The degenerate branches themselves
+    // are pinned down by matches_transcribed_oracle_bit_exactly.
     EXPECT_EQ(run.counters()[2], 0);
     EXPECT_EQ(run.counters()[3], 0);
     EXPECT_EQ(run.counters()[1], 0);
 }
 
-// 正常系: 逐語 oracle と bit 一致する。
+// Happy path: matches the verbatim oracle bit for bit.
 //
-// cv::cornerSubPix そのものと比べると、OpenCV の build が積和を融合するか
-// (compiler と ISA で決まる) が結果へ混ざる。ここでは融合を止めて写した
-// oracle と比べ、**写し間違いが無いこと**だけを測る。行列式が 0 に近くなる
-// 退化した入力も混ぜる。そこでは cv::cornerSubPix との差が離散的に開くが、
-// oracle とは一致し続けなければならない。
+// Comparing against cv::cornerSubPix itself mixes in whether the OpenCV build
+// fuses multiply-add (which the compiler and the ISA decide). Here we compare
+// against the transcribed oracle with fusion disabled, and measure **only that
+// the transcription is faithful**. Degenerate input, where the determinant
+// approaches 0, is mixed in as well. There the deviation from cv::cornerSubPix
+// opens up discretely, but agreement with the oracle must still hold.
 TEST(CornerRefineTest, matches_transcribed_oracle_bit_exactly) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     const cv::Rect square(400, 260, 160, 160);
@@ -690,7 +708,8 @@ TEST(CornerRefineTest, matches_transcribed_oracle_bit_exactly) {
     std::vector<cv::Point2f> base;
     make_case(1280, 720, square, plan, &base);
 
-    // 大きくずらして退化した窓を作る。窓が模様の外へ出ると行列式が 0 に近づく。
+    // Perturb heavily to produce degenerate windows: once the window leaves
+    // the marker pattern the determinant approaches 0.
     std::mt19937_64 rng(20260828U);
     std::uniform_int_distribution<int> shift(-6, 6);
     std::vector<cv::Point2f> corners;
@@ -715,33 +734,41 @@ TEST(CornerRefineTest, matches_transcribed_oracle_bit_exactly) {
     const Comparison against_opencv = compare(opencv_result, run.corners());
 
     std::printf(
-            "[refine] 退化を含む %zu 隅: oracle と一致 %zu (最大差 %.6f px)、"
-            "cv::cornerSubPix と一致 %zu (最大差 %.6f px、RMSE %.6f px)\n",
+            "[refine] %zu corners including degenerate ones: exact vs oracle %zu "
+            "(max deviation %.6f px), exact vs cv::cornerSubPix %zu "
+            "(max deviation %.6f px, RMSE %.6f px)\n",
             against_oracle.total_, against_oracle.exact_, against_oracle.max_distance_,
             against_opencv.exact_, against_opencv.max_distance_, against_opencv.rmse());
-    std::printf("[refine] counter 補正 %d、画像外 %d、収束不良 %d、特異 %d、反復 %d\n",
-                run.counters()[0], run.counters()[1], run.counters()[2], run.counters()[3],
-                run.counters()[4]);
+    std::printf(
+            "[refine] counters: refined %d, out of image %d, poor convergence %d, "
+            "singular %d, iterations %d\n",
+            run.counters()[0], run.counters()[1], run.counters()[2], run.counters()[3],
+            run.counters()[4]);
 
-    // 写し間違いが無いことは、退化した入力でも bit 一致で要求する。
+    // Faithfulness of the transcription is required as a bit-exact match even
+    // on degenerate input.
     EXPECT_EQ(against_oracle.exact_, against_oracle.total_);
     EXPECT_EQ(against_oracle.max_distance_, 0.0);
-    // 退化した分岐を実際に通したことを確かめる。
+    // Confirm that the degenerate branches were actually taken.
     EXPECT_GT(run.counters()[2] + run.counters()[3], 0);
 
-    // **counter を oracle 側の counter と突き合わせる。**
+    // **Cross-check the counters against the oracle's counters.**
     //
-    // 四隅が一致していても制御流が違うことはある。とくに収束不良で初期位置へ
-    // 戻した隅は、戻した先が初期位置なので oracle と自明に一致してしまう。
-    // この test では 128 隅のうち半分以上が戻る経路へ入るため、四隅の一致だけ
-    // では並列化で分岐が動いたことを検出できない。
+    // Corners can agree even when the control flow differs. In particular, a
+    // corner that fell back to its starting position on poor convergence agrees
+    // with the oracle trivially, because the fallback target *is* the starting
+    // position. In this test more than half of the 128 corners take that
+    // fallback path, so corner agreement alone cannot detect that a branch
+    // shifted under parallelization.
     //
-    // counter の絶対値を固定してはならない。退化した入力では制御流が機で
-    // 違うことを実測している (DGX Spark 70/81/83/837 に対し RTX 5070 Ti は
-    // 78/66/87/711)。pyramid、mask、場面、compiler、glibc はいずれも 3 機で
-    // 同一であることを確認済みで、原因は未特定である。
-    // 機に依らない不変量は「GPU と oracle が同じ制御流を通ること」である。
-    EXPECT_EQ(run.counters()[0], 128) << "補正した隅の数";
+    // The absolute counter values must not be pinned down. We have measured
+    // that on degenerate input the control flow differs across machines (DGX
+    // Spark reports 70/81/83/837 while RTX 5070 Ti reports 78/66/87/711). The
+    // pyramid, the mask, the scene, the compiler, and glibc were all verified
+    // to be identical on the three machines; the cause is still unidentified.
+    // The machine-independent invariant is that the GPU and the oracle take the
+    // same control flow.
+    EXPECT_EQ(run.counters()[0], 128) << "number of refined corners";
     for (int i = 1; i < aruco3cuda::detail::kRefineCounterCount; ++i) {
         EXPECT_EQ(run.counters()[static_cast<std::size_t>(i)],
                   oracle_counters[static_cast<std::size_t>(i)])
@@ -749,18 +776,22 @@ TEST(CornerRefineTest, matches_transcribed_oracle_bit_exactly) {
     }
 }
 
-// 境界値: 窓が画像からはみ出す経路でも oracle と bit 一致する。
+// Boundary: still matches the oracle bit for bit on the path where the window
+// extends past the image.
 //
-// getRectSubPix には内側の経路と境界の経路があり、後者は adjustRect が決める
-// 矩形の外を端の値で埋めます。四隅が画像の中央付近にあるうちは境界の経路を
-// **一度も通りません**。画像の端にマーカーを置いて明示的に通します。
+// getRectSubPix has an interior path and a border path; the latter fills
+// everything outside the rectangle chosen by adjustRect with the edge value.
+// While the corners sit near the middle of the image the border path is
+// **never taken once**. We place the marker at the image edges to take it
+// explicitly.
 TEST(CornerRefineTest, matches_oracle_on_image_border) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
-    // マーカーを 4 隅と 4 辺へ寄せて置く。原寸で窓の半径 5、patch 13 なので、
-    // 隅が端から 6 px 以内にあると境界の経路へ入る。
+    // Place the marker against the four corners and the four edges. At full
+    // resolution the window radius is 5 and the patch is 13, so a corner within
+    // 6 px of an edge takes the border path.
     const int side = 160;
     struct Placement {
         int x_;
@@ -787,7 +818,8 @@ TEST(CornerRefineTest, matches_oracle_on_image_border) {
                         pyramid[static_cast<std::size_t>(plan.closest_level_index_)].cols) /
                 static_cast<float>(plan.segmentation_width_px_);
 
-        // 端に寄った隅がどれだけあるかを数える。境界の経路を通った証拠にする。
+        // Count how many corners sit near an edge, as evidence that the
+        // border path was taken.
         for (const cv::Point2f& point : corners) {
             const float x = point.x * scale_init * 4.0F;
             const float y = point.y * scale_init * 4.0F;
@@ -803,18 +835,19 @@ TEST(CornerRefineTest, matches_oracle_on_image_border) {
         const Comparison result = compare(expected, run.corners());
         total_oracle_mismatch += (result.total_ - result.exact_);
     }
-    std::printf("[refine] 端 8 通り: oracle との不一致 %zu、端に寄った隅 %zu\n",
+    std::printf("[refine] 8 edge placements: mismatches vs oracle %zu, corners near an edge %zu\n",
                 total_oracle_mismatch, border_cases);
     EXPECT_EQ(total_oracle_mismatch, 0U);
-    // 境界の経路を実際に通したことを確かめる。通っていなければ、この test は
-    // 内側の経路しか見ておらず既存の test と変わらない。
+    // Confirm that the border path was actually taken. If it was not, this test
+    // only exercises the interior path and adds nothing over the existing
+    // tests.
     EXPECT_GT(border_cases, 0U);
 }
 
-// 正常系: 補正した四隅が原寸の座標になる。
+// Happy path: the refined corners come back in full-resolution coordinates.
 TEST(CornerRefineTest, output_is_in_original_resolution) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     const cv::Rect square(400, 260, 160, 160);
@@ -827,21 +860,22 @@ TEST(CornerRefineTest, output_is_in_original_resolution) {
     RefineRun run;
     ASSERT_TRUE(run.run(scene, corners, config));
     ASSERT_EQ(run.corners().size(), 4U);
-    // 入力は segmentation 座標 (427 幅)、出力は原寸 (1280 幅)。
+    // Input is in segmentation coordinates (427 wide); output is at full
+    // resolution (1280 wide).
     EXPECT_LT(corners[0].x, 200.0F);
     EXPECT_NEAR(static_cast<double>(run.corners()[0].x), square.x, 2.0);
     EXPECT_NEAR(static_cast<double>(run.corners()[0].y), square.y, 2.0);
     EXPECT_NEAR(static_cast<double>(run.corners()[2].x), square.x + square.width, 2.0);
     EXPECT_NEAR(static_cast<double>(run.corners()[2].y), square.y + square.height, 2.0);
-    std::printf("[refine] 補正後の四隅 (%.4f, %.4f) (%.4f, %.4f)\n",
+    std::printf("[refine] refined corners (%.4f, %.4f) (%.4f, %.4f)\n",
                 static_cast<double>(run.corners()[0].x), static_cast<double>(run.corners()[0].y),
                 static_cast<double>(run.corners()[2].x), static_cast<double>(run.corners()[2].y));
 }
 
-// 正常系: 経過の counter が記録される。
+// Happy path: the progress counters are recorded.
 TEST(CornerRefineTest, records_diagnostics) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     const cv::Rect square(400, 260, 160, 160);
@@ -855,17 +889,20 @@ TEST(CornerRefineTest, records_diagnostics) {
     ASSERT_TRUE(run.run(scene, corners, config));
     ASSERT_EQ(run.counters().size(), 5U);
     EXPECT_EQ(run.counters()[0], 4);
-    std::printf("[refine] counter 補正 %d、画像外 %d、収束不良 %d、特異 %d、反復 %d\n",
-                run.counters()[0], run.counters()[1], run.counters()[2], run.counters()[3],
-                run.counters()[4]);
-    // 段が 2 つあるので、反復は少なくとも隅の数の 2 倍は回る。
+    std::printf(
+            "[refine] counters: refined %d, out of image %d, poor convergence %d, "
+            "singular %d, iterations %d\n",
+            run.counters()[0], run.counters()[1], run.counters()[2], run.counters()[3],
+            run.counters()[4]);
+    // There are two pyramid levels, so the iteration count is at least twice
+    // the number of corners.
     EXPECT_GE(run.counters()[4], 8);
 }
 
-// 正常系: 同じ入力を 2 度流すと同じ結果になる。
+// Happy path: running the same input twice produces the same result.
 TEST(CornerRefineTest, results_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const DetectorConfig config;
     const cv::Rect square(300, 200, 240, 240);
@@ -886,7 +923,7 @@ TEST(CornerRefineTest, results_are_deterministic) {
     }
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: invalid arguments perform no work.
 TEST(CornerRefineTest, rejects_invalid_arguments) {
     Workspace workspace;
     const DetectorConfig config;

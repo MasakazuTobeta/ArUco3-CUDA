@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 合成 corpus 生成器。四隅の ground truth を持つ画像を seed 固定で生成する。
+# Synthetic corpus generator. Produces images with four-corner ground truth from a fixed seed.
 add_library(aruco3cuda_corpusgen STATIC corpus_generator.cpp)
 add_library(aruco3cuda::corpusgen ALIAS aruco3cuda_corpusgen)
 

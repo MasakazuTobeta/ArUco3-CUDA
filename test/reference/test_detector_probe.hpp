@@ -6,19 +6,22 @@
 
 namespace aruco3cuda::test {
 
-/// 指定した cycle 数だけ device を占有する kernel を stream へ積む。
+/// Enqueues a kernel onto the stream that occupies the device for the given
+/// number of cycles.
 ///
-/// @param cycles 回る cycle 数。device の clock に依存するため、時間を厳密に
-///               決めることはできない。呼出側は十分に大きい値を渡す。
-/// @param device_sink 最適化で消されないための書き込み先。device pointer。
-/// @param stream 積む stream。
-/// @return 起動できたら true。
+/// @param cycles Number of cycles to spin. Because this depends on the device
+///               clock, the elapsed time cannot be pinned down exactly; the
+///               caller should pass a generously large value.
+/// @param device_sink Write target that keeps the loop from being optimized
+///                    away. Must be a device pointer.
+/// @param stream Stream to enqueue onto.
+/// @return true if the launch succeeded.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: 発行するだけで同期しない。
+/// Ownership: does not retain the memory passed in as arguments.
+/// Synchronization: only enqueues; never synchronizes.
 ///
-/// 入力例: cycles = 1000000000、有効な device pointer
-/// 出力例: true
+/// Example input: cycles = 1000000000, a valid device pointer
+/// Example output: true
 bool enqueue_spin(long long cycles, int* device_sink, cudaStream_t stream);
 
 }  // namespace aruco3cuda::test

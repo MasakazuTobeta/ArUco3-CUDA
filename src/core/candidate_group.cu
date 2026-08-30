@@ -20,14 +20,14 @@ namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
 constexpr int kLinearThreads = 256;
-/// 対を走査する kernel の block 数。
+/// Number of blocks in the kernel that walks candidate pairs.
 ///
-/// 対の数は候補数の 2 乗であり、候補数は device 側にしか無い。固定の
-/// grid で grid-stride 走査すれば、候補が少ない場合の無駄な thread 起動を
-/// 避けられる。
+/// The pair count is the square of the candidate count, and the candidate count
+/// lives only on the device. Walking a fixed grid in grid-stride fashion avoids
+/// launching useless threads when there are few candidates.
 constexpr int kPairBlocks = 1024;
 
-/// 順位空間の union-find で根を辿る。
+/// Walks to the root of the union-find over rank space.
 __device__ std::int32_t find_root(const std::int32_t* parent, std::int32_t index) {
     while (parent[index] != index) {
         index = parent[index];
@@ -35,7 +35,7 @@ __device__ std::int32_t find_root(const std::int32_t* parent, std::int32_t index
     return index;
 }
 
-/// 2 つの順位を同じ group へまとめる。小さい順位を根とする。
+/// Merges two ranks into the same group. The smaller rank becomes the root.
 __device__ void merge_ranks(std::int32_t* parent, std::int32_t a, std::int32_t b) {
     while (a != b) {
         a = find_root(parent, a);
@@ -56,10 +56,12 @@ __device__ void merge_ranks(std::int32_t* parent, std::int32_t a, std::int32_t b
     }
 }
 
-/// 2 つの候補の四隅間平均距離。開始頂点の 4 通りの対応のうち最小を採る。
+/// Mean corner distance between two candidates. Takes the smallest over the
+/// four starting-vertex correspondences.
 ///
-/// CPU 経路の getAverageDistance と同じ。頂点の並びが 1 つずれていても
-/// 同じマーカーだと判定できるようにするため、対応を総当たりする。
+/// Same as getAverageDistance in the CPU path. Every correspondence is tried so
+/// that the same marker is still recognized when the vertex order is rotated by
+/// one.
 __device__ float average_quad_distance(const std::int32_t* corner_x, const std::int32_t* corner_y,
                                        int capacity, std::int32_t first, std::int32_t second) {
     float minimum = 3.402823466e+38F;
@@ -81,7 +83,7 @@ __device__ float average_quad_distance(const std::int32_t* corner_x, const std::
     return sqrtf(minimum);
 }
 
-/// 作業領域を初期化する。
+/// Initializes the scratch space.
 __global__ void reset_group_kernel(CandidateGroupBuffers buffers, int capacity) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= capacity) {
@@ -94,10 +96,10 @@ __global__ void reset_group_kernel(CandidateGroupBuffers buffers, int capacity) 
     buffers.order_[index] = 0;
 }
 
-/// 周長の降順で順位を決める。
+/// Assigns ranks in descending perimeter order.
 ///
-/// 周長が同じ場合は候補 index の小さい方を先にする。CPU 経路の
-/// stable_sort と同じ順序になり、実行ごとにも変わらない。
+/// Ties are broken by the smaller candidate index. This matches the order of
+/// the CPU path's stable_sort and does not vary from run to run.
 __global__ void rank_kernel(const std::int32_t* perimeter, std::int32_t* rank, std::int32_t* order,
                             const std::int32_t* count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -117,7 +119,7 @@ __global__ void rank_kernel(const std::int32_t* perimeter, std::int32_t* rank, s
     order[position] = index;
 }
 
-/// 近接する対を同じ group へまとめる。
+/// Merges nearby pairs into the same group.
 __global__ void merge_pairs_kernel(const std::int32_t* corner_x, const std::int32_t* corner_y,
                                    const std::int32_t* perimeter, const std::int32_t* order,
                                    std::int32_t* parent, int capacity, float distance_rate,
@@ -130,13 +132,13 @@ __global__ void merge_pairs_kernel(const std::int32_t* corner_x, const std::int3
         const long long a = index / total;
         const long long b = index % total;
         if (a >= b) {
-            // 対を 1 回だけ扱う。順位の小さい側を a とする。
+            // Handle each pair once. The smaller rank is a.
             continue;
         }
         const std::int32_t first = order[a];
         const std::int32_t second = order[b];
         const float distance = average_quad_distance(corner_x, corner_y, capacity, first, second);
-        // 判定に使う周長は順位が後ろの側 (周長が小さい側) とする。
+        // Judge against the perimeter of the later-ranked side (the smaller perimeter).
         const float threshold = static_cast<float>(perimeter[second]) * distance_rate;
         if (distance < threshold) {
             merge_ranks(parent, static_cast<std::int32_t>(a), static_cast<std::int32_t>(b));
@@ -144,7 +146,7 @@ __global__ void merge_pairs_kernel(const std::int32_t* corner_x, const std::int3
     }
 }
 
-/// 根を辿って代表を決める。
+/// Resolves the roots to pick the representatives.
 __global__ void select_kernel(std::int32_t* parent, std::int32_t* selected, std::int32_t* offsets,
                               const std::int32_t* count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -158,7 +160,7 @@ __global__ void select_kernel(std::int32_t* parent, std::int32_t* selected, std:
     offsets[index] = is_root;
 }
 
-/// 代表を詰めて出力へ書き出す。
+/// Packs the representatives and writes them to the output.
 __global__ void emit_kernel(const DeviceCandidates input, DeviceCandidates output,
                             const std::int32_t* order, const std::int32_t* selected,
                             const std::int32_t* offsets, int capacity) {
@@ -184,7 +186,7 @@ __global__ void emit_kernel(const DeviceCandidates input, DeviceCandidates outpu
     output.perimeter_[destination] = input.perimeter_[source];
 }
 
-/// 統合後の候補数を書き出す。
+/// Writes out the candidate count after merging.
 __global__ void store_group_count_kernel(const std::int32_t* total, std::int32_t* count,
                                          std::int32_t* accepted_total, int capacity) {
     if (threadIdx.x != 0U || blockIdx.x != 0U) {
@@ -195,7 +197,7 @@ __global__ void store_group_count_kernel(const std::int32_t* total, std::int32_t
     *count = (value < capacity) ? value : capacity;
 }
 
-/// int32 配列の byte 数を求める。桁溢れなら 0 を返す。
+/// Returns the byte count of an int32 array. Returns 0 on overflow.
 std::size_t array_bytes_i32(std::size_t count) {
     if (count == 0U || count > std::numeric_limits<std::size_t>::max() / sizeof(std::int32_t)) {
         return 0U;

@@ -1,20 +1,22 @@
-# 日本語用語辞書
+# Glossary
 
-文書、PR、レビューで使用する表現を統一するための辞書です。
+A glossary for keeping wording consistent across documents, code comments, Doxygen, PR bodies, and reviews. Everything in this repository is written in English.
 
-| 避けたい表現 | 推奨表現 | 補足 |
+The "Avoid" column lists the loose expressions that keep coming back. The point of each row is not the wording itself but the discipline behind it: do not assume a speedup, state what was measured, and say which baseline is meant.
+
+| Avoid | Preferred | Notes |
 | --- | --- | --- |
-| GPU化すれば高速 | CUDA 実装の有効条件を評価する | 高速化を前提にしない。 |
-| 転送なし | 明示的な copy なし | ユニファイドメモリでも同期や cache の費用は残る。 |
-| 処理時間 | カーネル時間 / end-to-end 時間 | 測定範囲を明記する。 |
-| 正解 | CPU 基準結果 / ground truth | どちらを指すか明記する。 |
-| ArUco3 マーカー | ArUco3 検出戦略 | ArUco3 は新しい Dictionary ではなく高速検出方式を指す。 |
-| GPUマシン | CUDA 対応環境 | hardware 条件を具体化する。 |
-| ゼロコピー | zero-copy | 使用 API と memory 種別を併記する。 |
-| CPU fallback | CPU fallback | 機能縮退または小規模入力向け選択を指す。 |
-| crossover | crossover point | CPU と CUDA の優位性が切り替わる条件。 |
-| artifact | 成果物 | ログ、測定結果、可視化画像等。 |
+| Moving it to the GPU makes it fast | evaluate the conditions under which the CUDA implementation is effective | Do not assume a speedup. |
+| no transfer | no explicit copy | Even with unified memory, the cost of synchronization and caching remains. |
+| processing time | kernel time / end-to-end time | State the measurement scope. |
+| the correct answer | CPU baseline result / ground truth | State which of the two is meant. |
+| ArUco3 marker | ArUco3 detection strategy | ArUco3 refers to a fast detection method, not a new Dictionary. |
+| GPU machine | CUDA-capable environment | Make the hardware conditions concrete. |
+| zero copy | zero-copy | State the API and the memory type used. |
+| CPU fallback | CPU fallback | Refers to reduced functionality or a choice intended for small inputs. |
+| crossover | crossover point | The condition at which the advantage switches between CPU and CUDA. |
+| artifact | the concrete output (logs, measurement results, visualization images) | Logs, measurement results, visualization images, and the like. |
 
-## 技術名
+## Technical Names
 
-CUDA、OpenCV、ArUco、ArUco3、DGX Spark、Jetson Orin、Compute Capability、CMake、C++ は正式名称または一般的な表記を使用します。
+Use the official or commonly accepted spelling for CUDA, OpenCV, ArUco, ArUco3, DGX Spark, Jetson Orin, Compute Capability, CMake, and C++.

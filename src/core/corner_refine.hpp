@@ -14,133 +14,138 @@
 
 namespace aruco3cuda::detail {
 
-/// 補正で使う窓の 1 辺の上限。
+/// Upper bound on the side length of the window used by the refinement.
 ///
-/// OpenCV は ArUco3 経路で窓の半径を 3 か 5 にする。cornerSubPix が実際に
-/// 切り出すのは半径から求めた (2r+1)+2 辺であり、r = 5 のとき 13 になる。
+/// On the ArUco3 path OpenCV sets the window radius to either 3 or 5. What cornerSubPix actually
+/// cuts out is a square of side (2r+1)+2 derived from that radius, which is 13 when r = 5.
 inline constexpr int kMaxRefinePatchSide = 13;
 
-/// 補正の経過を数える counter。
+/// Counters that record how the refinement progressed.
 ///
-/// 反復解法は入力の 1 ULP が反復回数や打ち切りの採否を変える。CPU 基準と
-/// 差が出たとき、どの分岐で分かれたのかを後から言えるようにする。
+/// This is an iterative solver, so 1 ULP of difference in the input changes the iteration count or
+/// whether a bail-out is taken. These counters make it possible to say afterwards which branch
+/// diverged from the CPU reference.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: the workspace owns every region these pointers refer to.
+/// Synchronization: this is only a bundle of references and holds no synchronization point.
 ///
-/// 入力例: 検出上限 1024 の設定
-/// 出力例: 5 要素の counter が 0 で初期化される
+/// Example input: a configuration with a detection cap of 1024
+/// Example output: five counters initialized to 0
 struct RefineDiagnostics {
-    /// [0] 補正した隅の数
-    /// [1] 窓が画像の外へ出て打ち切った数
-    /// [2] 初期位置から離れすぎて初期位置へ戻した数
-    /// [3] 行列式が 0 に近く打ち切った数
-    /// [4] 反復回数の総和
+    /// [0] Number of corners that were refined
+    /// [1] Number of bail-outs caused by the window leaving the image
+    /// [2] Number of corners reset to their initial position for drifting too far from it
+    /// [3] Number of bail-outs caused by a determinant close to 0
+    /// [4] Total number of iterations
     std::int32_t* counters_ = nullptr;
 };
 
-/// 補正が使う作業領域。
+/// Scratch space used by the refinement.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。
+/// Ownership: the workspace owns every region these pointers refer to.
+/// Synchronization: this is only a bundle of references and holds no synchronization point.
 ///
-/// 入力例: 既定の設定
-/// 出力例: diagnostics_.counters_ が 5 要素
+/// Example input: the default configuration
+/// Example output: diagnostics_.counters_ holding five elements
 struct CornerRefineBuffers {
     RefineDiagnostics diagnostics_;
 };
 
-/// counter の要素数。
+/// Number of counter elements.
 inline constexpr int kRefineCounterCount = 5;
 
-/// 補正に必要な workspace の大きさを返す。
+/// Returns the workspace size required by the refinement.
 ///
-/// @param config 設定。現時点では大きさに影響しない。
-/// @return 必要な byte 数。
+/// @param config Configuration. It does not affect the size at present.
+/// @return Required number of bytes.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: host only, holds no synchronization point. Calls no CUDA API.
 ///
-/// 入力例: 既定の設定
-/// 出力例: 256
+/// Example input: the default configuration
+/// Example output: 256
 std::size_t corner_refine_workspace_bytes(const DetectorConfig& config);
 
-/// 補正の作業領域を確保する。
+/// Allocates the scratch space used by the refinement.
 ///
-/// @param config 設定。
-/// @param workspace device 空間の workspace。
-/// @param out 成功時に buffer 群を格納する。領域の所有権は呼出側にある。
-/// @return kOk。out が nullptr なら kInvalidArgument、容量不足なら kInvalidConfig。
+/// @param config Configuration.
+/// @param workspace Workspace in device space.
+/// @param out Receives the buffers on success. The caller owns the regions.
+/// @return kOk, kInvalidArgument when out is nullptr, kInvalidConfig when the capacity is
+///         insufficient.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: host only, holds no synchronization point.
 ///
-/// 入力例: 既定の設定、空きのある workspace
-/// 出力例: kOk。out->diagnostics_.counters_ が有効
+/// Example input: the default configuration and a workspace with room left
+/// Example output: kOk, with out->diagnostics_.counters_ valid
 Status reserve_corner_refine(const DetectorConfig& config, Workspace& workspace,
                              CornerRefineBuffers* out);
 
-/// 四隅を pyramid の段を登りながら補正し、原寸の座標へ戻す。
+/// Refines the four corners while climbing the pyramid levels and returns them to full-scale
+/// coordinates.
 ///
-/// OpenCV の `findCornerInPyrImage` と `cv::cornerSubPix` を再現する。
+/// Reproduces OpenCV's `findCornerInPyrImage` and `cv::cornerSubPix`.
 ///
-/// 手順は次のとおりである。
+/// The procedure is as follows.
 ///
-/// 1. segmentation 座標の四隅へ `scale_init` を掛け、開始段の座標にする。
-///    `scale_init` は `開始段の幅 / segmentation の幅` である。
-/// 2. 段を 1 つ下げる (解像度は 2 倍) たびに四隅を 2 倍し、その段で
-///    `cornerSubPix` を掛ける。段 0 まで繰り返す。
-/// 3. 段 0 は原寸であるため、終わった時点で四隅は原寸の座標になる。
-///    `fxfy` の逆数を別に掛けてはならない。
+/// 1. Multiply the four corners, which are in segmentation coordinates, by `scale_init` to obtain
+///    the coordinates of the starting level. `scale_init` is `starting level width / segmentation
+///    width`.
+/// 2. Every time the level index drops by one (the resolution doubles), double the corners and
+///    apply `cornerSubPix` at that level. Repeat down to level 0.
+/// 3. Level 0 is full scale, so once the loop ends the corners are already in full-scale
+///    coordinates. The reciprocal of `fxfy` must not be applied on top of that.
 ///
-/// 窓の半径は設定ではなく段の大きさで決まる。OpenCV は
-/// `max(段の幅, 段の高さ) > 1080 ? 5 : 3` とする。ArUco3 経路では
-/// `corner_refinement_win_size_px_` と `relative_corner_refinement_win_size_`
-/// は使われない。
+/// The window radius is decided by the size of the level, not by the configuration. OpenCV uses
+/// `max(level width, level height) > 1080 ? 5 : 3`. On the ArUco3 path neither
+/// `corner_refinement_win_size_px_` nor `relative_corner_refinement_win_size_` is used.
 ///
-/// 演算は CPU 基準と同じ順序で行い、積和を融合しない。反復解法であるため、
-/// 融合による 1 ULP の差が反復回数や打ち切りの採否を変えうる。
+/// The arithmetic follows the same order as the CPU reference and never contracts multiply-add.
+/// Because this is an iterative solver, the 1 ULP that contraction introduces can change the
+/// iteration count or whether a bail-out is taken.
 ///
-/// @param pyramid 段ごとの画像。段 0 が原寸である。
-/// @param plan 縮小の計画。開始段と segmentation の幅を使う。
-/// @param config 反復回数と収束の閾値を含む設定。
-/// @param block_count 起こす block 数。refine_block_count() で求める。
-/// @param buffers 作業領域。counter を書く。
-/// @param detections 四隅を **その場で書き換える**。ids_ と count_ を読む。
-/// @param stream kernel を発行する stream。
-/// @return kOk。引数が不正なら kInvalidArgument、設定が不整合なら
-///         kInvalidConfig、kernel 起動に失敗したら kCudaError。
+/// @param pyramid Image of each level. Level 0 is full scale.
+/// @param plan Downscaling plan. The starting level and the segmentation width are used.
+/// @param config Configuration containing the iteration count and the convergence threshold.
+/// @param block_count Number of blocks to launch. Obtained from refine_block_count().
+/// @param buffers Scratch space. The counters are written into it.
+/// @param detections Corners are rewritten **in place**. ids_ and count_ are read.
+/// @param stream Stream the kernel is issued on.
+/// @return kOk, kInvalidArgument when an argument is invalid, kInvalidConfig when the
+///         configuration is inconsistent, kCudaError when the kernel launch fails.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: kernel を stream 上で非同期に発行する。呼出側が同期するまで
-///           結果は確定しない。
+/// Ownership: does not retain the regions of the arguments.
+/// Synchronization: the kernel is issued asynchronously on the stream. The results are not final
+///           until the caller synchronizes.
 ///
-/// 入力例: 1280x720 の pyramid、segmentation 427x240、検出 4 件
-/// 出力例: kOk。corner_x_ と corner_y_ が原寸 1280x720 の座標になる
+/// Example input: a 1280x720 pyramid, a 427x240 segmentation image and four detections
+/// Example output: kOk, with corner_x_ and corner_y_ in full-scale 1280x720 coordinates
 Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
                             const DetectorConfig& config, int block_count,
                             CornerRefineBuffers* buffers, DeviceDetections* detections,
                             cudaStream_t stream);
 
-/// device の SM 数から、補正で起こす block 数を決める。
+/// Decides how many blocks the refinement launches, based on the SM count of the device.
 ///
-/// block 数は「device が同時に走らせられる数」と「仕事の量」の小さい方で
-/// あるべきである。前者を SM 数の 2 倍で見積もり、後者 (評価計画の上限で
-/// あるマーカー 16 枚 = 64 隅) を上限にする。1 block が共有 memory を
-/// 約 5.5 KB 使うため、必要以上に起こすと検出が 0 件の frame でも損をする。
+/// The block count should be the smaller of "how many the device can run concurrently" and "how
+/// much work there is". The former is estimated as twice the SM count, and the latter (16 markers
+/// = 64 corners, the upper bound of the evaluation plan) is used as the cap. One block consumes
+/// about 5.5 KB of shared memory, so launching more than necessary costs time even on a frame
+/// with no detections.
 ///
-/// 固定値にすると、SM 数の桁が違う機で事故になる。実際に隅の上限 (4096) を
-/// そのまま block 数にしていたとき、Jetson AGX Orin (16 SM) で検出 0 件でも
-/// 7 倍遅くなった。
+/// A fixed value turns into an accident on a machine with an order-of-magnitude different SM
+/// count. When the corner cap (4096) was used directly as the block count, a Jetson AGX Orin
+/// (16 SM) was 7 times slower even with no detections.
 ///
-/// @param multi_processor_count device の SM 数。1 未満なら下限を返す。
-/// @return 起こす block 数。32 以上 64 以下。
+/// @param multi_processor_count SM count of the device. Values below 1 yield the lower bound.
+/// @return Number of blocks to launch, between 32 and 64 inclusive.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。CUDA API を呼ばない。
+/// Ownership: holds no resources.
+/// Synchronization: host only, holds no synchronization point. Calls no CUDA API.
 ///
-/// 入力例: 16 (Jetson AGX Orin)
-/// 出力例: 32
+/// Example input: 16 (Jetson AGX Orin)
+/// Example output: 32
 int refine_block_count(int multi_processor_count);
 
 }  // namespace aruco3cuda::detail

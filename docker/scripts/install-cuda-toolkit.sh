@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   ARUCO3_CUDA_MODE=pinned の場合に、この project が必要とする CUDA package
-#   だけを image へ install する。
+# Purpose:
+#   When ARUCO3_CUDA_MODE=pinned, install into the image only the CUDA packages
+#   this project needs.
 #
-# 方針:
-#   CUDA Toolkit 全体は 4.7 GB あるが、その 3.2 GB は cuBLAS、cuFFT、cuSOLVER、
-#   cuSPARSE、cuRAND であり本 project では使用しない。必要なのは nvcc、cudart、
-#   CCCL、compute-sanitizer、NVTX のみで、合計 300 MB 程度に収まる。
+# Rationale:
+#   The full CUDA Toolkit is 4.7 GB, but 3.2 GB of that is cuBLAS, cuFFT,
+#   cuSOLVER, cuSPARSE, and cuRAND, none of which this project uses. All we need
+#   is nvcc, cudart, CCCL, compute-sanitizer, and NVTX, which come to about
+#   300 MB in total.
 #
-#   image へ固定することで、測定に使用した compiler が image と一体になり、
-#   host の CUDA 更新によって benchmark 結果の比較可能性が失われることを防ぐ。
+#   Pinning them into the image makes the compiler used for the measurements part
+#   of the image, which prevents a CUDA update on the host from destroying the
+#   comparability of the benchmark results.
 #
-# 冪等性:
-#   base image が既に CUDA を含む場合 (Jetson の l4t-jetpack 等) は install を
-#   行わず、既存の Toolkit を対象として provenance のみ記録する。
+# Idempotency:
+#   When the base image already contains CUDA (for example Jetson's l4t-jetpack),
+#   nothing is installed and only the provenance of the existing Toolkit is
+#   recorded.
 set -euo pipefail
 
 readonly kMode="${ARUCO3_CUDA_MODE:-pinned}"
@@ -43,15 +46,15 @@ JSON
 }
 
 if [ "${kMode}" = "mounted" ]; then
-    # host から bind mount する。image には何も入れない。
-    echo "[install-cuda-toolkit] mode=mounted のため install を行わない"
+    # Bind-mounted from the host. Nothing goes into the image.
+    echo "[install-cuda-toolkit] mode=mounted, so nothing is installed"
     write_provenance "mounted" "[]" "runtime-mounted"
     exit 0
 fi
 
 if [ "${kMode}" != "pinned" ]; then
-    echo "[install-cuda-toolkit] 未知の ARUCO3_CUDA_MODE: ${kMode}" >&2
-    echo "[install-cuda-toolkit] pinned または mounted を指定すること。" >&2
+    echo "[install-cuda-toolkit] unknown ARUCO3_CUDA_MODE: ${kMode}" >&2
+    echo "[install-cuda-toolkit] specify either pinned or mounted." >&2
     exit 2
 fi
 
@@ -65,8 +68,8 @@ detect_nvcc() {
 
 existing_nvcc="$(detect_nvcc)"
 if [ -n "${existing_nvcc}" ]; then
-    # base image が既に CUDA を含む場合。Jetson の l4t-jetpack がこれに当たる。
-    echo "[install-cuda-toolkit] base image に CUDA ${existing_nvcc} が存在するため install を省略する"
+    # The base image already contains CUDA. Jetson's l4t-jetpack is such a case.
+    echo "[install-cuda-toolkit] the base image already has CUDA ${existing_nvcc}; skipping the installation"
     write_provenance "pinned-from-base-image" "[]" "${existing_nvcc}"
     exit 0
 fi
@@ -74,12 +77,13 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 readonly kRepoBase="https://developer.download.nvidia.com/compute/cuda/repos/${kRepoDistro}/${kRepoArch}"
 
-echo "[install-cuda-toolkit] NVIDIA の apt repository を追加する: ${kRepoBase}"
+echo "[install-cuda-toolkit] adding the NVIDIA apt repository: ${kRepoBase}"
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl
 
-# 署名鍵は cuda-keyring package で導入する。鍵を直接 URL から取得する方式より、
-# 失効と更新の扱いが NVIDIA 側の運用に従うため安全である。
+# Install the signing key through the cuda-keyring package. That is safer than
+# fetching the key from a URL directly, because revocation and rotation then
+# follow NVIDIA's own operations.
 curl -fsSL -o /tmp/cuda-keyring.deb "${kRepoBase}/cuda-keyring_1.1-1_all.deb"
 dpkg -i /tmp/cuda-keyring.deb
 rm -f /tmp/cuda-keyring.deb
@@ -88,19 +92,21 @@ apt-get update
 # shellcheck disable=SC2086
 apt-get install -y --no-install-recommends ${kPackages}
 
-# nvcc のみを install した場合、/usr/local/cuda の symlink が作られないことがある。
+# When only nvcc is installed, the /usr/local/cuda symlink is sometimes not
+# created.
 if [ ! -e /usr/local/cuda ]; then
     cuda_dir="$(find /usr/local -maxdepth 1 -name 'cuda-*' -type d | sort -V | tail -1)"
     if [ -z "${cuda_dir}" ]; then
-        echo "[install-cuda-toolkit] /usr/local/cuda-* が見つからない" >&2
+        echo "[install-cuda-toolkit] no /usr/local/cuda-* was found" >&2
         exit 1
     fi
     ln -s "${cuda_dir}" /usr/local/cuda
-    echo "[install-cuda-toolkit] symlink を作成: /usr/local/cuda -> ${cuda_dir}"
+    echo "[install-cuda-toolkit] created symlink: /usr/local/cuda -> ${cuda_dir}"
 fi
 
-# 実際に install された version を記録する。package 名は 13-0 のように
-# minor version までを固定するが、patch version は repository の状態に依存する。
+# Record the versions that were actually installed. The package names pin down
+# to the minor version, as in 13-0, but the patch version depends on the state of
+# the repository.
 packages_json="["
 first=1
 for pkg in ${kPackages}; do

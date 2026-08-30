@@ -20,10 +20,10 @@ namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
 constexpr int kResetThreads = 256;
-/// 打ち切りの走査は 1 block で行う。段ごとに block 全体の同期が要る。
+/// The suppression walk runs in a single block. Each level needs a block-wide barrier.
 constexpr int kSuppressThreads = 256;
 
-/// 1 平面の byte 数を求める。桁溢れしたら 0 を返す。
+/// Returns the byte count of one plane. Returns 0 on overflow.
 std::size_t plane_bytes(std::size_t count, std::size_t element_bytes) {
     if (count != 0U && element_bytes > std::numeric_limits<std::size_t>::max() / count) {
         return 0U;
@@ -31,13 +31,14 @@ std::size_t plane_bytes(std::size_t count, std::size_t element_bytes) {
     return align_up(count * element_bytes, kPlaneAlignment);
 }
 
-/// 点が四角形の内側か境界上にあるかを判定する。
+/// Decides whether a point lies inside a quadrilateral or on its boundary.
 ///
-/// OpenCV の pointPolygonTest を measureDist = false で呼んだ場合と同じにする。
-/// 走査は辺 (c3 から c0)、(c0 から c1)、(c1 から c2)、(c2 から c3) の順である。
-/// 交差積は 64 bit で計算する。座標が整数であれば OpenCV が倍精度で計算した
-/// 符号と厳密に一致する。凸性は仮定しない。極点探索で作る四角形は凹に
-/// なりうるため、符号の一致だけで判定すると結果が変わる。
+/// Matches calling OpenCV's pointPolygonTest with measureDist = false. The walk
+/// visits the edges (c3 to c0), (c0 to c1), (c1 to c2), (c2 to c3) in that
+/// order. Cross products are computed in 64 bit; with integer coordinates the
+/// signs match exactly those OpenCV computes in double precision. Convexity is
+/// not assumed: a quadrilateral built by extreme point search can be concave,
+/// so deciding from matching signs alone would change the result.
 __device__ bool point_in_quad(const std::int32_t* quad_x, const std::int32_t* quad_y,
                               std::int32_t point_x, std::int32_t point_y) {
     int counter = 0;
@@ -51,7 +52,8 @@ __device__ bool point_in_quad(const std::int32_t* quad_x, const std::int32_t* qu
 
         if ((v0y <= point_y && vy <= point_y) || (v0y > point_y && vy > point_y) ||
             (v0x < point_x && vx < point_x)) {
-            // 走査線と交わらない辺。ただし頂点や水平な辺の上に乗る場合は内側。
+            // An edge the scanline does not cross. It still counts as inside
+            // when the point lies on a vertex or on a horizontal edge.
             if (point_y == vy &&
                 (point_x == vx || (point_y == v0y && ((v0x <= point_x && point_x <= vx) ||
                                                       (vx <= point_x && point_x <= v0x))))) {
@@ -63,7 +65,7 @@ __device__ bool point_in_quad(const std::int32_t* quad_x, const std::int32_t* qu
                 (static_cast<long long>(point_y - v0y) * static_cast<long long>(vx - v0x)) -
                 (static_cast<long long>(point_x - v0x) * static_cast<long long>(vy - v0y));
         if (distance == 0) {
-            // 辺の上にある。境界は内側として扱う。
+            // On the edge. The boundary counts as inside.
             return true;
         }
         if (vy < v0y) {
@@ -74,7 +76,8 @@ __device__ bool point_in_quad(const std::int32_t* quad_x, const std::int32_t* qu
     return (counter % 2) != 0;
 }
 
-/// buffer を初期化する。候補数は device 上にしかないため上限まで埋める。
+/// Initializes the buffers. The candidate count lives only on the device, so
+/// the whole capacity is filled.
 __global__ void reset_tree_kernel(std::int32_t* parent, std::int32_t* depth, std::int32_t* visited,
                                   int capacity) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -86,11 +89,12 @@ __global__ void reset_tree_kernel(std::int32_t* parent, std::int32_t* depth, std
     visited[index] = 0;
 }
 
-/// 候補ごとに親を決める。1 thread が 1 候補を担当する。
+/// Determines the parent of each candidate. One thread handles one candidate.
 ///
-/// OpenCV は j を i-1 から降順に見て最初に見つかった時点で打ち切る。同じ
-/// 順序で走ることで、原子操作も競合も無しに同じ親が決まる。候補数は統合後
-/// なので多くて数十であり、最悪 O(N^2) でも問題にならない。
+/// OpenCV scans j downward from i-1 and stops at the first hit. Running in the
+/// same order settles on the same parent with no atomics and no contention.
+/// After merging there are at most a few dozen candidates, so O(N^2) in the
+/// worst case is not a problem.
 __global__ void parent_kernel(const DeviceCandidates grouped, std::int32_t* parent,
                               const std::int32_t* count) {
     const int inner = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
@@ -106,8 +110,8 @@ __global__ void parent_kernel(const DeviceCandidates grouped, std::int32_t* pare
         inner_y[corner] = grouped.corner_y_[(corner * grouped.capacity_) + inner];
     }
 
-    // index が小さいほど周長が大きい。降順に見るので、最初に見つかるのは
-    // 自分を囲むもののうち最も内側である。
+    // A smaller index means a larger perimeter. Scanning downward, the first
+    // hit is the innermost of the candidates enclosing this one.
     for (int outer = inner - 1; outer >= 0; --outer) {
         std::int32_t outer_x[kQuadCornerCount];
         std::int32_t outer_y[kQuadCornerCount];
@@ -126,10 +130,10 @@ __global__ void parent_kernel(const DeviceCandidates grouped, std::int32_t* pare
     }
 }
 
-/// 親を辿って段数を伝える。
+/// Propagates the level up through the parents.
 ///
-/// index の降順に 1 つずつ進める。OpenCV も同じ順序であり、順序を変えると
-/// 3 段以上の入れ子で段数が変わる。
+/// Advances one candidate at a time in descending index order. OpenCV uses the
+/// same order; changing it changes the levels for nesting three or more deep.
 __global__ void depth_kernel(const std::int32_t* parent, std::int32_t* depth,
                              const std::int32_t* count) {
     if (threadIdx.x != 0U || blockIdx.x != 0U) {
@@ -148,10 +152,11 @@ __global__ void depth_kernel(const std::int32_t* parent, std::int32_t* depth,
     }
 }
 
-/// 識別の打ち切りが起きる段数を求める。
+/// Determines the level at which identification is cut off.
 ///
-/// OpenCV の while ループをそのまま辿る。到達数の数え方まで同じにする。
-/// 祖先として数えた候補を自分の段でもう一度数える点も含める。
+/// Follows OpenCV's while loop directly, down to how the reached count is
+/// tallied. That includes counting a candidate marked as an ancestor again when
+/// its own level comes up.
 __global__ void suppress_kernel(const std::int32_t* parent, const std::int32_t* depth,
                                 const std::int32_t* ids, std::int32_t* visited,
                                 std::int32_t* stop_depth, std::int32_t* counter,
@@ -171,7 +176,7 @@ __global__ void suppress_kernel(const std::int32_t* parent, const std::int32_t* 
         return;
     }
 
-    // 段数は候補数を超えない。上限を候補数にして必ず有界にする。
+    // The level never exceeds the candidate count. Bounding the loop by that count keeps it finite.
     for (int level = 0; level < total; ++level) {
         __syncthreads();
         if (reached >= total) {
@@ -192,10 +197,11 @@ __global__ void suppress_kernel(const std::int32_t* parent, const std::int32_t* 
             if (ids[v] < 0) {
                 continue;
             }
-            // 識別できた候補の祖先へ印を付ける。既に印があっても辿り続ける。
+            // Mark the ancestors of an identified candidate. Keep walking
+            // even when a mark is already there.
             std::int32_t up = parent[v];
             while (up >= 0) {
-                // 同じ祖先を 2 つの thread が同時に見ても 1 回だけ数える。
+                // Count an ancestor once even when two threads reach it at the same time.
                 if (atomicExch(&visited[up], 1) == 0) {
                     atomicAdd(&reached, 1);
                 }
@@ -205,7 +211,7 @@ __global__ void suppress_kernel(const std::int32_t* parent, const std::int32_t* 
         atomicAdd(&level_size, local_size);
         __syncthreads();
         if (threadIdx.x == 0U) {
-            // 段の候補は識別の成否によらず数える。
+            // Candidates at this level are counted whether or not identification succeeded.
             reached += level_size;
         }
     }

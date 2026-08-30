@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 近接候補の統合を検証する。
+// Verifies the merging of nearby candidates.
 //
-// 二値化 window を変えると同じマーカーから少しずつ違う候補が得られる。
-// どれを残すかで四隅の位置が変わるため、最も周長が大きいものを残すことを
-// 固定する。CPU 基準との既知の違い (数珠つなぎの扱い) も明示的に置く。
+// Varying the binarization window yields slightly different candidates from the same
+// marker. Which one is kept determines the corner positions, so keeping the one with
+// the largest perimeter is pinned down here. The known difference from the CPU
+// reference (how chained candidates are treated) is stated explicitly as well.
 #include "candidate_group.hpp"
 
 #include <gtest/gtest.h>
@@ -35,7 +36,7 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 試験用の候補 1 つ。四隅は軸に平行な正方形として与える。
+/// A single candidate for the tests. Its corners form an axis-aligned square.
 struct InputQuad {
     int x_ = 0;
     int y_ = 0;
@@ -43,14 +44,14 @@ struct InputQuad {
     int label_ = 0;
 };
 
-/// 統合の入力と出力をまとめて扱う。
+/// Holds the input and the output of one merge run together.
 class GroupRun {
 public:
     GroupRun() = default;
     GroupRun(const GroupRun&) = delete;
     GroupRun& operator=(const GroupRun&) = delete;
 
-    /// 候補を device へ載せて統合する。
+    /// Uploads the candidates to the device and merges them.
     bool run(const std::vector<InputQuad>& quads, const DetectorConfig& config) {
         const std::size_t bytes = aruco3cuda::detail::candidate_workspace_bytes(config, 64, 64) +
                                   aruco3cuda::detail::candidate_group_workspace_bytes(config);
@@ -88,7 +89,7 @@ public:
     const std::vector<InputQuad>& results() const { return this->results_; }
 
 private:
-    /// 候補を device の配列へ書き込む。四隅は正方形として展開する。
+    /// Writes the candidates into the device arrays, expanding each into a square.
     static bool upload(const std::vector<InputQuad>& quads,
                        const aruco3cuda::detail::DeviceCandidates& input) {
         const auto count = static_cast<int>(quads.size());
@@ -162,19 +163,20 @@ private:
     int count_ = 0;
 };
 
-/// 候補上限を小さくした設定。試験の確保量を抑える。
+/// Configuration with a small candidate limit, to keep the test allocations small.
 DetectorConfig small_config() {
     DetectorConfig config;
     config.max_candidates_ = 64;
     return config;
 }
 
-// 正常系: 近接する候補は 1 つにまとまり、最も周長が大きいものが残る。
+// Happy path: nearby candidates merge into one, and the largest perimeter survives.
 TEST(CandidateGroupTest, keeps_largest_perimeter_in_group) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 同じマーカーから window 違いで得た 3 つ。辺長がわずかに異なる。
+    // Three candidates from the same marker at different windows. Their edge lengths
+    // differ slightly.
     const std::vector<InputQuad> quads = {{100, 100, 60, 0}, {101, 101, 58, 1}, {99, 99, 62, 2}};
     GroupRun run;
     ASSERT_TRUE(run.run(quads, small_config()));
@@ -183,10 +185,10 @@ TEST(CandidateGroupTest, keeps_largest_perimeter_in_group) {
     EXPECT_EQ(run.results()[0].label_, 2);
 }
 
-// 正常系: 離れた候補はまとまらない。
+// Happy path: distant candidates are not merged.
 TEST(CandidateGroupTest, keeps_distant_candidates_separate) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<InputQuad> quads = {
             {20, 20, 40, 0}, {200, 20, 40, 1}, {20, 200, 40, 2}, {200, 200, 40, 3}};
@@ -195,10 +197,10 @@ TEST(CandidateGroupTest, keeps_distant_candidates_separate) {
     EXPECT_EQ(run.count(), 4);
 }
 
-// 正常系: 複数の group が混在しても、それぞれの代表が残る。
+// Happy path: with several groups present, the representative of each one survives.
 TEST(CandidateGroupTest, handles_multiple_groups) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     const std::vector<InputQuad> quads = {{20, 20, 40, 0},  {21, 21, 38, 1},   {200, 20, 50, 2},
                                           {201, 21, 48, 3}, {110, 200, 44, 4}, {111, 201, 42, 5}};
@@ -210,14 +212,14 @@ TEST(CandidateGroupTest, handles_multiple_groups) {
     for (const InputQuad& item : run.results()) {
         sides.push_back(item.side_);
     }
-    // 各 group で大きい方が残る。並びは周長の降順。
+    // The larger candidate of each group survives, ordered by descending perimeter.
     EXPECT_EQ(sides, (std::vector<int>{50, 44, 40}));
 }
 
-// 境界値: 候補が 1 つならそのまま残る。
+// Boundary case: a single candidate passes through unchanged.
 TEST(CandidateGroupTest, single_candidate_passes_through) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     GroupRun run;
     ASSERT_TRUE(run.run({{50, 50, 40, 7}}, small_config()));
@@ -225,36 +227,38 @@ TEST(CandidateGroupTest, single_candidate_passes_through) {
     EXPECT_EQ(run.results()[0].label_, 7);
 }
 
-// 境界値: 候補が無ければ結果も 0 件になる。
+// Boundary case: with no candidates, the result is empty as well.
 TEST(CandidateGroupTest, empty_input_produces_no_group) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     GroupRun run;
     ASSERT_TRUE(run.run({}, small_config()));
     EXPECT_EQ(run.count(), 0);
 }
 
-// 既知の違い: 数珠つなぎに近接する 3 つは 1 つへまとまる。
+// Known difference: three candidates chained by proximity merge into one.
 //
-// CPU 基準は、既に別々の group へ属している 2 つを統合しない。両端が
-// 直接は近接していないこの配置では、CPU 基準が 2 つ残すのに対し本実装は
-// 1 つにまとめる。差の大きさは CPU 基準との比較で実測している。
+// The CPU reference does not merge two candidates that already belong to different
+// groups. In this arrangement, where the two ends are not directly close to each
+// other, the CPU reference keeps two candidates while this implementation merges them
+// into one. The size of that difference is measured in the comparison against the CPU
+// reference.
 TEST(CandidateGroupTest, known_difference_chained_candidates_merge) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
-    // 隣とは近く、両端どうしは遠い配置。
+    // An arrangement where each neighbor is close but the two ends are far apart.
     const std::vector<InputQuad> quads = {{100, 100, 60, 0}, {112, 100, 60, 1}, {124, 100, 60, 2}};
     GroupRun run;
     ASSERT_TRUE(run.run(quads, small_config()));
     EXPECT_EQ(run.count(), 1);
 }
 
-// 正常系: 同じ入力からは同じ結果が得られる。
+// Happy path: the same input yields the same result.
 TEST(CandidateGroupTest, results_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
     }
     std::vector<InputQuad> quads;
     quads.reserve(24);
@@ -273,7 +277,7 @@ TEST(CandidateGroupTest, results_are_deterministic) {
     }
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure path: nothing runs when the arguments are invalid.
 TEST(CandidateGroupTest, rejects_invalid_arguments) {
     Workspace workspace;
     const DetectorConfig config;

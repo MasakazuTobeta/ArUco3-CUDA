@@ -19,50 +19,50 @@ namespace aruco3cuda::detail {
 namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
-/// 1 隅を担当する block の thread 数。
+/// Thread count of the block that handles one corner.
 ///
-/// 1 反復で触る要素は patch が最大 13x13 = 169、勾配が最大 11x11 = 121 で
-/// ある。169 を 1 巡で覆える最小の warp の倍数にする。
+/// One iteration touches at most 13x13 = 169 patch elements and 11x11 = 121 gradient elements.
+/// This is the smallest multiple of the warp size that covers 169 in a single pass.
 constexpr int kRefineThreads = 192;
-/// 起こす block 数の下限と上限。
+/// Lower and upper bound on the number of blocks launched.
 ///
-/// block 数は「device が同時に走らせられる数」と「仕事の量」の小さい方で
-/// あるべきである。上限は後者で決まる。評価計画の上限であるマーカー 16 枚
-/// = 64 隅を 1 波で覆えばよく、それ以上起こしても隅が無い block が増える
-/// だけである。1 block が共有 memory を約 5.5 KB 使うため、検出が 0 件の
-/// frame でも block 数だけの起動費用を払う。
+/// The block count should be the smaller of "how many the device can run concurrently" and "how
+/// much work there is"; the upper bound comes from the latter. Covering 16 markers = 64 corners,
+/// the upper bound of the evaluation plan, in a single wave is enough, and launching more only
+/// adds blocks with no corner to process. One block consumes about 5.5 KB of shared memory, so
+/// the launch cost of every block is paid even on a frame with no detections.
 constexpr int kMinRefineBlocks = 32;
 constexpr int kMaxRefineBlocks = 64;
-/// OpenCV が cornerSubPix 内で反復回数へ掛ける上限。
+/// Upper bound OpenCV applies to the iteration count inside cornerSubPix.
 constexpr int kMaxIterations = 100;
-/// 窓の半径を切り替える段の大きさ。
+/// Level size at which the window radius switches.
 constexpr int kLargeLevelSidePx = 1080;
-/// 大きい段と小さい段で使う窓の半径。
+/// Window radii used for large and small levels.
 constexpr int kLargeWinRadius = 5;
 constexpr int kSmallWinRadius = 3;
-/// 窓の 1 辺の上限。半径 5 のとき 11。
+/// Upper bound on the window side length. 11 when the radius is 5.
 constexpr int kMaxWinSide = (kLargeWinRadius * 2) + 1;
 
-/// 窓の重みと、そこから決まる寸法。
+/// Window weights and the dimensions derived from them.
 ///
-/// OpenCV は cornerSubPix の中で毎回 exp を評価する。半径は 3 と 5 の
-/// 2 通りしかないため、host で作って値渡しする。
+/// OpenCV evaluates exp inside cornerSubPix on every call. There are only two radii, 3 and 5, so
+/// the weights are built on the host and passed by value.
 struct RefineMask {
     float weight_[kMaxRefinePatchSide * kMaxRefinePatchSide] = {};
     int radius_ = 0;
-    /// 窓の 1 辺。2 * radius_ + 1。
+    /// Window side length. 2 * radius_ + 1.
     int win_side_ = 0;
-    /// 切り出す patch の 1 辺。win_side_ + 2。
+    /// Side length of the patch that is cut out. win_side_ + 2.
     int patch_side_ = 0;
 };
 
-/// 段ごとの窓を 2 通り持つ。
+/// Holds the two window variants used across the levels.
 struct RefineMasks {
     RefineMask small_;
     RefineMask large_;
 };
 
-/// counter の添字。
+/// Counter indices.
 enum RefineCounter : int {
     kRefinedCorners = 0,
     kOutOfImageBreaks = 1,
@@ -71,9 +71,9 @@ enum RefineCounter : int {
     kIterationTotal = 4,
 };
 
-/// OpenCV の cornerSubPix と同じ重みを作る。
+/// Builds the same weights as OpenCV's cornerSubPix.
 ///
-/// zeroZone は Size(-1, -1) で呼ばれるため、中央を 0 にする分岐へは入らない。
+/// zeroZone is passed as Size(-1, -1), so the branch that zeroes out the center is never taken.
 RefineMask make_mask(int radius) {
     RefineMask mask;
     mask.radius_ = radius;
@@ -90,17 +90,17 @@ RefineMask make_mask(int radius) {
     return mask;
 }
 
-/// patch の切り出しに必要な、位置から決まる係数と矩形。
+/// The position-dependent coefficients and rectangle needed to cut out a patch.
 ///
-/// 逐次版が loop の外で 1 度だけ求めていた値をまとめたもの。要素ごとに
-/// 並列で計算するため、すべての thread が同じ値を持つ必要がある。
+/// This bundles the values the sequential version computed once outside the loop. The elements
+/// are computed in parallel, so every thread has to hold the same values.
 struct PatchSetup {
     bool inside_ = false;
     float a_ = 0.0F;
     float b_ = 0.0F;
     int ip_x_ = 0;
     int ip_y_ = 0;
-    // 境界の経路で adjustRect が決める矩形と開始位置。
+    // Rectangle and start position that adjustRect determines on the boundary path.
     long long offset_ = 0;
     int rect_x_ = 0;
     int rect_width_ = 0;
@@ -108,10 +108,10 @@ struct PatchSetup {
     int rect_height_ = 0;
 };
 
-/// getRectSubPix が使う係数と矩形を求める。
+/// Computes the coefficients and the rectangle getRectSubPix uses.
 ///
-/// 内側の経路と境界の経路のどちらへ入るかも、ここで決まる。条件は OpenCV の
-/// getRectSubPix_8u32f の速い経路の条件と同じである。
+/// Whether the interior path or the boundary path is taken is decided here as well. The condition
+/// is the same as the one guarding the fast path of OpenCV's getRectSubPix_8u32f.
 __device__ PatchSetup prepare_patch(std::size_t pitch, int width, int height, float center_x,
                                     float center_y, int patch_side) {
     PatchSetup setup;
@@ -125,19 +125,19 @@ __device__ PatchSetup prepare_patch(std::size_t pitch, int width, int height, fl
     setup.inside_ = setup.ip_x_ >= 0 && (setup.ip_x_ + patch_side) < width && setup.ip_y_ >= 0 &&
                     (setup.ip_y_ + patch_side) < height;
     if (setup.inside_) {
-        // OpenCV は 0 除算を避けるためここで下限を置く。
+        // OpenCV clamps here to avoid a division by zero.
         setup.a_ = fmaxf(setup.a_, 0.0001F);
         return setup;
     }
 
-    // adjustRect と同じ矩形と開始位置を求める。
+    // Compute the same rectangle and start position as adjustRect.
     //
-    // このうち 3 つの分岐は cornerSubPix からは到達しない。四隅が画像の内側に
-    // あることが呼出前に確かめられているため、patch の原点が画像を完全に
-    // 外れることが無い。具体的には `rect_x > patch_side` (原点が左へ 13 px
-    // より遠い)、`rect_width < 0` と `rect_height < 0` (原点が右または下へ
-    // はみ出しきる) である。実際に変異を入れても test は落ちない。
-    // adjustRect の写しとして残すが、test で固定できないことを明記する。
+    // Three of these branches are unreachable from cornerSubPix. The corners are checked to lie
+    // inside the image before the call, so the patch origin never falls completely outside it.
+    // Concretely those branches are `rect_x > patch_side` (the origin is more than 13 px to the
+    // left), `rect_width < 0` and `rect_height < 0` (the origin lies entirely past the right or
+    // bottom edge). Mutating them does not make any test fail. They are kept as a faithful copy
+    // of adjustRect, but note explicitly that no test pins them down.
     if (setup.ip_x_ >= 0) {
         setup.offset_ += setup.ip_x_;
     } else {
@@ -174,11 +174,12 @@ __device__ PatchSetup prepare_patch(std::size_t pitch, int width, int height, fl
     return setup;
 }
 
-/// patch の 1 要素を求める。
+/// Computes one element of the patch.
 ///
-/// 逐次版と**同じ式、同じ被演算子の順序**で書く。内側の経路では 1 行を
-/// 左から右へ辿るが、持ち回りの深さは 1 なので要素ごとの閉じた式になる。
-/// 境界の経路では行の進み方が矩形に依存するため、開始位置を i から直接求める。
+/// Written with the **same expression and the same operand order** as the sequential version. The
+/// interior path walks a row from left to right, but the carried state is only one element deep,
+/// so the expression stays closed per element. On the boundary path the row advance depends on
+/// the rectangle, so the start position is derived directly from i.
 __device__ float patch_element(const std::uint8_t* image, std::size_t pitch, const PatchSetup& s,
                                int patch_side, int row, int column) {
     const float a = s.a_;
@@ -194,8 +195,8 @@ __device__ float patch_element(const std::uint8_t* image, std::size_t pitch, con
         const std::uint8_t* next = source + pitch;
         const float t = (a12 * static_cast<float>(source[column + 1])) +
                         (a22 * static_cast<float>(next[column + 1]));
-        // previous は 1 つ前の t に scale を掛けたものである。column 0 だけ
-        // 別の式になる。
+        // previous is the previous t multiplied by scale. Only column 0 uses a different
+        // expression.
         const float previous =
                 (column == 0)
                         ? ((1.0F - a) * ((b1 * static_cast<float>(source[0])) +
@@ -214,15 +215,15 @@ __device__ float patch_element(const std::uint8_t* image, std::size_t pitch, con
     const float b1 = 1.0F - b;
     const float b2 = b;
 
-    // 逐次版は rect_y から rect_height の行でだけ source を 1 行進める。
-    // 進んだ回数を row から直接数える。
+    // The sequential version advances source by one row only for the rows between rect_y and
+    // rect_height. Count how many times it advanced directly from row.
     const int advanced = max(0, min(row, s.rect_height_) - s.rect_y_);
     const std::uint8_t* source = image + s.offset_ + (static_cast<long long>(advanced) * pitch);
     const std::uint8_t* second =
             (row < s.rect_y_ || row >= s.rect_height_) ? source : source + pitch;
 
-    // 逐次版の書き込み順は 左端の埋め、右端の埋め、双一次である。後の書き込みが
-    // 残るため、判定は右端から順に行う。
+    // The sequential version writes in the order left-edge fill, right-edge fill, bilinear. The
+    // later write is the one that survives, so the checks run starting from the right edge.
     if (column >= s.rect_width_) {
         return (b1 * static_cast<float>(source[s.rect_width_])) +
                (b2 * static_cast<float>(second[s.rect_width_]));
@@ -237,10 +238,11 @@ __device__ float patch_element(const std::uint8_t* image, std::size_t pitch, con
            (static_cast<float>(second[column + 1]) * a22);
 }
 
-/// block 内で共有する作業領域。
+/// Scratch space shared within a block.
 struct RefineShared {
     float patch_[kMaxRefinePatchSide * kMaxRefinePatchSide];
-    // 累積する 5 つの量を要素ごとに置く。累積の順序は添字の昇順を保つ。
+    // The five accumulated quantities, stored per element. The accumulation keeps ascending
+    // index order.
     double part_[5][kMaxWinSide * kMaxWinSide];
     double sum_[5];
     float x_;
@@ -249,13 +251,14 @@ struct RefineShared {
     int iteration_;
 };
 
-/// cv::cornerSubPix を 1 隅について再現する。1 block が 1 隅を担当する。
+/// Reproduces cv::cornerSubPix for one corner. One block handles one corner.
 ///
-/// 累積される 5 つの量は要素ごとに閉じており、要素間に依存が無い。倍精度の
-/// 演算は被演算子の決定的な関数なので、どの thread が計算しても bit 表現は
-/// 変わらない。**変えられないのは累積の順序だけ**であり、そこは添字の昇順を
-/// 保って 5 本の鎖として足す。5 本は source でも独立な 5 変数であり、
-/// 別の lane へ割っても同一の和の中の順序は変わらない。
+/// The five accumulated quantities are closed per element and carry no dependency between
+/// elements. Double-precision arithmetic is a deterministic function of its operands, so the bit
+/// pattern is the same no matter which thread computes it. **The only thing that must not change
+/// is the order of accumulation**, so the sums are built as five chains that keep ascending index
+/// order. Those five are five independent variables in the source as well, and spreading them
+/// over different lanes does not change the order within any single sum.
 __device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitch, int width,
                                      int height, const RefineMask& mask, int max_iterations,
                                      double eps, RefineShared& shared, std::int32_t* counters) {
@@ -270,8 +273,8 @@ __device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitc
     if (tid == 0) {
         shared.stop_ = 0;
         shared.iteration_ = 0;
-        // 画像の外から始まる場合、CPU 基準は例外を投げる。GPU では投げられない
-        // ため、補正せずに元の位置を残し counter で数える。
+        // The CPU reference throws when the starting point lies outside the image. A GPU
+        // cannot throw, so the original position is kept unrefined and the case is counted.
         if (!(start_x >= 0.0F && start_x < static_cast<float>(width) && start_y >= 0.0F &&
               start_y < static_cast<float>(height))) {
             atomicAdd(&counters[kOutOfImageBreaks], 1);
@@ -292,8 +295,8 @@ __device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitc
         }
         __syncthreads();
 
-        // 走査は patch の 1 行 1 列だけ内側から始める。添字の対応は逐次版と
-        // 同じで、k = i * win_side + j である。
+        // The traversal starts one row and one column inside the patch. The index mapping is
+        // the same as in the sequential version: k = i * win_side + j.
         for (int k = tid; k < element_count; k += kRefineThreads) {
             const int i = k / win_side;
             const int j = k % win_side;
@@ -340,7 +343,8 @@ __device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitc
                                                         (c * scale * bb1) - (b * scale * bb2));
                 const float next_y = static_cast<float>(static_cast<double>(shared.y_) -
                                                         (b * scale * bb1) + (a * scale * bb2));
-                // 誤差は単精度で求めてから倍精度へ広げる。CPU 基準と同じ順序。
+                // The error is computed in single precision and then widened to double, the
+                // same order as the CPU reference.
                 const float dx = next_x - shared.x_;
                 const float dy = next_y - shared.y_;
                 const double error = static_cast<double>((dx * dx) + (dy * dy));
@@ -366,7 +370,8 @@ __device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitc
 
     if (tid == 0) {
         atomicAdd(&counters[kIterationTotal], shared.iteration_);
-        // 初期位置から窓の半径より遠ければ、収束が悪いとみなして戻す。
+        // Drifting farther from the initial position than the window radius counts as poor
+        // convergence, so the corner is reset.
         if (fabsf(shared.x_ - start_x) > static_cast<float>(mask.radius_) ||
             fabsf(shared.y_ - start_y) > static_cast<float>(mask.radius_)) {
             atomicAdd(&counters[kPoorConvergence], 1);
@@ -377,17 +382,17 @@ __device__ void corner_sub_pix_block(const std::uint8_t* image, std::size_t pitc
     __syncthreads();
 }
 
-/// 段を登りながら四隅を補正する。1 block が 1 隅を担当する。
+/// Refines the four corners while climbing the levels. One block handles one corner.
 __global__ void refine_kernel(PyramidRef pyramid, DeviceDetections detections, RefineMasks masks,
                               float scale_init, int start_level, int max_iterations, double eps,
                               std::int32_t* counters) {
     const int total = *detections.count_ * kQuadCornerCount;
     __shared__ RefineShared shared;
 
-    // block を隅の上限だけ起こすと、検出が数件でも数千 block を起動すること
-    // になる。共有 memory を使うため 1 SM に載る block 数が限られ、起動が
-    // 波に分かれて待ち時間になる。Jetson AGX Orin では検出 0 件でも 7 倍
-    // 遅くなった。控えめな block 数で起こして隅を跨ぎながら走る。
+    // Launching one block per corner slot would start thousands of blocks even when there are
+    // only a few detections. Shared memory limits how many blocks fit on one SM, so the launch
+    // splits into waves and turns into waiting time; a Jetson AGX Orin was 7 times slower even
+    // with no detections. Launch a modest number of blocks instead and stride across corners.
     for (int index = static_cast<int>(blockIdx.x); index < total;
          index += static_cast<int>(gridDim.x)) {
         const int detection = index / kQuadCornerCount;
@@ -400,7 +405,7 @@ __global__ void refine_kernel(PyramidRef pyramid, DeviceDetections detections, R
         if (threadIdx.x == 0U) {
             float x = detections.corner_x_[slot];
             float y = detections.corner_y_[slot];
-            // segmentation の座標から開始段の座標へ移す。
+            // Move from segmentation coordinates to the coordinates of the starting level.
             if (scale_init != 1.0F) {
                 x *= scale_init;
                 y *= scale_init;
@@ -412,7 +417,7 @@ __global__ void refine_kernel(PyramidRef pyramid, DeviceDetections detections, R
 
         for (int level = start_level - 1; level >= 0; --level) {
             if (threadIdx.x == 0U) {
-                // 段を 1 つ下げると解像度は 2 倍になる。
+                // Dropping one level down doubles the resolution.
                 shared.x_ *= 2.0F;
                 shared.y_ *= 2.0F;
             }
@@ -463,21 +468,22 @@ Status reserve_corner_refine(const DetectorConfig& config, Workspace& workspace,
 }
 
 int refine_block_count(int multi_processor_count) {
-    // SM 数の 2 倍を目安にする。SM が少ない機では上限 64 より減り、起動の
-    // 費用が下がる。
+    // Twice the SM count is the target. On a machine with few SMs this lands below the cap of
+    // 64 and the launch cost drops.
     //
-    // 同一 session で交互に測った結果 (別 session の比較は clock の状態差に
-    // 埋もれて意味を成さない):
-    //   Jetson AGX Orin (16 SM -> 32 block) 検出 0 件 -6.0%、
-    //     マーカー 4 枚 -3.3%、16 枚 -1.3%
-    //   DGX Spark (20 SM -> 40 block) 差は雑音の中。8 回反復でも中央値の
-    //     向きが run ごとに入れ替わり、各版の分布 (0.59 から 0.71 ms) が
-    //     版どうしの差より広い
-    //   RTX 5070 Ti (70 SM) 上限 64 に張り付くため変化しない
+    // Measured by alternating the two versions within one session (comparing across sessions is
+    // meaningless: the difference drowns in the state of the clocks):
+    //   Jetson AGX Orin (16 SM -> 32 blocks): no detections -6.0%,
+    //     4 markers -3.3%, 16 markers -1.3%
+    //   DGX Spark (20 SM -> 40 blocks): the difference sits inside the noise. Even over 8
+    //     repetitions the direction of the median flips from run to run, and each version's
+    //     spread (0.59 to 0.71 ms) is wider than the gap between the versions
+    //   RTX 5070 Ti (70 SM): pinned to the cap of 64, so nothing changes
     //
-    // 効果は控えめだが、固定値をやめること自体に意味がある。隅の上限 (4096)
-    // をそのまま block 数にしていたとき Jetson で 7 倍遅くなった。SM 数の
-    // 桁が違う機を足したときに同じ事故が起きなくなる。
+    // The gain is modest, but dropping the fixed value matters in itself. When the corner cap
+    // (4096) was used directly as the block count, the Jetson was 7 times slower. The same
+    // accident will not repeat when a machine with an order-of-magnitude different SM count is
+    // added.
     const long long doubled = 2LL * static_cast<long long>(multi_processor_count);
     if (doubled < kMinRefineBlocks) {
         return kMinRefineBlocks;
@@ -513,7 +519,8 @@ Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
 
     const auto scale_init = static_cast<float>(pyramid.width_[plan.closest_level_index_]) /
                             static_cast<float>(plan.segmentation_width_px_);
-    // OpenCV は反復回数を 1 以上 100 以下に丸め、収束の閾値を 2 乗して使う。
+    // OpenCV clamps the iteration count to between 1 and 100 and squares the convergence
+    // threshold before use.
     int max_iterations = config.corner_refinement_max_iterations_;
     max_iterations = (max_iterations < 1) ? 1 : max_iterations;
     max_iterations = (max_iterations > kMaxIterations) ? kMaxIterations : max_iterations;
@@ -531,9 +538,10 @@ Status refine_corners_async(const PyramidRef& pyramid, const ScalePlan& plan,
         return status;
     }
 
-    // 1 block が 1 隅を担当し、block 数を超える隅は跨ぎながら処理する。
-    // 対象機の SM 数と、共有 memory から決まる 1 SM あたりの block 数を
-    // 踏まえ、評価計画の上限 (マーカー 16 枚 = 64 隅) を 1 波で覆える数にする。
+    // One block handles one corner, and corners beyond the block count are processed by
+    // striding. Given the SM count of the target machines and the number of blocks per SM that
+    // the shared memory allows, the count is chosen to cover the upper bound of the evaluation
+    // plan (16 markers = 64 corners) in a single wave.
     if (block_count < 1) {
         return Status::kInvalidArgument;
     }

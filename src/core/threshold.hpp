@@ -15,99 +15,109 @@
 
 namespace aruco3cuda::detail {
 
-/// 適応的二値化の出力と作業領域。
+/// Output and scratch space of the adaptive threshold.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。この構造体は
-///         参照のみを持ち、複製も解放も行わない。workspace を reset() または
-///         破棄すると全ての pointer が無効になる。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。内容は発行済みの
-///           kernel が完了するまで確定しない。
+/// Ownership: the regions all of the pointers refer to are owned by the
+///            workspace. This struct holds references only; it neither copies nor
+///            frees. Every pointer becomes invalid once the workspace is reset()
+///            or destroyed.
+/// Synchronization: a plain set of references, so it carries no synchronization
+///                  point. The contents are not settled until the already-issued
+///                  kernels complete.
 ///
-/// 入力例: 既定設定と 427x240 の segmentation 画像
-/// 出力例: window_count_ = 3、window_sizes_px_ = {3, 13, 23}
+/// Example input: the default configuration and a 427x240 segmentation image
+/// Example output: window_count_ = 3, window_sizes_px_ = {3, 13, 23}
 struct ThresholdBuffers {
-    /// window ごとの二値化結果。index は window_sizes_px_ に対応する。
+    /// Threshold result per window. The index corresponds to window_sizes_px_.
     ImagePlaneU8 binary_[kMaxAdaptiveThresholdWindows];
     int window_count_ = 0;
     int window_sizes_px_[kMaxAdaptiveThresholdWindows] = {};
-    /// 行方向の合計を保持する作業領域。window ごとに使い回す。
+    /// Scratch space holding the row-wise sums. Reused across windows.
     std::int32_t* row_sums_ = nullptr;
     std::size_t row_sums_pitch_bytes_ = 0;
     int width_px_ = 0;
     int height_px_ = 0;
 };
 
-/// 設定から走査する window の一覧を求める。
+/// Derives the list of windows to scan from the configuration.
 ///
-/// OpenCV は偶数の window を奇数へ切り上げる。走査数は切り上げ前の値から
-/// 決まるため、同じ window size が重複することがある。OpenCV はその場合も
-/// 重複したまま処理するため、こちらも取り除かない。
+/// OpenCV rounds an even window up to an odd one. The number of scans is
+/// determined by the value before that rounding, so the same window size can
+/// appear more than once. OpenCV processes the duplicates as they are, so they
+/// are not removed here either.
 ///
-/// @param config 検出設定。
-/// @param out_sizes 成功時に window size を格納する。nullptr は不可。
-/// @param capacity out_sizes の要素数。
-/// @param out_count 成功時に window 数を格納する。nullptr は不可。
-/// @return kOk、または kInvalidArgument、kInvalidConfig。
+/// @param config Detection configuration.
+/// @param out_sizes Receives the window sizes on success. Must not be nullptr.
+/// @param capacity Element count of out_sizes.
+/// @param out_count Receives the window count on success. Must not be nullptr.
+/// @return kOk, or kInvalidArgument, kInvalidConfig.
 ///
-/// 所有権: 引数の領域を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains none of the regions passed as arguments.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 既定設定 (min 3、max 23、step 10)
-/// 出力例: out_count = 3、out_sizes = {3, 13, 23}
+/// Example input: the default configuration (min 3, max 23, step 10)
+/// Example output: out_count = 3, out_sizes = {3, 13, 23}
 Status threshold_window_sizes(const DetectorConfig& config, int* out_sizes, int capacity,
                               int* out_count);
 
-/// 必要な workspace の容量を返す。
+/// Returns the required workspace capacity.
 ///
-/// @param config 検出設定。
-/// @param width_px segmentation 画像の幅。
-/// @param height_px segmentation 画像の高さ。
-/// @return 必要な byte 数。桁溢れや設定不正なら 0。
+/// @param config Detection configuration.
+/// @param width_px Width of the segmentation image.
+/// @param height_px Height of the segmentation image.
+/// @return Required byte count. 0 on overflow or an invalid configuration.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: retains no resource.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 既定設定と 427x240
-/// 出力例: 二値化 3 枚と行合計 1 枚を収める byte 数
+/// Example input: the default configuration and 427x240
+/// Example output: the byte count that holds 3 binary planes and 1 row-sum plane
 std::size_t threshold_workspace_bytes(const DetectorConfig& config, int width_px, int height_px);
 
-/// workspace から二値化用の領域を切り出す。
+/// Carves the threshold regions out of the workspace.
 ///
-/// @param config 検出設定。
-/// @param width_px segmentation 画像の幅。1 以上。
-/// @param height_px segmentation 画像の高さ。1 以上。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer 一式を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param config Detection configuration.
+/// @param width_px Width of the segmentation image. At least 1.
+/// @param height_px Height of the segmentation image. At least 1.
+/// @param workspace Source of the carve-out. Owned by the caller.
+/// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @return kOk. kInvalidConfig when the capacity is insufficient,
+///         kInvalidArgument when an argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the carved-out regions stay owned by the workspace.
+/// Synchronization: host only, so it carries no synchronization point.
 ///
-/// 入力例: 既定設定と 427x240 と十分な容量の workspace
-/// 出力例: binary_ に 3 枚分の pointer が入る
+/// Example input: the default configuration, 427x240, and a workspace with
+///                sufficient capacity
+/// Example output: binary_ receives pointers for 3 planes
 Status reserve_threshold(const DetectorConfig& config, int width_px, int height_px,
                          Workspace& workspace, ThresholdBuffers* out);
 
-/// 適応的二値化を実行する。
+/// Runs the adaptive threshold.
 ///
-/// OpenCV の `adaptiveThreshold` を `ADAPTIVE_THRESH_MEAN_C` と
-/// `THRESH_BINARY_INV` で呼んだ場合と同じ結果を目指す。平均は
-/// `boxFilter` を正規化ありで適用したものであり、境界は BORDER_REPLICATE、
-/// 判定は (画素 - 平均) <= -floor(定数) で 255、そうでなければ 0 とする。
+/// Aims for the same result as calling OpenCV `adaptiveThreshold` with
+/// `ADAPTIVE_THRESH_MEAN_C` and `THRESH_BINARY_INV`. The mean is `boxFilter`
+/// applied with normalization, the border is BORDER_REPLICATE, and the test
+/// yields 255 when (pixel - mean) <= -floor(constant) and 0 otherwise.
 ///
-/// @param segmentation 入力画像。reserve_threshold と同じ寸法である必要がある。
-/// @param buffers reserve_threshold が返した buffer 一式。nullptr は不可。
-/// @param config 検出設定。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param segmentation Input image. Must have the same size as passed to
+///                     reserve_threshold.
+/// @param buffers The set of buffers returned by reserve_threshold. Must not be
+///                nullptr.
+/// @param config Detection configuration.
+/// @param stream Stream to issue on. Pass nullptr to use the default stream.
+/// @return kOk, or kInvalidArgument, kCudaError.
 ///
-/// 所有権: buffers が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
-///           window ごとに行合計の作業領域を使い回すため、同じ stream 内で
-///           順に実行される。複数 stream へ分けるには作業領域を分ける必要がある。
+/// Ownership: the regions buffers points at stay owned by the workspace.
+/// Synchronization: only issues kernels on the stream and performs no host
+///                  synchronization. The row-sum scratch space is reused across
+///                  windows, so the windows run in order within the same stream.
+///                  Splitting them across several streams would require separate
+///                  scratch space.
 ///
-/// 入力例: 427x240 の segmentation 画像と既定設定
-/// 出力例: binary_[0..2] が window 3、13、23 の二値化結果で埋まる
+/// Example input: a 427x240 segmentation image and the default configuration
+/// Example output: binary_[0..2] are filled with the threshold results for
+///                 windows 3, 13, and 23
 Status build_threshold_async(const ImageViewU8& segmentation, ThresholdBuffers* buffers,
                              const DetectorConfig& config, cudaStream_t stream);
 

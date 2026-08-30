@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   DGX Spark、Jetson Orin、RTX Blackwell の 3 profile を同じ構成で起動する。
+# Purpose:
+#   Start the three profiles - DGX Spark, Jetson Orin, and RTX Blackwell - with
+#   the same configuration.
 #
-# CUDA Toolkit の供給方式:
-#   この file は pinned mode を既定とする。必要な CUDA package を image へ
-#   固定して含めるため、image が self-contained になり、測定結果の再現性が
-#   host の CUDA 更新に影響されない。
+# How the CUDA Toolkit is supplied:
+#   This file defaults to pinned mode. The required CUDA packages are pinned into
+#   the image, which makes the image self-contained, so the reproducibility of
+#   the measurement results is unaffected by CUDA updates on the host.
 #
-#   host から mount する mode を使う場合は compose.mounted.yaml を重ねる。
+#   To use the mode that mounts the toolkit from the host, overlay
+#   compose.mounted.yaml.
 #
-# 使用方法:
+# Usage:
 #   docker compose -f docker/compose.yaml build dgx-spark
 #   docker compose -f docker/compose.yaml run --rm dgx-spark verify-environment.sh
 #   docker compose -f docker/compose.yaml run --rm dgx-spark
@@ -22,22 +24,26 @@ name: aruco3-cuda
 x-common: &common
   runtime: nvidia
   working_dir: /workspace
-  # host の user で実行し、bind mount した repository へ root 所有の file を
-  # 作らない。container 内に対応する user は無いが、build と test には支障ない。
+  # Run as the host user so that no root-owned files are created in the
+  # bind-mounted repository. There is no matching user inside the container, but
+  # that does not hinder building or testing.
   user: "${ARUCO3_UID:-1000}:${ARUCO3_GID:-1000}"
   environment:
     NVIDIA_VISIBLE_DEVICES: all
     NVIDIA_DRIVER_CAPABILITIES: compute,utility
     ARUCO3_VERIFY_ON_START: "${ARUCO3_VERIFY_ON_START:-0}"
-    # 対応する user が居ないため HOME が未定義になる。tool の cache 書き込み先を与える。
+    # With no matching user, HOME would be undefined. Give the tools somewhere to
+    # write their caches.
     HOME: /tmp
-  # benchmark 時に測定条件を固定するため、既定の制限を外す。
+  # Lift the default limits so the measurement conditions stay fixed during
+  # benchmarking.
   ulimits:
     memlock: -1
     stack: 67108864
 
 services:
-  # DGX Spark GB10 (Blackwell, sm_121)。開発と解析の主環境。
+  # DGX Spark GB10 (Blackwell, sm_121). The primary environment for development
+  # and analysis.
   dgx-spark:
     <<: *common
     build:
@@ -56,10 +62,11 @@ services:
       - ..:/workspace
       - dgx-opencv-cuda:/opt/opencv-cuda
 
-  # Jetson Orin (Ampere, sm_87)。実運用を想定した遅延・電力評価環境。
-  # pinned mode では CUDA を含む l4t-jetpack を base image に使う。
-  # install-cuda-toolkit.sh は base image に CUDA がある場合 install を省略する。
-  # base image は実機の JetPack へ合わせて .env で上書きすること。
+  # Jetson Orin (Ampere, sm_87). The environment for latency and power
+  # evaluation under conditions close to deployment.
+  # In pinned mode the base image is l4t-jetpack, which already contains CUDA.
+  # install-cuda-toolkit.sh skips the installation when the base image has CUDA.
+  # Override the base image in .env to match the JetPack on the actual device.
   jetson-orin:
     <<: *common
     build:
@@ -72,36 +79,39 @@ services:
         ARUCO3_CUDA_MODE: "${ARUCO3_CUDA_MODE:-pinned}"
         INSTALL_DEV_TOOLS: "0"
     image: aruco3-cuda:jetson-orin
-    # Jetson の Tegra device node は root:video (一部は root:debug) の 0660 である。
-    # host の user は video に属するが、container の user には補助グループが
-    # 引き継がれない。付与しないと cudaGetDeviceCount が
-    # 「NvRmMemInitNvmap failed with Permission denied」で失敗する。
-    # GID は host 依存のため .env で上書きできるようにする。
+    # On Jetson the Tegra device nodes are root:video (some are root:debug) with
+    # mode 0660. The host user belongs to video, but supplementary groups are not
+    # carried over to the container user. Without granting them,
+    # cudaGetDeviceCount fails with "NvRmMemInitNvmap failed with Permission
+    # denied". The GIDs depend on the host, so allow .env to override them.
     group_add:
       - "${ARUCO3_JETSON_VIDEO_GID:-44}"
       - "${ARUCO3_JETSON_DEBUG_GID:-995}"
     volumes:
       - ..:/workspace
       - jetson-opencv-cuda:/opt/opencv-cuda
-      # 評価計画が測定条件として要求する power mode と L4T version の取得元。
-      # nvpmodel の binary は container へ入らないため状態 file を直接読む。
-      # いずれも world-readable であり read-only で mount する。
+      # Sources for the power mode and L4T version that the evaluation plan
+      # requires as measurement conditions. The nvpmodel binary is not present in
+      # the container, so the state files are read directly. All of them are
+      # world-readable and are mounted read-only.
       - ${ARUCO3_JETSON_L4T_RELEASE:-/etc/nv_tegra_release}:/etc/nv_tegra_release:ro
       - ${ARUCO3_JETSON_NVPMODEL_STATE:-/var/lib/nvpmodel}:/var/lib/nvpmodel:ro
       - ${ARUCO3_JETSON_NVPMODEL_CONF:-/etc/nvpmodel.conf}:/etc/nvpmodel.conf:ro
-      # device tree は Docker が /sys/firmware を mask するため直接読めない。
-      # 基板名だけを個別に mount する。
+      # The device tree cannot be read directly because Docker masks
+      # /sys/firmware. Mount just the board name separately.
       - ${ARUCO3_JETSON_MODEL_FILE:-/sys/firmware/devicetree/base/model}:/etc/aruco3cuda-platform-model:ro
 
-  # RTX Blackwell (GB203, sm_120)。x86_64 の discrete GPU 環境。
+  # RTX Blackwell (GB203, sm_120). A discrete GPU environment on x86_64.
   #
-  # 既存 2 profile はいずれも統合 GPU であり、host と device が同一物理 memory を
-  # 共有する。評価計画は「統合 GPU の結果は discrete GPU へ一般化できない」と
-  # 明記しており、その制約を実測で埋めるための profile である。転送費用が
-  # 効くため、memory 種別ごとの差が初めて意味を持つ。
+  # Both existing profiles use integrated GPUs, where host and device share the
+  # same physical memory. The evaluation plan states explicitly that results from
+  # an integrated GPU do not generalize to a discrete GPU, and this profile
+  # exists to close that gap with real measurements. Transfer cost matters here,
+  # so the differences between memory modes become meaningful for the first time.
   #
-  # base image と CUDA package は dgx-spark と同一にする。container 側を
-  # 揃えておけば、両者の差は hardware の差だけになる。
+  # The base image and the CUDA packages are identical to dgx-spark. With the
+  # container side aligned, the only difference between the two is the
+  # hardware.
   rtx-blackwell:
     <<: *common
     build:
@@ -121,8 +131,9 @@ services:
       - rtx-opencv-cuda:/opt/opencv-cuda
 
 volumes:
-  # CUDA 対応 OpenCV の install 先。既定 image の OpenCV とは分けて保持する。
-  # この volume へ書き込む build-opencv.sh --with-cuda は --user root で実行する。
+  # Install location for the CUDA-enabled OpenCV, kept separate from the OpenCV
+  # in the default image. build-opencv.sh --with-cuda, which writes to this
+  # volume, must be run with --user root.
   dgx-opencv-cuda:
   jetson-opencv-cuda:
   rtx-opencv-cuda:

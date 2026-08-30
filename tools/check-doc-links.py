@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""文書中の相対 link が実在する file を指すかを検査する。
+"""Check that the relative links in the documents point at files that exist.
 
-文書を整理すると link は必ず壊れる。壊れた link は読者を行き止まりへ導き、
-文書全体の信頼性を落とすため、CI で機械的に止める。
+Reorganizing the documents inevitably breaks links. A broken link leads the reader
+into a dead end and erodes trust in the documentation as a whole, so CI stops it
+mechanically.
 
-外部 URL は対象外とする。到達性の検査は network の状態に依存し、CI を
-不安定にするためである。
+External URLs are out of scope. Checking their reachability depends on the state of
+the network and would make CI flaky.
 
-使用方法:
+Usage:
 
     tools/check-doc-links.py [root]
 
-戻り値:
-    0  壊れた link が無い
-    1  壊れた link がある
+Return value:
+    0  no broken links
+    1  at least one broken link
 """
 import os
 import re
@@ -54,8 +55,8 @@ def main() -> int:
                 broken.append((path, line, target))
 
     for path, line, target in broken:
-        print(f"{path}:{line}: 参照先が存在しない: {target}")
-    print(f"相対 link {checked} 件を検査、壊れた link {len(broken)} 件")
+        print(f"{path}:{line}: link target does not exist: {target}")
+    print(f"checked {checked} relative links, {len(broken)} broken")
     return 1 if broken else 0
 
 

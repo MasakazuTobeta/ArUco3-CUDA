@@ -19,7 +19,7 @@ namespace {
 
 constexpr std::size_t kPlaneAlignment = 256U;
 
-/// BORDER_REPLICATE の index 制限。端の画素をそのまま繰り返す。
+/// BORDER_REPLICATE index clamp. Repeats the edge pixel as is.
 __device__ inline int replicate(int index, int size) {
     if (index < 0) {
         return 0;
@@ -30,14 +30,16 @@ __device__ inline int replicate(int index, int size) {
     return index;
 }
 
-/// 行方向の合計を求める。
+/// Computes the row-wise sums.
 ///
-/// thread と data の対応:
-///   thread (x, y) が row_sums[y][x] だけを書き込む。入力は同じ行の
-///   x-radius から x+radius を読む。書き込み先が重複しないため競合はない。
-/// 境界条件:
-///   出力範囲外の thread は何もしない。行内の参照は BORDER_REPLICATE で
-///   端の画素を繰り返す。合計は最大 255 * 4096 であり int に収まる。
+/// Thread-to-data mapping:
+///   Thread (x, y) writes row_sums[y][x] only. It reads x-radius through
+///   x+radius of the same input row. Since destinations never overlap, there is
+///   no race.
+/// Boundary conditions:
+///   Threads outside the output extent do nothing. Reads within the row repeat
+///   the edge pixel with BORDER_REPLICATE. The sum is at most 255 * 4096, which
+///   fits in an int.
 __global__ void row_sum_kernel(const std::uint8_t* __restrict__ src, std::size_t src_pitch,
                                int width, int height, std::int32_t* __restrict__ row_sums,
                                std::size_t row_sums_pitch, int radius) {
@@ -57,18 +59,20 @@ __global__ void row_sum_kernel(const std::uint8_t* __restrict__ src, std::size_t
     destination[x] = sum;
 }
 
-/// 列方向の合計から平均を求め、閾値判定を行う。
+/// Derives the mean from the column-wise sums and applies the threshold test.
 ///
-/// thread と data の対応:
-///   thread (x, y) が出力の 1 画素だけを書き込む。row_sums の同じ列の
-///   y-radius から y+radius を読む。書き込み先が重複しないため競合はない。
-/// 境界条件:
-///   出力範囲外の thread は何もしない。列の参照は BORDER_REPLICATE で
-///   端の行を繰り返す。合計は最大 255 * 4096 * 4096 であり int の範囲を
-///   超え得るため、window 数の上限と画像寸法の上限で抑える。
-/// 丸め:
-///   OpenCV の boxFilter は正規化した値を saturate_cast<uchar> で丸める。
-///   これは最近接偶数丸めであるため __double2int_rn を使う。
+/// Thread-to-data mapping:
+///   Thread (x, y) writes exactly one output pixel. It reads y-radius through
+///   y+radius of the same row_sums column. Since destinations never overlap,
+///   there is no race.
+/// Boundary conditions:
+///   Threads outside the output extent do nothing. Reads down the column repeat
+///   the edge row with BORDER_REPLICATE. The sum is at most 255 * 4096 * 4096,
+///   which can exceed the range of an int, so it is held in check by the upper
+///   bounds on the window count and on the image dimensions.
+/// Rounding:
+///   OpenCV boxFilter rounds the normalized value with saturate_cast<uchar>.
+///   That rounds half to even, so __double2int_rn is used here.
 __global__ void column_threshold_kernel(const std::uint8_t* __restrict__ src, std::size_t src_pitch,
                                         const std::int32_t* __restrict__ row_sums,
                                         std::size_t row_sums_pitch, std::uint8_t* __restrict__ dst,
@@ -92,7 +96,7 @@ __global__ void column_threshold_kernel(const std::uint8_t* __restrict__ src, st
 
     const int value = static_cast<int>(
             src[static_cast<std::size_t>(y) * src_pitch + static_cast<std::size_t>(x)]);
-    // OpenCV の THRESH_BINARY_INV は (画素 - 平均) <= -idelta で maxval を返す。
+    // OpenCV THRESH_BINARY_INV returns maxval when (pixel - mean) <= -idelta.
     const std::uint8_t output = ((value - mean) <= -idelta) ? 255U : 0U;
     dst[static_cast<std::size_t>(y) * dst_pitch + static_cast<std::size_t>(x)] = output;
 }
@@ -159,7 +163,7 @@ Status threshold_window_sizes(const DetectorConfig& config, int* out_sizes, int 
     for (int i = 0; i < count; ++i) {
         int window = config.adaptive_thresh_win_size_min_px_ +
                      i * config.adaptive_thresh_win_size_step_px_;
-        // OpenCV の _threshold は偶数の window を奇数へ切り上げる。
+        // OpenCV _threshold rounds an even window up to an odd one.
         if (window % 2 == 0) {
             ++window;
         }
@@ -242,7 +246,7 @@ Status build_threshold_async(const ImageViewU8& segmentation, ThresholdBuffers* 
         segmentation.height_px_ != buffers->height_px_) {
         return Status::kInvalidArgument;
     }
-    // OpenCV の THRESH_BINARY_INV は定数を切り捨てて整数化する。
+    // OpenCV THRESH_BINARY_INV truncates the constant to an integer.
     const int idelta = static_cast<int>(std::floor(config.adaptive_thresh_constant_));
     const dim3 block = block_dim_of(config);
     const dim3 grid = grid_dim_for(buffers->width_px_, buffers->height_px_, block);
@@ -260,8 +264,9 @@ Status build_threshold_async(const ImageViewU8& segmentation, ThresholdBuffers* 
             return status;
         }
 
-        // 行合計の作業領域を window ごとに使い回すため、同じ stream で順に実行する。
-        // stream を分けると前の window の結果を上書きする。
+        // The row-sum scratch space is reused across windows, so the windows run in
+        // order on the same stream. Splitting them across streams would overwrite
+        // the previous window's results.
         column_threshold_kernel<<<grid, block, 0, stream>>>(
                 segmentation.data_, segmentation.pitch_bytes_, buffers->row_sums_,
                 buffers->row_sums_pitch_bytes_, buffers->binary_[i].data_,

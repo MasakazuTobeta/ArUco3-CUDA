@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# 目的:
-#   CPU 基準実装として使用する OpenCV を version 固定で build し、
-#   取得元 commit と build option を provenance として記録する。
+# Purpose:
+#   Build the OpenCV used as the CPU baseline implementation at a fixed version,
+#   and record the source commit and the build options as provenance.
 #
-# 対象範囲:
-#   ArUco3 検出に必要な module だけを build する。GUI backend と python binding は
-#   対象外とする。CUDA 対応は既定で無効とし、必要な場合のみ --with-cuda で有効化する。
+# Scope:
+#   Only the modules needed for ArUco3 detection are built. GUI backends and the
+#   Python bindings are out of scope. CUDA support is off by default and is
+#   enabled with --with-cuda only when it is needed.
 #
-# 使用方法:
-#   image build 時:   build-opencv.sh
-#   container 実行時: build-opencv.sh --with-cuda --prefix /opt/opencv-cuda
+# Usage:
+#   at image build time: build-opencv.sh
+#   inside a container:  build-opencv.sh --with-cuda --prefix /opt/opencv-cuda
 #
-# 備考:
-#   CUDA Toolkit は image へ含めず実行時 mount とするため、image build 時点では
-#   --with-cuda を使用できない。cv::cuda::GpuMat との相互変換が必要になる段階で、
-#   起動中の container 内から再 build して named volume へ install する。
+# Notes:
+#   The CUDA Toolkit is not part of the image but mounted at run time, so
+#   --with-cuda cannot be used while the image is being built. Once conversion to
+#   and from cv::cuda::GpuMat is needed, rebuild from inside a running container
+#   and install into the named volume.
 set -euo pipefail
 
 readonly kOpenCvVersion="${OPENCV_VERSION:-4.14.0}"
@@ -32,18 +34,18 @@ while [ "$#" -gt 0 ]; do
     --with-cuda) with_cuda="ON"; shift ;;
     --prefix) prefix="$2"; shift 2 ;;
     --cuda-arch) cuda_arch_bin="$2"; shift 2 ;;
-    *) echo "[build-opencv] 未知の引数: $1" >&2; exit 2 ;;
+    *) echo "[build-opencv] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 if [ "${with_cuda}" = "ON" ]; then
   if ! command -v nvcc >/dev/null 2>&1; then
-    echo "[build-opencv] --with-cuda が指定されたが nvcc が見つからない。" >&2
-    echo "[build-opencv] CUDA Toolkit が mount された container 内で実行すること。" >&2
+    echo "[build-opencv] --with-cuda was given but nvcc was not found." >&2
+    echo "[build-opencv] run this inside a container with the CUDA Toolkit mounted." >&2
     exit 1
   fi
   if [ -z "${cuda_arch_bin}" ]; then
-    echo "[build-opencv] --with-cuda には --cuda-arch または CUDA_ARCH_BIN が必要。" >&2
+    echo "[build-opencv] --with-cuda requires --cuda-arch or CUDA_ARCH_BIN." >&2
     exit 2
   fi
 fi
@@ -51,7 +53,7 @@ fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 
-echo "[build-opencv] opencv ${kOpenCvVersion} (${kOpenCvCommit}) を取得する"
+echo "[build-opencv] fetching opencv ${kOpenCvVersion} (${kOpenCvCommit})"
 git init -q "${work_dir}/opencv"
 git -C "${work_dir}/opencv" remote add origin https://github.com/opencv/opencv.git
 git -C "${work_dir}/opencv" fetch -q --depth 1 origin "${kOpenCvCommit}"
@@ -59,15 +61,16 @@ git -C "${work_dir}/opencv" checkout -q FETCH_HEAD
 
 actual_commit="$(git -C "${work_dir}/opencv" rev-parse HEAD)"
 if [ "${actual_commit}" != "${kOpenCvCommit}" ]; then
-  echo "[build-opencv] commit 不一致: 期待 ${kOpenCvCommit} 実際 ${actual_commit}" >&2
+  echo "[build-opencv] commit mismatch: expected ${kOpenCvCommit}, got ${actual_commit}" >&2
   exit 1
 fi
 
-# ArUco 検出は 4.x では objdetect module に含まれる。opencv_contrib は不要。
-# calib3d は objdetect の依存として必要になる。
+# In 4.x, ArUco detection lives in the objdetect module. opencv_contrib is not
+# needed. calib3d is required as a dependency of objdetect.
 build_list="core,imgproc,imgcodecs,calib3d,objdetect"
 if [ "${with_cuda}" = "ON" ]; then
-  # cudev は cv::cuda::GpuMat のために必要。重い cuda* module は build しない。
+  # cudev is required for cv::cuda::GpuMat. The heavy cuda* modules are not
+  # built.
   build_list="${build_list},cudev"
 fi
 
@@ -114,7 +117,8 @@ cmake "${cmake_args[@]}"
 cmake --build "${work_dir}/build" --parallel "${kBuildJobs}"
 cmake --install "${work_dir}/build"
 
-# 由来を image 内へ残す。CONTRIBUTING.md の Code Provenance Rules に対応する。
+# Leave the provenance inside the image. This corresponds to the Code Provenance
+# Rules in CONTRIBUTING.md.
 mkdir -p "${prefix}/share/aruco3cuda"
 cat > "${prefix}/share/aruco3cuda/opencv-provenance.json" <<JSON
 {
@@ -130,5 +134,5 @@ cat > "${prefix}/share/aruco3cuda/opencv-provenance.json" <<JSON
 }
 JSON
 
-echo "[build-opencv] install 先: ${prefix}"
+echo "[build-opencv] installed to: ${prefix}"
 cat "${prefix}/share/aruco3cuda/opencv-provenance.json"

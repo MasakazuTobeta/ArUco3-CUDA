@@ -9,65 +9,70 @@
 
 namespace aruco3cuda {
 
-/// device の性質のうち、実装と評価の判断に影響する項目。
+/// The device properties that affect implementation and evaluation decisions.
 ///
-/// integrated_ は評価計画の memory 経路の扱いに直結する。統合 GPU では
-/// host と device が同一物理 memory を共有するため、明示的な copy の費用が
-/// discrete GPU と大きく異なる。
+/// integrated_ directly drives how the evaluation plan treats the memory paths. On an
+/// integrated GPU, host and device share the same physical memory, so the cost of an
+/// explicit copy differs greatly from a discrete GPU.
 struct DeviceProbeResult {
     int device_index_ = -1;
-    /// device 名。nvidia-smi へ依存せず取得できる。
+    /// Device name. Obtainable without depending on nvidia-smi.
     std::string name_;
     int compute_capability_major_ = 0;
     int compute_capability_minor_ = 0;
     int multi_processor_count_ = 0;
     std::size_t l2_cache_bytes_ = 0;
-    bool integrated_ = false;                 ///< 統合 GPU か
-    bool concurrent_managed_access_ = false;  ///< managed memory へ同時 access できるか
+    bool integrated_ = false;                 ///< Whether this is an integrated GPU
+    bool concurrent_managed_access_ = false;  ///< Whether managed memory allows concurrent access
 };
 
-/// 利用可能な CUDA device 数を取得する。
+/// Retrieves the number of usable CUDA devices.
 ///
-/// @param out_count 成功時に device 数を格納する。nullptr を渡してはならない。
-///                  領域の所有権は呼出側にある。
-/// @return kOk、kInvalidArgument、kCudaError のいずれか。
+/// @param out_count On success, receives the device count. Must not be nullptr.
+///                  Ownership of the storage stays with the caller.
+/// @return One of kOk, kInvalidArgument, or kCudaError.
 ///
-/// 同期動作: CUDA runtime を呼ぶが device 同期は行わない。
-///           失敗時の詳細は last_cuda_error_message() から取得できる。
+/// Synchronization: calls into the CUDA runtime but performs no device synchronization.
+///                  Details of a failure are available from last_cuda_error_message().
 ///
-/// 入力例: 有効な int への pointer
-/// 出力例: *out_count = 1
+/// Example input: a pointer to a valid int
+/// Example output: *out_count = 1
 Status device_count(int* out_count);
 
-/// 指定 device の性質を取得する。
+/// Retrieves the properties of the given device.
 ///
-/// @param device_index 0 以上、device 数未満。
-/// @param out 成功時に結果を格納する。失敗時は変更しない。領域の所有権は呼出側にある。
-///            戻り値の name_ は複製された文字列であり、CUDA 側の領域を参照しない。
-/// @return kOk、kInvalidArgument、kCudaError のいずれか。
+/// @param device_index At least 0 and less than the device count.
+/// @param out On success, receives the result; left unchanged on failure. Ownership of
+///            the storage stays with the caller. The returned name_ is a copied string
+///            and does not reference memory held by CUDA.
+/// @return One of kOk, kInvalidArgument, or kCudaError.
 ///
-/// 同期動作: CUDA runtime を呼ぶが device 同期は行わず、current device も変更しない。
-///           失敗時の詳細は last_cuda_error_message() から取得できる。
+/// Synchronization: calls into the CUDA runtime but performs no device synchronization
+///                  and does not change the current device. Details of a failure are
+///                  available from last_cuda_error_message().
 ///
-/// 入力例: device_index = 0
-/// 出力例: compute_capability_major_ = 12, integrated_ = true
+/// Example input: device_index = 0
+/// Example output: compute_capability_major_ = 12, integrated_ = true
 Status probe_device(int device_index, DeviceProbeResult* out);
 
-/// 最小の kernel を実行し、device 上で計算が成立することを確認する。
+/// Runs a minimal kernel to confirm that computation works on the device.
 ///
-/// build 基盤と実行環境の疎通確認を目的とする。
+/// The point is to check that the build infrastructure and the runtime environment
+/// actually talk to each other.
 ///
-/// @param device_index 対象 device。0 以上 device 数未満。
-/// @return kOk、kInvalidArgument、kCudaError のいずれか。
+/// @param device_index The device to test. At least 0 and less than the device count.
+/// @return One of kOk, kInvalidArgument, or kCudaError.
 ///
-/// 所有権: 内部で確保する device buffer はこの関数が所有し、
-///         成功経路と失敗経路のいずれでも呼出前に解放する。呼出側へは渡らない。
+/// Ownership: this function owns the device buffer it allocates internally and frees it
+///            before returning on both the success and the failure path. Nothing is
+///            handed to the caller.
 ///
-/// 同期動作: 呼出内で cudaDeviceSynchronize() を行い、kernel の実行完了まで待つ。
-///           current device を一時的に device_index へ変更するが、呼出前の値へ戻す。
+/// Synchronization: calls cudaDeviceSynchronize() internally and waits for the kernel to
+///                  finish. It temporarily switches the current device to device_index
+///                  and restores the value it had on entry.
 ///
-/// 入力例: device_index = 0
-/// 出力例: Status::kOk
+/// Example input: device_index = 0
+/// Example output: Status::kOk
 Status run_device_self_test(int device_index);
 
 }  // namespace aruco3cuda

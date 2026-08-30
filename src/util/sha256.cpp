@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// FIPS 180-4 の SHA-256 を仕様から実装する。外部実装の複製ではない。
+// Implements SHA-256 from the FIPS 180-4 specification. It is not a copy of any other
+// implementation.
 #include "aruco3cuda/util/sha256.hpp"
 
 #include <cstdint>
@@ -15,7 +16,8 @@ namespace {
 
 constexpr std::size_t kBlockBytes = 64;
 
-/// FIPS 180-4 の丸め定数。最初の 64 個の素数の立方根の小数部から得られる。
+/// Round constants from FIPS 180-4, derived from the fractional parts of the cube roots of the
+/// first 64 primes.
 constexpr std::uint32_t kRoundConstants[64] = {
         0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U,
         0xab1c5ed5U, 0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU,
@@ -47,7 +49,8 @@ inline void store_big_endian(std::uint8_t* p, std::uint32_t value) {
 }  // namespace
 
 Sha256::Sha256() : total_bits_(0), buffer_size_(0) {
-    // FIPS 180-4 の初期 hash 値。最初の 8 個の素数の平方根の小数部から得られる。
+    // Initial hash values from FIPS 180-4, derived from the fractional parts of the square roots
+    // of the first 8 primes.
     this->state_[0] = 0x6a09e667U;
     this->state_[1] = 0xbb67ae85U;
     this->state_[2] = 0x3c6ef372U;
@@ -116,7 +119,7 @@ void Sha256::update(const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     this->total_bits_ += static_cast<std::uint64_t>(size) * 8U;
 
-    // 前回の残りと合わせて 64 byte 単位で処理する。
+    // Combine with the leftover from the previous call and process in 64-byte units.
     if (this->buffer_size_ > 0) {
         const std::size_t need = kBlockBytes - this->buffer_size_;
         const std::size_t take = (size < need) ? size : need;
@@ -141,11 +144,12 @@ void Sha256::update(const void* data, std::size_t size) {
 }
 
 std::string Sha256::finalize() {
-    // padding: 0x80 に続けて 0 を並べ、末尾 8 byte へ総 bit 数を big endian で置く。
+    // Padding: an 0x80 byte followed by zeros, with the total bit count placed big endian in the
+    // final 8 bytes.
     const std::uint64_t total_bits = this->total_bits_;
     const std::uint8_t one = 0x80U;
     this->update(&one, 1);
-    this->total_bits_ = total_bits;  // padding 自身は長さへ含めない
+    this->total_bits_ = total_bits;  // the padding itself is not part of the length
 
     const std::uint8_t zero = 0x00U;
     while (this->buffer_size_ != 56) {
@@ -183,7 +187,7 @@ bool sha256_file(const std::string& path, std::string* out_hex) {
     if (out_hex == nullptr) {
         return false;
     }
-    // RAII のため FILE* ではなく ifstream を使う。close は destructor が行う。
+    // ifstream rather than FILE* for RAII; the destructor performs the close.
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         return false;

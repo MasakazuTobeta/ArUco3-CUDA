@@ -15,109 +15,116 @@
 
 namespace aruco3cuda::detail {
 
-/// 候補ごとのセル比と border 検証の結果。
+/// Per-candidate cell ratios and the result of the border check.
 ///
-/// 所有権: 全ての pointer が指す領域の所有権は workspace にある。
-/// 同期動作: 単なる参照の集合であり同期点を持たない。内容は発行済みの
-///           kernel が完了するまで確定しない。
+/// Ownership: the workspace owns every region these pointers refer to.
+/// Synchronization: this is only a bundle of references and holds no synchronization point. The
+///           contents are not final until the already-issued kernels complete.
 ///
-/// 入力例: 既定設定、marker_size = 6、候補上限 4096
-/// 出力例: cells_per_side_ = 8、ratios_ が 4096 * 8 * 8 要素、thresholds_ が 4096 要素
+/// Example input: default configuration, marker_size = 6, candidate cap 4096
+/// Example output: cells_per_side_ = 8, ratios_ holding 4096 * 8 * 8 elements, thresholds_ holding
+///           4096 elements
 struct CellRatioBuffers {
-    /// セルごとの白画素比。添字は (candidate * cells * cells) + (row * cells) + col。
+    /// White-pixel ratio per cell. The index is (candidate * cells * cells) + (row * cells) + col.
     ///
-    /// bit へ潰さず比のまま持つ。既定の分母は 16 であり、比 0.5 は bit 0 とも
-    /// bit 1 とも一致しない。bit 行列へ潰すと CPU 基準と結果が変わる。
+    /// Kept as a ratio rather than collapsed into a bit. The default denominator is 16, and a
+    /// ratio of 0.5 matches neither bit 0 nor bit 1; collapsing into a bit matrix would change the
+    /// result relative to the CPU reference.
     float* ratios_ = nullptr;
-    /// 外周セルの誤り数。
+    /// Number of erroneous border cells.
     std::int32_t* border_errors_ = nullptr;
-    /// border 検証を通ったか。1 で通過。
+    /// Whether the border check passed. 1 means it passed.
     std::uint8_t* accepted_ = nullptr;
-    /// Otsu が選んだ閾値。低分散の経路へ入った候補は 0 が入る。
+    /// Threshold chosen by Otsu. Candidates that took the low-variance path store 0.
     ///
-    /// 比だけを突き合わせると、閾値が 1 階調ずれても境界に画素が無ければ
-    /// 気付けない。閾値そのものを CPU 基準と比べられるようにする。
+    /// Comparing only the ratios would hide a threshold that is off by one level whenever no
+    /// pixel sits on the boundary, so the threshold itself is exposed for comparison against the
+    /// CPU reference.
     std::int32_t* thresholds_ = nullptr;
-    /// 1 辺のセル数。marker_size + 2 * marker_border_bits_ に等しい。
+    /// Number of cells along one side. Equal to marker_size + 2 * marker_border_bits_.
     int cells_per_side_ = 0;
     int capacity_ = 0;
 };
 
-/// 1 辺のセル数を返す。
+/// Returns the number of cells along one side.
 ///
-/// @param config 検出設定。
-/// @param marker_size Dictionary のセル数。1 以上。
-/// @return 1 辺のセル数。引数が不正なら 0。
+/// @param config Detector configuration.
+/// @param marker_size Cell count of the dictionary. At least 1.
+/// @return Number of cells along one side, or 0 when an argument is invalid.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: holds no resources.
+/// Synchronization: host only, holds no synchronization point.
 ///
-/// 入力例: 既定設定と marker_size = 6
-/// 出力例: 8
+/// Example input: default configuration and marker_size = 6
+/// Example output: 8
 int cells_per_side(const DetectorConfig& config, int marker_size);
 
-/// セル比に必要な workspace の容量を返す。
+/// Returns the workspace capacity required by the cell ratios.
 ///
-/// @param config 検出設定。候補上限を使う。
-/// @param marker_size Dictionary のセル数。
-/// @return 必要な byte 数。桁溢れや引数が不正なら 0。
+/// @param config Detector configuration. The candidate cap is used.
+/// @param marker_size Cell count of the dictionary.
+/// @return Required number of bytes, or 0 on overflow or when an argument is invalid.
 ///
-/// 所有権: 資源を保持しない。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: holds no resources.
+/// Synchronization: host only, holds no synchronization point.
 ///
-/// 入力例: 既定設定と marker_size = 6
-/// 出力例: 比と誤り数と合否を収める byte 数
+/// Example input: default configuration and marker_size = 6
+/// Example output: the number of bytes that hold the ratios, the error counts and the verdicts
 std::size_t cell_ratio_workspace_bytes(const DetectorConfig& config, int marker_size);
 
-/// workspace からセル比の領域を切り出す。
+/// Carves the cell-ratio regions out of the workspace.
 ///
-/// @param config 検出設定。候補上限を使う。
-/// @param marker_size Dictionary のセル数。1 以上。
-/// @param workspace 切り出し元。呼出側が所有する。
-/// @param out 成功時に buffer を格納する。nullptr は不可。
-/// @return kOk。容量不足なら kInvalidConfig、引数が不正なら kInvalidArgument。
+/// @param config Detector configuration. The candidate cap is used.
+/// @param marker_size Cell count of the dictionary. At least 1.
+/// @param workspace Source of the allocation. Owned by the caller.
+/// @param out Receives the buffers on success. Must not be nullptr.
+/// @return kOk, kInvalidConfig when the capacity is insufficient, kInvalidArgument when an
+///         argument is invalid.
 ///
-/// 所有権: 切り出した領域の所有権は workspace に残る。
-/// 同期動作: host 専用であり同期点を持たない。
+/// Ownership: the workspace keeps ownership of the carved-out regions.
+/// Synchronization: host only, holds no synchronization point.
 ///
-/// 入力例: 既定設定と marker_size = 6 と十分な容量の workspace
-/// 出力例: cells_per_side_ = 8、capacity_ = 4096
+/// Example input: default configuration, marker_size = 6 and a workspace with enough capacity
+/// Example output: cells_per_side_ = 8, capacity_ = 4096
 Status reserve_cell_ratios(const DetectorConfig& config, int marker_size, Workspace& workspace,
                            CellRatioBuffers* out);
 
-/// canonical 画像からセル比を求め、外周セルの誤りを数える。
+/// Computes the cell ratios from the canonical images and counts the erroneous border cells.
 ///
-/// CPU 基準の `_extractCellPixelRatio` と `_getBorderErrors` に対応する。
-/// 手順は次のとおりで、いずれも OpenCV の実装に合わせている。
+/// Corresponds to `_extractCellPixelRatio` and `_getBorderErrors` in the CPU reference. The steps
+/// below all follow the OpenCV implementation.
 ///
-/// 1. canonical の内側 (各辺を cell の半分だけ寄せた範囲) で平均と母標準偏差を
-///    求める。和と二乗和は整数のまま積み、最後だけ倍精度で割る。平均は
-///    `S * (1/N)` であって `S / N` ではない。
-/// 2. 標準偏差が `min_otsu_std_dev_` を下回る場合、全セルの比を平均が 127 を
-///    超えるかどうかで 1 か 0 に埋める。この場合も border 検証は行う。
-/// 3. そうでなければ canonical の**全体**へ Otsu を掛ける。内側ではない。
-///    二値化は `画素 > 閾値` で、等しい場合は 0 側とする。
-/// 4. セルごとに白画素の比を求める。cell の余白は `(int)(rate * cell)` であり、
-///    既定設定では 0 になる。分母は余白を除いた 1 辺の 2 乗である。
-/// 5. 外周セルのうち比が `valid_bit_threshold_` を超えるものを数える。
-///    `marker_size` の 2 乗に率を掛けた値を超えたら不合格とする。
+/// 1. Compute the mean and the population standard deviation over the interior of the canonical
+///    image (the range obtained by pulling each side in by half a cell). The sum and the sum of
+///    squares are accumulated as integers and only the final division is done in double
+///    precision. The mean is `S * (1/N)`, not `S / N`.
+/// 2. When the standard deviation falls below `min_otsu_std_dev_`, fill every cell ratio with 1
+///    or 0 depending on whether the mean exceeds 127. The border check still runs in this case.
+/// 3. Otherwise apply Otsu to the **whole** canonical image, not to its interior. Binarization is
+///    `pixel > threshold`, so an equal value falls on the 0 side.
+/// 4. Compute the white-pixel ratio per cell. The cell margin is `(int)(rate * cell)`, which is 0
+///    under the default configuration. The denominator is the square of the side length with the
+///    margin removed.
+/// 5. Count the border cells whose ratio exceeds `valid_bit_threshold_`. The candidate fails once
+///    that count exceeds the square of `marker_size` multiplied by the rate.
 ///
-/// 積和の融合は行わない。この翻訳単位は `-fmad=false` で compile する。
-/// 融合すると分散の計算が 1 ULP ずれ、標準偏差の閾値付近で判定が変わる。
+/// Multiply-add contraction is disabled: this translation unit is compiled with `-fmad=false`.
+/// Contraction shifts the variance by 1 ULP, which flips the verdict near the standard-deviation
+/// threshold.
 ///
-/// @param canonical build_canonical_async が埋めた canonical 画像。
-/// @param candidates 詰めた候補。候補数を device 上で参照する。
-/// @param config 検出設定。
-/// @param marker_size Dictionary のセル数。1 以上。
-/// @param ratios reserve_cell_ratios が返した出力領域。nullptr は不可。
-/// @param stream 発行先の stream。既定 stream を使う場合は nullptr。
-/// @return kOk、または kInvalidArgument、kCudaError。
+/// @param canonical Canonical images filled in by build_canonical_async.
+/// @param candidates Compacted candidates. The candidate count is read on the device.
+/// @param config Detector configuration.
+/// @param marker_size Cell count of the dictionary. At least 1.
+/// @param ratios Output regions returned by reserve_cell_ratios. Must not be nullptr.
+/// @param stream Stream to issue the work on. Pass nullptr to use the default stream.
+/// @return kOk, kInvalidArgument or kCudaError.
 ///
-/// 所有権: 引数が指す領域の所有権は workspace に残る。
-/// 同期動作: stream へ kernel を発行するだけで host 同期を行わない。
+/// Ownership: the workspace keeps ownership of the regions the arguments point to.
+/// Synchronization: only issues kernels on the stream and performs no host synchronization.
 ///
-/// 入力例: マーカー 4 枚分の canonical 画像
-/// 出力例: ratios_ に 8x8 の比、accepted_ に 1 が 4 つ
+/// Example input: canonical images for four markers
+/// Example output: 8x8 ratios in ratios_ and four entries of 1 in accepted_
 Status build_cell_ratios_async(const CanonicalBuffers& canonical,
                                const DeviceCandidates& candidates, const DetectorConfig& config,
                                int marker_size, CellRatioBuffers* ratios, cudaStream_t stream);

@@ -15,64 +15,71 @@
 
 namespace aruco3cuda::hybrid {
 
-/// 検出した 1 個のマーカー。
+/// A single detected marker.
 ///
-/// 所有権: 値のみを持ち、外部の資源を参照しない。
-/// 同期動作: 単なる値の集合であり同期点を持たない。
+/// Ownership: holds values only and references no external resource.
+/// Synchronization: a plain set of values, with no synchronization point.
 ///
-/// 入力例: 合成画像に描いた ID 42 のマーカー
-/// 出力例: id_ = 42、corners_ が原寸座標での四隅
+/// Example input: a marker with ID 42 drawn into a synthetic image
+/// Example output: id_ = 42, and corners_ holding the four corners in
+/// full-resolution coordinates
 struct HybridDetection {
     int id_ = -1;
-    /// 四隅を x0, y0, ... y3 の順で保持する。入力画像の座標系。
-    /// 並びは OpenCV の detectMarkers と同じく、Dictionary 照合で得た
-    /// rotation を打ち消した後の順序である。
+    /// The four corners in the order x0, y0, ... y3, in the coordinate system
+    /// of the input image. As in OpenCV's detectMarkers, the order is the one
+    /// left after undoing the rotation reported by the dictionary match.
     std::array<double, 8> corners_{};
-    /// Dictionary 照合で得た回転。0 から 3。
+    /// The rotation reported by the dictionary match. 0 through 3.
     int rotation_ = 0;
 };
 
-/// 1 フレームの検出結果。
+/// The detection result for one frame.
 ///
-/// 所有権: 値のみを持ち、外部の資源を参照しない。
-/// 同期動作: 単なる値の集合であり同期点を持たない。
+/// Ownership: holds values only and references no external resource.
+/// Synchronization: a plain set of values, with no synchronization point.
 ///
-/// 入力例: マーカー 4 個の合成画像
-/// 出力例: detections_ が 4 要素、candidate_count_ が二値化から得た候補数
+/// Example input: a synthetic image with four markers
+/// Example output: detections_ has four elements, and candidate_count_ is the
+/// number of candidates obtained from binarization
 struct HybridResult {
     std::vector<HybridDetection> detections_;
-    /// 二値化画像から得た四角形候補の総数。window ごとの合計である。
+    /// Total number of quad candidates obtained from the binarized images,
+    /// summed over the windows.
     std::size_t candidate_count_ = 0;
-    /// GPU 側の処理時間。単位は ms。同期を含む。
+    /// Processing time on the GPU side, in ms. Includes synchronization.
     double gpu_ms_ = 0.0;
-    /// CPU 側の処理時間。単位は ms。
+    /// Processing time on the CPU side, in ms.
     double cpu_ms_ = 0.0;
 };
 
-/// GPU で前処理と二値化を行い、候補抽出と decode を CPU で行う検出器。
+/// Detector that runs preprocessing and binarization on the GPU and candidate
+/// extraction and decoding on the CPU.
 ///
-/// 位置付け:
-///   [検出パイプライン設計](../docs/design/detector-pipeline.md) の案 C にあたる。
-///   GPU 側の段階を 1 つずつ置き換えていく際の基準となり、案 A が期待どおりに
-///   動かない場合の fallback でもある。全 GPU 経路が揃った後も維持する。
+/// Position:
+///   This is option C of the
+///   [detector pipeline design](../docs/design/detector-pipeline.md). It is the
+///   baseline used while the GPU stages are replaced one at a time, and it is
+///   also the fallback if option A does not work out as expected. It is kept
+///   even after the fully GPU-resident route is complete.
 ///
-/// 所有権:
-///   workspace と OpenCV 側の一時 buffer をこの class が所有する。
-///   入力画像の memory は呼出側が所有する。
-///   **この所有権は全ての public member 関数に適用される。**
+/// Ownership:
+///   This class owns the workspace and the temporary buffers on the OpenCV
+///   side. The caller owns the memory of the input image.
+///   **This ownership applies to all public member functions.**
 ///
-/// 同期動作:
-///   detect() は内部で GPU の完了を待つ。二値化画像を host へ戻す必要が
-///   あるためであり、この同期は案 C の構造上避けられない。
-///   **この同期動作は全ての public member 関数に適用される。**
-///   1 つの instance を複数 thread から同時に使用してはならない。
+/// Synchronization:
+///   detect() internally waits for the GPU to finish, because the binarized
+///   images have to come back to the host. This synchronization is inherent to
+///   the structure of option C.
+///   **This synchronization applies to all public member functions.**
+///   A single instance must not be used from several threads at the same time.
 ///
-/// 入力例:
+/// Example input:
 ///   HybridDetector detector;
 ///   detector.initialize(config, "DICT_ARUCO_MIP_36h12", 1920, 1080, &message);
 ///   detector.detect(view, &result, &message);
-/// 出力例:
-///   result.detections_ に検出したマーカーの ID と四隅が入る
+/// Example output:
+///   result.detections_ holds the IDs and corners of the detected markers
 class HybridDetector {
 public:
     HybridDetector();
@@ -83,41 +90,43 @@ public:
     HybridDetector(HybridDetector&&) noexcept;
     HybridDetector& operator=(HybridDetector&&) noexcept;
 
-    /// 検出器を初期化する。
+    /// Initializes the detector.
     ///
-    /// workspace の容量を確保し、Dictionary を読み込む。フレームごとの確保を
-    /// 避けるため、想定する最大解像度をここで与える。
+    /// Allocates the workspace capacity and loads the dictionary. The largest
+    /// resolution you expect is given here so that no allocation happens per
+    /// frame.
     ///
-    /// @param config 検出設定。validate() を通す。
-    /// @param dictionary_name 定義済み Dictionary 名。
-    /// @param max_width_px 想定する最大の幅。1 以上。
-    /// @param max_height_px 想定する最大の高さ。1 以上。
-    /// @param out_message 失敗時に理由を格納する。nullptr を渡してよい。
-    /// @return kOk、または kInvalidConfig、kUnsupportedDictionary、kCudaError。
+    /// @param config Detector configuration. It is passed through validate().
+    /// @param dictionary_name Name of a predefined dictionary.
+    /// @param max_width_px Largest width expected. At least 1.
+    /// @param max_height_px Largest height expected. At least 1.
+    /// @param out_message Receives the reason on failure. May be nullptr.
+    /// @return kOk, or kInvalidConfig, kUnsupportedDictionary or kCudaError.
     ///
-    /// 入力例: 既定設定、"DICT_ARUCO_MIP_36h12"、1920、1080
-    /// 出力例: Status::kOk
+    /// Example input: the default configuration, "DICT_ARUCO_MIP_36h12", 1920,
+    /// 1080
+    /// Example output: Status::kOk
     Status initialize(const DetectorConfig& config, const std::string& dictionary_name,
                       int max_width_px, int max_height_px, std::string* out_message = nullptr);
 
-    /// 1 フレームを検出する。
+    /// Detects the markers in one frame.
     ///
-    /// @param image 入力画像。device 常駐であること。
-    /// @param out 成功時に結果を格納する。nullptr は不可。
-    /// @param out_message 失敗時に理由を格納する。nullptr を渡してよい。
-    /// @return kOk、または kNotInitialized、kInvalidImage、kCudaError。
+    /// @param image Input image. Must be device-resident.
+    /// @param out Receives the result on success. Must not be nullptr.
+    /// @param out_message Receives the reason on failure. May be nullptr.
+    /// @return kOk, or kNotInitialized, kInvalidImage or kCudaError.
     ///
-    /// 入力例: device 上の 1280x720 grayscale
-    /// 出力例: Status::kOk。out->detections_ に検出結果が入る
+    /// Example input: a 1280x720 grayscale image on the device
+    /// Example output: Status::kOk. out->detections_ holds the detections
     Status detect(const ImageViewU8& image, HybridResult* out,
                   std::string* out_message = nullptr);
 
-    /// workspace の使用状況を返す。
+    /// Returns how the workspace is being used.
     ///
-    /// @return 統計への参照。次の操作まで有効。
+    /// @return A reference to the statistics. Valid until the next operation.
     ///
-    /// 入力例: 100 フレーム処理した後
-    /// 出力例: allocation_count_ が 1 のまま
+    /// Example input: after processing 100 frames
+    /// Example output: allocation_count_ is still 1
     const WorkspaceStatistics& workspace_statistics() const;
 
 private:

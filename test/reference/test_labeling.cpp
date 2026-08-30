@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 連結成分ラベリングを OpenCV の connectedComponents と突き合わせる。
+// Cross-checks connected-component labeling against the OpenCV connectedComponents.
 //
-// label の値そのものは実装ごとの採番規則で変わる。判断に必要なのは
-// 「どの画素が同じ成分に属するか」であるため、画素の分割が一致するかを
-// 検査する。あわせて、実行ごとに同じ label が得られることも固定する。
+// The label values themselves depend on the numbering scheme of each
+// implementation. What matters is which pixels belong to the same component, so
+// the test checks that the two partitions of the pixels agree. It also pins down
+// that every run produces the same labels.
 #include "labeling.hpp"
 
 #include <gtest/gtest.h>
@@ -41,9 +42,10 @@ bool has_cuda_device() {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-/// 二値化画像を device へ載せ、ラベリングを実行する道具立て。
+/// Harness that uploads a binary image to the device and runs the labeling.
 ///
-/// pitch を幅と変えて確保し、非連続配置でも正しく読めることを併せて確かめる。
+/// The allocation uses a pitch that differs from the width, which also confirms
+/// that a non-contiguous layout is read correctly.
 class LabelingRun {
 public:
     LabelingRun() = default;
@@ -55,7 +57,8 @@ public:
         }
     }
 
-    /// 二値化画像を処理し、label 配列を host へ取り出す。成否を返す。
+    /// Processes a binary image and copies the label array back to the host.
+    /// Returns whether it succeeded.
     bool run(const cv::Mat& binary) {
         const std::size_t pitch = static_cast<std::size_t>(binary.cols) + 32U;
         if (cudaMalloc(&this->binary_, pitch * static_cast<std::size_t>(binary.rows)) !=
@@ -113,10 +116,11 @@ private:
     int label_count_ = 0;
 };
 
-/// GPU の label と OpenCV の label が同じ分割を表すか調べる。
+/// Checks whether the GPU labels and the OpenCV labels describe the same partition.
 ///
-/// 採番規則の違いを許すため、両方向の写像が矛盾なく作れるかで判定する。
-/// 片方向だけでは、複数の成分が 1 つへ潰れた場合を見逃す。
+/// Differences in the numbering scheme are allowed, so the decision rests on
+/// whether a consistent mapping can be built in both directions. One direction
+/// alone would miss the case where several components collapse into one.
 ::testing::AssertionResult same_partition(const cv::Mat& reference,
                                           const std::vector<std::int32_t>& labels) {
     std::map<int, std::int32_t> reference_to_gpu;
@@ -129,10 +133,11 @@ private:
                     static_cast<std::size_t>(x);
             const int expected = row[x];
             const std::int32_t actual = labels[index];
-            // OpenCV は背景を 0 とし、こちらは kBackgroundLabel とする。
+            // OpenCV marks the background with 0; this implementation uses kBackgroundLabel.
             if ((expected == 0) != (actual == kBackgroundLabel)) {
-                return ::testing::AssertionFailure() << "前景と背景が食い違う (" << x << ", " << y
-                                                     << ") 基準 " << expected << " 対象 " << actual;
+                return ::testing::AssertionFailure()
+                       << "foreground and background disagree at (" << x << ", " << y
+                       << ") baseline " << expected << " target " << actual;
             }
             if (expected == 0) {
                 continue;
@@ -141,29 +146,30 @@ private:
             if (forward == reference_to_gpu.end()) {
                 reference_to_gpu.emplace(expected, actual);
             } else if (forward->second != actual) {
-                return ::testing::AssertionFailure()
-                       << "基準の 1 成分が分かれた (" << x << ", " << y << ") 基準 " << expected;
+                return ::testing::AssertionFailure() << "one baseline component was split at (" << x
+                                                     << ", " << y << ") baseline " << expected;
             }
             const auto backward = gpu_to_reference.find(actual);
             if (backward == gpu_to_reference.end()) {
                 gpu_to_reference.emplace(actual, expected);
             } else if (backward->second != expected) {
-                return ::testing::AssertionFailure()
-                       << "基準の別成分が 1 つになった (" << x << ", " << y << ") 対象 " << actual;
+                return ::testing::AssertionFailure() << "two baseline components were merged at ("
+                                                     << x << ", " << y << ") target " << actual;
             }
         }
     }
     return ::testing::AssertionSuccess();
 }
 
-/// OpenCV の 8 連結ラベリングで基準を作る。
+/// Builds the baseline with the OpenCV 8-connected labeling.
 cv::Mat reference_labels(const cv::Mat& binary) {
     cv::Mat labels;
     static_cast<void>(cv::connectedComponents(binary, labels, 8, CV_32S));
     return labels;
 }
 
-/// GPU の結果が基準と同じ分割であり、label が連番であることを確かめる。
+/// Confirms that the GPU result is the same partition as the baseline and that the
+/// labels are consecutive.
 void expect_matches_reference(const cv::Mat& binary, const std::string& name) {
     LabelingRun run;
     ASSERT_TRUE(run.run(binary)) << name;
@@ -177,65 +183,66 @@ void expect_matches_reference(const cv::Mat& binary, const std::string& name) {
         if (label == kBackgroundLabel) {
             continue;
         }
-        // label は 0 から始まる連番である。統計配列の添字へそのまま使うため。
+        // The labels are consecutive starting at 0, because they are used directly as
+        // indices into the statistics arrays.
         EXPECT_GE(label, 0) << name;
         EXPECT_LT(label, run.label_count()) << name;
     }
 }
 
-// 境界値: 前景が無い画像では label が 0 個になる。
+// Boundary: an image with no foreground yields zero labels.
 TEST(LabelingTest, empty_image_has_no_label) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat binary(37, 53, CV_8UC1, cv::Scalar(0));
     expect_matches_reference(binary, "empty");
 }
 
-// 境界値: 全画素が前景なら label は 1 個になる。
+// Boundary: an image whose pixels are all foreground yields one label.
 TEST(LabelingTest, full_image_has_one_label) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat binary(37, 53, CV_8UC1, cv::Scalar(255));
     expect_matches_reference(binary, "full");
 }
 
-// 境界値: 1 画素だけの前景。
+// Boundary: a foreground of a single pixel.
 TEST(LabelingTest, single_pixel_component) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(17, 19, CV_8UC1, cv::Scalar(0));
     binary.at<std::uint8_t>(8, 9) = 255U;
     expect_matches_reference(binary, "single_pixel");
 }
 
-// 境界値: 1 行および 1 列の画像。
+// Boundary: images of a single row and of a single column.
 TEST(LabelingTest, degenerate_image_shapes) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat row(1, 64, CV_8UC1, cv::Scalar(0));
     for (int x = 0; x < 64; x += 3) {
         row.at<std::uint8_t>(0, x) = 255U;
     }
-    expect_matches_reference(row, "1 行");
+    expect_matches_reference(row, "single row");
 
     cv::Mat column(64, 1, CV_8UC1, cv::Scalar(0));
     for (int y = 0; y < 64; y += 3) {
         column.at<std::uint8_t>(y, 0) = 255U;
     }
-    expect_matches_reference(column, "1 列");
+    expect_matches_reference(column, "single column");
 
     const cv::Mat single(1, 1, CV_8UC1, cv::Scalar(255));
     expect_matches_reference(single, "1x1");
 }
 
-// 正常系: 離れた矩形はそれぞれ別の成分になる。
+// Nominal: rectangles that do not touch each become their own component.
 TEST(LabelingTest, separate_rectangles_are_separate_components) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(120, 200, CV_8UC1, cv::Scalar(0));
     cv::rectangle(binary, cv::Rect(10, 10, 30, 30), cv::Scalar(255), cv::FILLED);
@@ -244,16 +251,18 @@ TEST(LabelingTest, separate_rectangles_are_separate_components) {
     LabelingRun run;
     ASSERT_TRUE(run.run(binary));
     EXPECT_EQ(run.label_count(), 3);
-    expect_matches_reference(binary, "3 矩形");
+    expect_matches_reference(binary, "three rectangles");
 }
 
-// 正常系: 対角にのみ接する画素は 8 近傍では 1 つの成分になる。
+// Nominal: pixels that touch only diagonally form a single component under
+// 8-connectivity.
 //
-// 4 近傍だと別成分になる。OpenCV の findContours は前景を 8 連結として
-// 辿るため、ここが分かれると CPU 基準と候補が食い違う。
+// Under 4-connectivity they would be separate components. The OpenCV
+// findContours walks the foreground as 8-connected, so splitting them here would
+// make the candidates disagree with the CPU reference.
 TEST(LabelingTest, diagonal_chain_is_one_component_with_eight_connectivity) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(40, 40, CV_8UC1, cv::Scalar(0));
     for (int i = 0; i < 40; ++i) {
@@ -262,13 +271,13 @@ TEST(LabelingTest, diagonal_chain_is_one_component_with_eight_connectivity) {
     LabelingRun run;
     ASSERT_TRUE(run.run(binary));
     EXPECT_EQ(run.label_count(), 1);
-    expect_matches_reference(binary, "対角");
+    expect_matches_reference(binary, "diagonal");
 }
 
-// 境界値: 市松模様は 8 近傍では 1 つの成分になる。
+// Boundary: a checkerboard forms a single component under 8-connectivity.
 TEST(LabelingTest, checkerboard_is_one_component) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(33, 41, CV_8UC1, cv::Scalar(0));
     for (int y = 0; y < binary.rows; ++y) {
@@ -276,43 +285,45 @@ TEST(LabelingTest, checkerboard_is_one_component) {
             binary.at<std::uint8_t>(y, x) = ((x + y) % 2 == 0) ? 255U : 0U;
         }
     }
-    expect_matches_reference(binary, "市松");
+    expect_matches_reference(binary, "checkerboard");
 }
 
-// 境界値: 画像端に掛かる成分も正しく扱える。
+// Boundary: components that run into the image border are handled correctly too.
 TEST(LabelingTest, components_touching_border) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(50, 70, CV_8UC1, cv::Scalar(0));
     cv::rectangle(binary, cv::Rect(0, 0, 10, 10), cv::Scalar(255), cv::FILLED);
     cv::rectangle(binary, cv::Rect(60, 40, 10, 10), cv::Scalar(255), cv::FILLED);
     cv::rectangle(binary, cv::Rect(0, 45, 70, 5), cv::Scalar(255), cv::FILLED);
-    expect_matches_reference(binary, "端");
+    expect_matches_reference(binary, "border");
 }
 
-// 正常系: 穴を持つ枠は 1 つの成分になる。マーカーの黒枠に対応する。
+// Nominal: a ring with a hole forms a single component. This is the case of the
+// black border of a marker.
 TEST(LabelingTest, ring_is_one_component) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(80, 80, CV_8UC1, cv::Scalar(0));
     cv::rectangle(binary, cv::Rect(10, 10, 60, 60), cv::Scalar(255), cv::FILLED);
     cv::rectangle(binary, cv::Rect(25, 25, 30, 30), cv::Scalar(0), cv::FILLED);
     LabelingRun run;
     ASSERT_TRUE(run.run(binary));
-    // 枠が 1 つ。内側の穴は背景であり、外側の背景とは別の成分になるが、
-    // ここでは前景のみを数えるため 1 になる。
+    // One ring. The hole inside is background and forms a component distinct from the
+    // outer background, but only the foreground is counted here, so the count is 1.
     EXPECT_EQ(run.label_count(), 1);
-    expect_matches_reference(binary, "枠");
+    expect_matches_reference(binary, "ring");
 }
 
-// 正常系: 無作為な二値化画像でも分割が一致する。
+// Nominal: the partitions agree on random binary images as well.
 TEST(LabelingTest, random_images_match_reference) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
-    // 密度を変える。疎な画像は成分が多く、密な画像は 1 つへ繋がりやすい。
+    // Vary the density. A sparse image has many components, while a dense one tends
+    // to connect into a single component.
     const int densities[] = {5, 25, 50, 75, 95};
     for (const int density : densities) {
         std::mt19937 rng(20260827U + static_cast<unsigned int>(density));
@@ -323,14 +334,15 @@ TEST(LabelingTest, random_images_match_reference) {
                 binary.at<std::uint8_t>(y, x) = (draw(rng) < density) ? 255U : 0U;
             }
         }
-        expect_matches_reference(binary, "密度 " + std::to_string(density));
+        expect_matches_reference(binary, "density " + std::to_string(density));
     }
 }
 
-// 正常系: 大きめの画像でも一致する。scan が 1 block を超える条件を通す。
+// Nominal: larger images agree as well. This exercises the case where the scan
+// spans more than one block.
 TEST(LabelingTest, large_image_matches_reference) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(1080, 1920, CV_8UC1, cv::Scalar(0));
     std::mt19937 rng(20260827U);
@@ -343,10 +355,10 @@ TEST(LabelingTest, large_image_matches_reference) {
     expect_matches_reference(binary, "1920x1080");
 }
 
-// 正常系: 同じ入力からは同じ label が得られる。
+// Nominal: the same input yields the same labels.
 TEST(LabelingTest, labels_are_deterministic) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     std::mt19937 rng(4242U);
     std::uniform_int_distribution<int> draw(0, 99);
@@ -364,7 +376,7 @@ TEST(LabelingTest, labels_are_deterministic) {
     EXPECT_EQ(first.labels(), second.labels());
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure: nothing runs when the arguments are invalid.
 TEST(LabelingTest, rejects_invalid_arguments) {
     Workspace workspace;
     LabelBuffers buffers;
@@ -374,7 +386,7 @@ TEST(LabelingTest, rejects_invalid_arguments) {
               Status::kInvalidArgument);
     EXPECT_EQ(aruco3cuda::detail::reserve_labeling(4, -1, workspace, &buffers),
               Status::kInvalidArgument);
-    // 容量を確保していない workspace からは切り出せない。
+    // Nothing can be carved out of a workspace whose capacity was never reserved.
     EXPECT_NE(aruco3cuda::detail::reserve_labeling(4, 4, workspace, &buffers), Status::kOk);
 
     EXPECT_EQ(aruco3cuda::detail::build_labels_async({}, nullptr, nullptr),
@@ -387,10 +399,10 @@ TEST(LabelingTest, rejects_invalid_arguments) {
     EXPECT_EQ(aruco3cuda::detail::labeling_workspace_bytes(-1, 4), 0U);
 }
 
-// 異常系: 寸法の食い違う入力は拒否する。
+// Failure: an input whose size disagrees is rejected.
 TEST(LabelingTest, rejects_size_mismatch) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     Workspace workspace;
     ASSERT_EQ(workspace.ensure_capacity(aruco3cuda::detail::labeling_workspace_bytes(16, 16),
@@ -409,7 +421,7 @@ TEST(LabelingTest, rejects_size_mismatch) {
               Status::kInvalidArgument);
 }
 
-/// host 側の統計。GPU の集計と突き合わせるために使う。
+/// Host-side statistics, used to cross-check the aggregation done on the GPU.
 struct HostStatistics {
     int min_x_ = 0;
     int min_y_ = 0;
@@ -420,7 +432,7 @@ struct HostStatistics {
     double centroid_y_ = 0.0;
 };
 
-/// GPU が集計した統計を host へ取り出す。
+/// Copies the statistics aggregated on the GPU back to the host.
 class StatisticsRun {
 public:
     StatisticsRun() = default;
@@ -541,7 +553,7 @@ private:
     int label_count_ = 0;
 };
 
-/// label 画像から host 側で統計を求める。
+/// Computes the statistics on the host from a label image.
 std::vector<HostStatistics> host_statistics(const cv::Mat& labels, int label_count) {
     std::vector<HostStatistics> result(static_cast<std::size_t>(label_count));
     std::vector<double> sum_x(static_cast<std::size_t>(label_count), 0.0);
@@ -558,7 +570,7 @@ std::vector<HostStatistics> host_statistics(const cv::Mat& labels, int label_cou
             if (row[x] == 0) {
                 continue;
             }
-            // OpenCV の label は 1 起点。統計の添字は 0 起点へ合わせる。
+            // OpenCV labels start at 1; the statistics indices are shifted to start at 0.
             const auto index = static_cast<std::size_t>(row[x] - 1);
             HostStatistics& item = result[index];
             item.min_x_ = std::min(item.min_x_, x);
@@ -579,9 +591,10 @@ std::vector<HostStatistics> host_statistics(const cv::Mat& labels, int label_cou
     return result;
 }
 
-/// GPU と host の統計が一致することを確かめる。
+/// Confirms that the GPU statistics agree with the host statistics.
 ///
-/// label の採番規則が違うため、外接矩形の左上で対応付けてから比べる。
+/// The two label numbering schemes differ, so the components are matched up first
+/// and compared afterwards.
 void expect_statistics_match(const cv::Mat& binary, const std::string& name) {
     StatisticsRun run;
     ASSERT_TRUE(run.run(binary)) << name;
@@ -590,8 +603,8 @@ void expect_statistics_match(const cv::Mat& binary, const std::string& name) {
     ASSERT_EQ(run.label_count(), expected_count) << name;
     const std::vector<HostStatistics> expected = host_statistics(labels, expected_count);
 
-    // 対応付けは画素単位で行う。外接矩形の左上は複数の成分で一致しうるため、
-    // それを key にすると別の成分と突き合わせてしまう。
+    // The matching is done per pixel. The top-left corner of the bounding box can
+    // coincide for several components, so keying on it would pair up the wrong ones.
     std::map<int, std::int32_t> reference_to_gpu;
     for (int y = 0; y < labels.rows; ++y) {
         const auto* row = labels.ptr<std::int32_t>(y);
@@ -615,28 +628,29 @@ void expect_statistics_match(const cv::Mat& binary, const std::string& name) {
         EXPECT_EQ(actual.max_x_, item.max_x_) << name << " label " << entry.first;
         EXPECT_EQ(actual.max_y_, item.max_y_) << name << " label " << entry.first;
         EXPECT_EQ(actual.pixel_count_, item.pixel_count_) << name << " label " << entry.first;
-        // 重心は float へ落として保持するため、丸め分の差を許す。
+        // The centroid is kept as a float, so a difference of one rounding step is allowed.
         EXPECT_NEAR(actual.centroid_x_, item.centroid_x_, 1e-3) << name;
         EXPECT_NEAR(actual.centroid_y_, item.centroid_y_, 1e-3) << name;
     }
 }
 
-// 正常系: 矩形の外接矩形、画素数、重心が host 集計と一致する。
+// Nominal: the bounding box, pixel count, and centroid of rectangles agree with the
+// host aggregation.
 TEST(LabelStatisticsTest, rectangles_match_host_aggregation) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(150, 220, CV_8UC1, cv::Scalar(0));
     cv::rectangle(binary, cv::Rect(10, 12, 31, 17), cv::Scalar(255), cv::FILLED);
     cv::rectangle(binary, cv::Rect(90, 40, 44, 44), cv::Scalar(255), cv::FILLED);
     cv::rectangle(binary, cv::Rect(160, 100, 9, 40), cv::Scalar(255), cv::FILLED);
-    expect_statistics_match(binary, "矩形");
+    expect_statistics_match(binary, "rectangles");
 }
 
-// 境界値: 1 画素の成分でも外接矩形と重心が定まる。
+// Boundary: even a single-pixel component has a well-defined bounding box and centroid.
 TEST(LabelStatisticsTest, single_pixel_statistics) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(23, 29, CV_8UC1, cv::Scalar(0));
     binary.at<std::uint8_t>(7, 11) = 255U;
@@ -653,10 +667,10 @@ TEST(LabelStatisticsTest, single_pixel_statistics) {
     EXPECT_NEAR(item.centroid_y_, 7.0, 1e-6);
 }
 
-// 境界値: 前景が無ければ統計も 0 件になる。
+// Boundary: with no foreground there are no statistics either.
 TEST(LabelStatisticsTest, empty_image_has_no_statistics) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     const cv::Mat binary(31, 41, CV_8UC1, cv::Scalar(0));
     StatisticsRun run;
@@ -665,10 +679,11 @@ TEST(LabelStatisticsTest, empty_image_has_no_statistics) {
     EXPECT_TRUE(run.statistics().empty());
 }
 
-// 正常系: 穴を持つ枠の重心は中心になる。マーカーの黒枠に対応する。
+// Nominal: the centroid of a ring with a hole sits at its center. This is the case
+// of the black border of a marker.
 TEST(LabelStatisticsTest, ring_centroid_is_at_center) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     cv::Mat binary(101, 101, CV_8UC1, cv::Scalar(0));
     cv::rectangle(binary, cv::Rect(20, 20, 61, 61), cv::Scalar(255), cv::FILLED);
@@ -686,12 +701,13 @@ TEST(LabelStatisticsTest, ring_centroid_is_at_center) {
     EXPECT_NEAR(item.centroid_y_, 50.0, 1e-3);
 }
 
-// 正常系: 成分数が多い画像でも host 集計と一致する。
+// Nominal: images with many components agree with the host aggregation as well.
 TEST(LabelStatisticsTest, many_components_match_host_aggregation) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
-    // 1 画素飛ばしの配置は label 数が上限に近づく。確保数の妥当性も確かめる。
+    // A layout with every other pixel set drives the label count close to its upper
+    // bound, which also confirms that the reserved capacity is adequate.
     cv::Mat binary(81, 121, CV_8UC1, cv::Scalar(0));
     for (int y = 0; y < binary.rows; y += 2) {
         for (int x = 0; x < binary.cols; x += 2) {
@@ -702,13 +718,13 @@ TEST(LabelStatisticsTest, many_components_match_host_aggregation) {
     ASSERT_TRUE(run.run(binary));
     EXPECT_EQ(run.label_count(), 41 * 61);
     EXPECT_EQ(run.label_count(), aruco3cuda::detail::max_label_count(binary.cols, binary.rows));
-    expect_statistics_match(binary, "1 画素飛ばし");
+    expect_statistics_match(binary, "every other pixel");
 }
 
-// 正常系: 無作為な画像でも host 集計と一致する。
+// Nominal: random images agree with the host aggregation as well.
 TEST(LabelStatisticsTest, random_image_matches_host_aggregation) {
     if (!has_cuda_device()) {
-        GTEST_SKIP() << "CUDA device が無い環境のため skip する";
+        GTEST_SKIP() << "no CUDA device available; skipping";
     }
     std::mt19937 rng(31415U);
     std::uniform_int_distribution<int> draw(0, 99);
@@ -718,10 +734,10 @@ TEST(LabelStatisticsTest, random_image_matches_host_aggregation) {
             binary.at<std::uint8_t>(y, x) = (draw(rng) < 30) ? 255U : 0U;
         }
     }
-    expect_statistics_match(binary, "無作為");
+    expect_statistics_match(binary, "random");
 }
 
-// 異常系: 引数が不正なら実行しない。
+// Failure: nothing runs when the arguments are invalid.
 TEST(LabelStatisticsTest, rejects_invalid_arguments) {
     Workspace workspace;
     aruco3cuda::detail::LabelStatisticsBuffers stats;
@@ -742,7 +758,8 @@ TEST(LabelStatisticsTest, rejects_invalid_arguments) {
     EXPECT_EQ(aruco3cuda::detail::label_stats_workspace_bytes(0, 4), 0U);
 }
 
-// 境界値: label 数の上限は 1 画素飛ばしの配置から決まる。
+// Boundary: the upper bound on the label count follows from the layout with every
+// other pixel set.
 TEST(LabelStatisticsTest, max_label_count_follows_the_bound) {
     EXPECT_EQ(aruco3cuda::detail::max_label_count(1, 1), 1);
     EXPECT_EQ(aruco3cuda::detail::max_label_count(2, 2), 1);

@@ -25,7 +25,7 @@
     {
       "name": "portability",
       "inherits": "base",
-      "displayName": "全対象 architecture 向け (sm_87、sm_120、sm_121)",
+      "displayName": "All target architectures (sm_87, sm_120, sm_121)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "87;120;121"
       }
@@ -33,7 +33,7 @@
     {
       "name": "dgx-spark",
       "inherits": "base",
-      "displayName": "DGX Spark GB10 のみ (sm_121)",
+      "displayName": "DGX Spark GB10 only (sm_121)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "121"
       }
@@ -41,7 +41,7 @@
     {
       "name": "rtx-blackwell",
       "inherits": "base",
-      "displayName": "RTX Blackwell GB203 のみ (sm_120)",
+      "displayName": "RTX Blackwell GB203 only (sm_120)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "120"
       }
@@ -49,7 +49,7 @@
     {
       "name": "native",
       "inherits": "base",
-      "displayName": "実行機の architecture のみ (自動判定)",
+      "displayName": "Only the architecture of the running machine (auto-detected)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "native"
       }
@@ -57,7 +57,7 @@
     {
       "name": "jetson-orin",
       "inherits": "base",
-      "displayName": "Jetson Orin のみ (sm_87)",
+      "displayName": "Jetson Orin only (sm_87)",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "87"
       }
@@ -65,7 +65,7 @@
     {
       "name": "coverage",
       "inherits": "base",
-      "displayName": "C0 / C1 カバレッジ計測。最適化を無効にする",
+      "displayName": "C0 / C1 coverage measurement; optimization disabled",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CUDA_ARCHITECTURES": "native",
@@ -75,7 +75,7 @@
     {
       "name": "sanitizer",
       "inherits": "base",
-      "displayName": "Compute Sanitizer 有効。実行機の architecture を自動判定する",
+      "displayName": "Compute Sanitizer enabled; architecture of the running machine auto-detected",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CUDA_ARCHITECTURES": "native",
@@ -85,7 +85,7 @@
     {
       "name": "lint",
       "inherits": "base",
-      "displayName": "clang-tidy を有効にした構成",
+      "displayName": "Configuration with clang-tidy enabled",
       "cacheVariables": {
         "ARUCO3CUDA_ENABLE_CLANG_TIDY": "ON",
         "CMAKE_CUDA_ARCHITECTURES": "native"
