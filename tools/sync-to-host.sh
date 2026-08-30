@@ -51,23 +51,64 @@ fi
 
 # Confirm that every tracked file arrived. A mistake in an exclusion pattern
 # silently leaves files untransferred, so verify both the count and the checksums.
+#
+# The remote side hashes exactly the tracked list, sent over stdin, rather than
+# walking the whole remote tree with find and matching the manifest against
+# whatever comes back.
+#
+# The walking form reported "do not match" for files whose contents were in fact
+# identical. That was intermittent and was never reproduced on demand, so no
+# cause is recorded here as fact. What is certain is that it could not tell a
+# short or failed listing from a real mismatch: every file the listing lacked,
+# for any reason, was reported as not matching. Asking the remote for exactly
+# the files being verified removes that ambiguity, and it no longer walks a tree
+# that also holds build outputs, which makes it faster besides.
+#
+# The comparison is also whole-line now. The old one used grep for the digest
+# and path as a substring, which passes when one path is a suffix of another.
+#
+# The list is NUL separated end to end, so a path containing a space or a quote
+# cannot be split or reinterpreted by the remote shell.
 readonly kManifest="$(mktemp)"
-trap 'rm -f "${kManifest}"' EXIT
-(cd "${kSourceDir}" && git ls-files -z | xargs -0 sha256sum) | sort -k2 > "${kManifest}"
+readonly kRemoteList="$(mktemp)"
+readonly kRemotePaths="$(mktemp)"
+trap 'rm -f "${kManifest}" "${kRemoteList}" "${kRemotePaths}"' EXIT
 
+(cd "${kSourceDir}" && git ls-files -z | xargs -0 sha256sum) | sort > "${kManifest}"
 readonly kLocalCount="$(wc -l < "${kManifest}")"
-readonly kRemoteSum="$(
-  ssh "${kTarget}" "cd ${kRemotePath} && find . -type f -not -path './build/*' -not -path './.git/*' -print0 | xargs -0 sha256sum 2>/dev/null" \
-    | sed 's# \./# #' | sort -k2
-)"
+
+if [ "${kLocalCount}" -eq 0 ]; then
+  echo "no tracked files were found; is ${kSourceDir} a git repository?" >&2
+  exit 1
+fi
+
+# sha256sum reports a file it cannot open on stderr and leaves it out of the
+# output, which is the signal that it did not arrive. The comparison below names
+# it, so the noise is suppressed here.
+(cd "${kSourceDir}" && git ls-files -z) \
+  | ssh "${kTarget}" "cd ${kRemotePath} && xargs -0 sha256sum" 2>/dev/null \
+  | sort > "${kRemoteList}"
+
+if [ ! -s "${kRemoteList}" ]; then
+  echo "the destination returned no checksums; the connection or the path is wrong" >&2
+  exit 1
+fi
+
+# Paths only, for telling a file that arrived corrupted from one that never
+# arrived. sha256sum separates the digest from the path with two spaces, so the
+# path starts at the third field.
+cut -d' ' -f3- < "${kRemoteList}" > "${kRemotePaths}"
 
 missing=0
-while read -r digest path; do
-  if ! printf '%s\n' "${kRemoteSum}" | grep -qF "${digest}  ${path}"; then
-    echo "  mismatched or missing: ${path}"
-    missing=$((missing + 1))
+while IFS= read -r entry; do
+  path="${entry#*  }"
+  if grep -qxF "${path}" "${kRemotePaths}"; then
+    echo "  content differs: ${path}"
+  else
+    echo "  did not arrive: ${path}"
   fi
-done < "${kManifest}"
+  missing=$((missing + 1))
+done < <(comm -23 "${kManifest}" "${kRemoteList}")
 
 echo "checked ${kLocalCount} tracked files"
 if [ "${missing}" -ne 0 ]; then
