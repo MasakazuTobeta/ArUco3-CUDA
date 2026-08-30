@@ -23,11 +23,12 @@ The input image is processed on the GPU through to IDs and corners. The design o
 flowchart TD
     A["Input image (8-bit grayscale on the device)"] --> B["Downscaling and adaptive thresholding"]
     B --> C["Connected components and quadrilateral candidate extraction"]
-    C --> D["Grouping of nearby candidates and containment tree"]
-    D --> E["Perspective transform and cell bit readout"]
-    E --> F["Dictionary matching and rotation cancellation"]
-    F --> G["Subpixel corner refinement and restoration to full scale"]
-    G --> H["IDs, corners, rotation (device-resident)"]
+    C --> D["Candidate filtering and proximity merging"]
+    D --> E["Perspective transform and cell sampling"]
+    E --> F["Cell bit readout, border verification, and Dictionary matching"]
+    F --> G["Containment tree, identification suppression, and rotation cancellation"]
+    G --> H["Subpixel corner refinement and restoration to full scale"]
+    H --> I["IDs, corners, rotation (device-resident)"]
 ```
 
 Pose estimation is out of scope. The output corners are in the full-scale coordinates of the input image, so they can be passed directly to OpenCV's `solvePnP` and similar functions.
@@ -38,34 +39,34 @@ These are end-to-end times measuring detection only. Image loading and checksums
 
 `CUDA-Resident` is the route that takes device-resident input and processes every stage on the GPU; this is the route the library provides.
 
-`Hybrid` is a **comparison route** that runs candidate extraction on the GPU and everything after it on the host. **It is not part of the public API.** It lives in `hybrid/` and requires OpenCV. It exists to cross-check the correctness of the GPU implementation against the CPU baseline, and it is not installed. It appears in the table to show where the move to the GPU pays off.
+`Hybrid` is a **comparison route** that runs downscaling and adaptive thresholding on the GPU and everything from candidate extraction onward on the host. **It is not part of the public API.** It lives in `hybrid/` and requires OpenCV. It exists to cross-check the correctness of the GPU implementation against the CPU baseline, and it is not installed. It appears in the table to show where the move to the GPU pays off.
 
 | Machine | CPU | Hybrid | CUDA-Resident | CUDA-Resident / CPU (1280x720, 4 markers) | Same (3840x2160) |
 | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | 0.699 ms | 0.301 ms | 0.696 ms | 0.98 | 0.45 |
-| Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.66 | 0.30 |
-| GeForce RTX 5070 Ti | 0.614 ms | 0.295 ms | 0.421 ms | 0.68 | 0.28 |
+| DGX Spark GB10 | 0.699 ms | 0.301 ms | 0.696 ms | 0.99 | 0.31 |
+| Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.64 | 0.25 |
+| GeForce RTX 5070 Ti | 0.614 ms | 0.295 ms | 0.421 ms | 0.69 | 0.15 |
 
-The left three columns are the steady-state p50 for a scene with 4 markers placed in a 1280x720 image, taken as the median over three independent processes of the one-process, one-image measurement (200 iterations) used to measure startup cost. Measuring the same scene in the 28-scene sweep gives somewhat different values (for example, CUDA-Resident on DGX Spark comes out at 0.626 ms). **The GPU routes have large run-to-run variance, and differences of this magnitude arise between measurements.** Details are in the [Benchmark report](docs/benchmark-report.md). A ratio below 1 means the GPU is faster.
+The left three columns are the steady-state p50 for a scene with 4 markers placed in a 1280x720 image, taken as the median over three independent processes of the one-process, one-image measurement (200 iterations) used to measure startup cost (`docs/measurements/2026-08-29-*-startup.jsonl`). The 1280x720 ratio column is those same three columns divided out. That measurement covers only the one 1280x720 scene, so the 3840x2160 column is taken from the 28-scene sweep instead (`docs/measurements/2026-08-29-*-sweep.jsonl`, scene `clean_3840x2160_n4_s128`); at 3840x2160 every marker in the corpus falls below the ArUco3 detection lower bound, so all three routes return 0 detections there, and that column compares the cost of processing the frame rather than of decoding markers. Measuring the 1280x720 scene in the 28-scene sweep instead gives somewhat different values (for example, CUDA-Resident on DGX Spark comes out at 0.626 ms, a ratio of 0.89 rather than 0.99). **The GPU routes have large run-to-run variance, and differences of this magnitude arise between measurements.** Details are in the [Benchmark report](docs/benchmark-report.md). A ratio below 1 means the GPU is faster.
 
 **There are conditions under which the CPU wins.** **The CPU beats CUDA-Resident on small scenes with a low contour point count.** That is 5 of the 28 scenes on DGX Spark, 4 on GeForce RTX 5070 Ti, and 1 on Jetson AGX Orin. **Resolution alone does not decide it.** At the same 640x480, `noise_640x480` has many contour points, and on DGX Spark the GPU is 2.3x faster — 0.612 ms for CUDA-Resident against 1.406 ms for the CPU. Conversely, the 5 scenes on DGX Spark include one 1280x720 scene.
 
 That said, this applies when the route is fixed to `CUDA-Resident`. **On DGX Spark and GeForce RTX 5070 Ti, there is not a single scene out of 28 where the CPU beats `Hybrid`.** If the faster of the two can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on Jetson AGX Orin is there one scene where the CPU beats both routes at once. On real images the contour point count may be higher than in the synthetic corpus, which would move this boundary. This has not been confirmed yet.
 
-What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. The coefficient per 1e5 contour points is 2.48-5.35 ms for CPU, 2.54-5.48 ms for Hybrid, and 0.041-0.278 ms for CUDA-Resident — **Hybrid is nearly the same as CPU**, because everything from contour extraction onward runs on the host. The crossover between Hybrid and CUDA-Resident is at about 20,000 contour points (DGX Spark and GeForce RTX 5070 Ti); on Jetson AGX Orin, CUDA-Resident wins on all 28 scenes.
+What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. The coefficient per 1e5 contour points is 2.48-5.35 ms for CPU, 2.54-5.48 ms for Hybrid, and 0.041-0.278 ms for CUDA-Resident — **Hybrid is nearly the same as CPU**, because everything from contour extraction onward runs on the host. Above about 20,000 contour points CUDA-Resident wins on all three machines, but that figure is a rough guide rather than a boundary: below it, native resolution decides instead, and CUDA-Resident already wins at 3840x2160 on DGX Spark and at 1920x1080 and above on GeForce RTX 5070 Ti even with almost no contour points. On Jetson AGX Orin, CUDA-Resident wins on all 28 scenes.
 
-For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, and GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms. The GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (on DGX Spark, 0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident).
+For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, and GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms. On DGX Spark the GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident). That does not carry to the other two machines: on Jetson AGX Orin only Hybrid is larger (3.5% against 0.4% for CPU, with CUDA-Resident at 0.5%), and on GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%).
 
 ## Accuracy
 
-Measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 18 combinations of 3 routes x 3 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
+Measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 9 combinations of 3 routes x 3 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
 
 | Metric | Result |
 | --- | --- |
-| precision | 100% across all 18 combinations. 0 false positives, 0 ID errors |
+| precision | 100% across all 9 combinations. 0 false positives, 0 ID errors |
 | recall (whole corpus) | 18.33% (88 of 480 ground truth items) |
 | recall (at or above the detection lower bound) | 94.44% (85 of 90 ground truth items) |
-| rotation | Matches ground truth for all 85 detections |
+| rotation | Matches ground truth for all 88 detections (85 of them at or above the bound) |
 | corner RMSE | CPU 0.5184 px (aarch64) / 0.5042 px (x86_64), CUDA 0.4806 px / 0.4653 px |
 
 By design, ArUco3 does not detect markers whose side length after downscaling falls below a lower bound. The corpus deliberately includes sizes below this bound, so the overall recall of 18.33% is a figure dominated by that strategic lower bound. The lower bound for each resolution is in [Accuracy evaluation results](docs/accuracy-report.md). The 5 misses break down as 3 combined degradation, 1 occlusion, and 1 border clipping; rotation, projection, blur, noise, and illumination differences each account for 0 on their own.
@@ -179,7 +180,7 @@ Only two configuration combinations are accepted: ArUco3 enabled with subpixel c
 - Pose estimation is out of scope.
 - Per-stage times are wall-clock and include host synchronization. Per-stage measurement using CUDA events has not been done.
 - A single `Detector` instance cannot be used from multiple threads at the same time.
-- Even with the same seed, images in the synthetic corpus differ between aarch64 and x86_64 on 54 of 91 scenes (the differences are under 0.1% of pixels, at most 4 gray levels). This affects only comparisons across architectures.
+- Even with the same seed, images in the synthetic corpus differ across build environments. Per-scene hashes were kept only for the 28 benchmark scenes: 18 of those differ between aarch64 and x86_64, and 6 differ between the two aarch64 machines. How many of the 91 scenes differ, and by how much, was not recorded. This affects only comparisons across machines.
 
 ## Documentation
 

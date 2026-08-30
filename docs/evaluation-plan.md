@@ -69,14 +69,16 @@ Initialization and memory allocation are excluded from the measured interval, bu
 | --- | --- |
 | Resolution | 640x480, 1280x720, 1920x1080, 3840x2160 |
 | Image format | 8-bit grayscale |
-| Marker count | 0, 1, 4, 16, near the upper limit |
-| Marker side length | 8, 16, 32, 64, 128 pixels and above |
-| Degradation conditions | Rotation, projective distortion, blur, noise, illumination difference, partial occlusion, image border |
+| Marker count | 0, 1, 4, 16 |
+| Marker side length | 16, 32, 64, 128, 256 pixels in the clean scenes, 96 pixels in the degraded scenes |
+| Degradation conditions | Rotation, projective distortion, blur, noise, illumination difference, partial occlusion, image border, and all of them combined |
 | Dictionary | Fixed to `DICT_ARUCO_MIP_36h12` |
+
+These are the conditions of the `full` preset of the corpus generator. Combinations in which the markers would not fit in the image are skipped, so not every marker count and side length occurs at every resolution; the preset yields 91 scenes in total.
 
 The policy for widening dictionary support is in the [Dictionary Policy](dictionaries.md). The corpus generation rules and how ground truth is derived are in the [corpus generator](../tools/corpusgen/corpus_generator.md).
 
-Corpus images generated with the same seed differ between aarch64 and x86_64 in 54 of 91 scenes. The difference is under 0.1% of pixels, with a maximum of 4 gray levels. This does not affect comparisons within the same architecture, but when comparing corner errors across architectures, we take this difference into account.
+Corpus images generated with the same seed differ across build environments. Per-scene hashes were kept only for the 28 benchmark scenes: 18 of those differ between aarch64 and x86_64, and 6 differ between the two aarch64 machines, so the instruction set alone does not explain it. How many of the 91 scenes differ, and by how much, is not recorded. This does not affect comparisons within the same machine, but when comparing corner errors across machines, we take this difference into account.
 
 ### Measurement conditions
 
@@ -92,7 +94,7 @@ We fix the CPU core by type because on machines that mix performance cores and e
 
 We use nearest-rank percentiles so that the returned value is always one of the actual measurements. Interpolation makes the aggregation method implementation-dependent, and comparisons across environments no longer hold.
 
-We run multiple times as independent processes because percentiles within a single run do not capture the variation caused by per-process memory layout. Run-to-run variance is an order of magnitude larger on the GPU routes than on the CPU route, and we always report it alongside the results. When we want to isolate a change in a before-and-after comparison, we disable ASLR with `setarch -R` and record that we did so.
+We run multiple times as independent processes because percentiles within a single run do not capture the variation caused by per-process memory layout. Run-to-run variance can be an order of magnitude larger on the GPU routes than on the CPU route (it is on the DGX Spark; it is not on the GeForce RTX 5070 Ti), so we always report it alongside the results, per machine. When we want to isolate a change in a before-and-after comparison, we disable ASLR with `setarch -R` and record that we did so.
 
 ### Accuracy metrics
 

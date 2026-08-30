@@ -12,7 +12,7 @@ We cover the implementation of detection (from the input image through to IDs an
 
 ### What works
 
-- Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and corner subpixel refinement completes on the GPU. `Detector` returns results on the device without host synchronization, and one frame's sequence of kernel launches is folded into a CUDA Graph. The list of stages is in the [Detection Pipeline Design](design/detector-pipeline.md).
+- Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and corner subpixel refinement completes on the GPU. `Detector` returns results on the device without host synchronization, and one frame's sequence of kernel launches is folded into a CUDA Graph when the caller passes an explicit stream. The legacy default stream cannot be captured, so passing `nullptr` issues the kernels one stage at a time. The list of stages is in the [Detection Pipeline Design](design/detector-pipeline.md).
 - We can compare three routes under the same conditions: the CPU reference (OpenCV ArUco3), Hybrid (only preprocessing and thresholding on the GPU), and GPU-resident.
 - The automated tests and the four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass on all three machines.
 
@@ -28,7 +28,7 @@ The configuration of two integrated-GPU machines and one discrete-GPU machine le
 
 ### Accuracy
 
-Over a synthetic corpus of 91 scenes and 480 ground truth markers, all 18 combinations of 3 routes x 3 machines give 100% precision, 0 false positives, and 0 ID errors. Recall is 94.44% for sizes at or above the ArUco3 detection strategy's detection limit, and 18.33% over the whole corpus. The overall value is low because the corpus deliberately includes sizes below the limit; it does not represent misses by the implementation. The limit per resolution and the breakdown by condition are in the [Accuracy Evaluation Results](accuracy-report.md).
+Over a synthetic corpus of 91 scenes and 480 ground truth markers, all 9 combinations of 3 routes x 3 machines give 100% precision, 0 false positives, and 0 ID errors. Recall is 94.44% for sizes at or above the ArUco3 detection strategy's detection limit, and 18.33% over the whole corpus. The overall value is low because the corpus deliberately includes sizes below the limit; it does not represent misses by the implementation. The limit per resolution and the breakdown by condition are in the [Accuracy Evaluation Results](accuracy-report.md).
 
 ### Speed
 

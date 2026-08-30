@@ -13,7 +13,7 @@ The scope covers the stage structure of detection, the main design decisions, th
 ### What works
 
 - Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and subpixel refinement of the corners (S1 through S10) completes on the GPU. The results can be referenced while still in device buffers (S11), and `Detector::detect_async` returns without host synchronization. To use them on the host, retrieve them with `download()`.
-- The kernel launch sequence for one frame is folded into a CUDA Graph.
+- When the caller passes an explicit stream, the kernel launch sequence for one frame is folded into a CUDA Graph. CUDA does not allow capture on the legacy default stream, so passing `nullptr` issues the kernels one stage at a time.
 - No device memory is allocated during detection. Peak workspace usage is 17.51 MB with the ArUco3 detection strategy enabled and 414.51 MB with it disabled. Detecting all 91 scenes of the synthetic corpus does not increase the allocation count.
 - All 402 automated tests pass on all three machines below. Compute Sanitizer applies its four tools (memcheck / racecheck / initcheck / synccheck) to two executables, and all 8 combinations pass on all three machines.
 
@@ -25,7 +25,7 @@ The scope covers the stage structure of detection, the main design decisions, th
 
 The configuration of two integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
 
-For accuracy, precision is 100% across all 18 combinations of 3 routes x 3 machines, with zero false positives and zero ID errors. Because the ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below the lower bound, recall is 18.33% over the whole corpus and 94.44% when limited to markers at or above that bound. For speed, end-to-end times measuring detection only are compared across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not part of the measured interval. On the synthetic corpus, the CPU is favored only in scenes that are 640x480 and contain at least one detection. On real images the contour point count may increase and move the boundary, but we have not verified this.
+For accuracy, precision is 100% across all 9 combinations of 3 routes x 3 machines, with zero false positives and zero ID errors. Because the ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below the lower bound, recall is 18.33% over the whole corpus and 94.44% when limited to markers at or above that bound. For speed, end-to-end times measuring detection only are compared across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not part of the measured interval. On the synthetic corpus, the CPU beats CUDA-Resident in 5 of the 28 scenes on the DGX Spark, 4 on the GeForce RTX 5070 Ti, and 1 on the Jetson AGX Orin. What governs this is the contour point count after thresholding rather than the resolution: the 5 scenes on the DGX Spark include one at 1280x720, while `noise_640x480` and `combined_640x480` go to the GPU. On real images the contour point count may increase and move the boundary, but we have not verified this.
 
 ### Detection stage structure
 
@@ -109,7 +109,7 @@ The other rule is that the first ID satisfying the condition is taken, not the I
 | true | kNone | Rejected. Corners would remain in post-downscale coordinates |
 | false | kSubpix | Rejected. There is only one stage, so refinement never runs |
 
-The processing that restores post-downscale coordinates to full scale exists only in the stage climb of S10. Enabling the ArUco3 detection strategy and turning off refinement emits corners still in segmentation coordinates. Conversely, with it disabled the pyramid has only one level, so the stage climb never runs. Since silently allowing either would leave the coordinate systems inconsistent, `initialize` rejects them with `kInvalidConfig`. OpenCV itself unconditionally overwrites `cornerRefinementMethod` with SUBPIX when ArUco3 is enabled, so this implementation makes the same overwrite explicit on the configuration side.
+The processing that restores post-downscale coordinates to full scale exists only in the stage climb of S10. Enabling the ArUco3 detection strategy and turning off refinement emits corners still in segmentation coordinates. Conversely, with it disabled the pyramid has only one level, so the stage climb never runs. Since silently allowing either would leave the coordinate systems inconsistent, `initialize` rejects them with `kInvalidConfig`. OpenCV itself unconditionally overwrites `cornerRefinementMethod` with SUBPIX when ArUco3 is enabled; this implementation does not overwrite the setting, because rewriting it silently would leave the caller's coordinate systems inconsistent without saying so.
 
 #### The workspace is split into two, and the allocation size is derived from a square upper bound
 
@@ -131,7 +131,7 @@ The fully-GPU route has a high fixed cost that is flat with respect to the amoun
 
 - Change the S10 refinement from per-corner parallelism to per-element parallelism.
 - Split the Otsu threshold computation into three phases. Accumulating the centroid and searching for the separation measure are independent per element, so they are parallelized, and only the recurrence is run sequentially on one thread.
-- Fold the launch sequence for one frame into a CUDA Graph.
+- Fold the launch sequence for one frame into a CUDA Graph. This takes effect only when the caller passes an explicit stream; the default stream cannot be captured.
 
 Rounding does not change by a single bit. The changes in the ratio to CPU (below 1 favors the GPU) are as follows.
 
@@ -140,7 +140,9 @@ Rounding does not change by a single bit. The changes in the ratio to CPU (below
 | 1280x720, 4 markers | 1.94 → 0.98 | 1.08 → 0.66 | 1.32 → 0.68 |
 | 3840x2160, 4 markers | 0.99 → 0.45 | 0.46 → 0.30 | 0.60 → 0.28 |
 
-Even so, the CPU remains faster in 640x480 scenes with detections. What determines the boundary is neither the resolution nor the candidate count but the contour point count after thresholding: the coefficient per 1e5 contour points is 2.48 to 5.35 ms for CPU and 0.041 to 0.278 ms for CUDA-Resident. Hybrid's coefficient is nearly the same as the CPU's (2.54 to 5.48 ms), because it performs everything from contour extraction onward on the host.
+These come from the 9-scene set that the [benchmark summary](benchmark-report.md) measures alternately within a single session, not from the 28-scene sweep. **That set is not included in `docs/measurements/`, and there is no measurement file at all for the state before optimization, so a reader cannot re-derive these ratios from the published data.** The 28-scene sweep, which is published, gives 0.89 on the DGX Spark, 0.63 on the Jetson AGX Orin, and 0.68 on the GeForce RTX 5070 Ti for 1280x720 with 4 markers after optimization; it contains no 3840x2160 scene with detections, so the 3840x2160 row has no counterpart there.
+
+Even so, at 640x480 with 4 markers the CPU remains faster on the DGX Spark and the GeForce RTX 5070 Ti (1.32 and 1.25); on the Jetson AGX Orin the GPU wins there (0.87). What determines the boundary is neither the resolution nor the candidate count but the contour point count after thresholding: the coefficient per 1e5 contour points is 2.48 to 5.35 ms for CPU and 0.041 to 0.278 ms for CUDA-Resident. Hybrid's coefficient is nearly the same as the CPU's (2.54 to 5.48 ms), because it performs everything from contour extraction onward on the host.
 
 #### Machine-dependent values are derived from device attributes rather than configuration
 
@@ -170,7 +172,7 @@ The CPU reference is a compatibility oracle, not ground truth. Markers that the 
 
 `tools/check_doxygen.py` enumerates the declarations in the public headers and detects missing items among the 7 elements the convention requires (purpose, arguments, return value, ownership, synchronization behavior, input example, output example). When ownership and synchronization behavior are common across an entire class, this is stated in the class's Doxygen in place of describing it on each member, because copying identical text onto every member would be redundant.
 
-In Compute Sanitizer runs, tests that intentionally make CUDA APIs fail are excluded by suite name. Without excluding them, the intended failures show up as reports and bury real problems. By default racecheck accumulates analysis until block completion, so with kernels that use a lot of shared memory the analysis state reaches its limit. On discrete-GPU machines, `--force-synchronization-limit 1` is specified.
+In Compute Sanitizer runs, tests that intentionally make CUDA APIs fail are excluded by suite name. Without excluding them, the intended failures show up as reports and bury real problems. By default racecheck accumulates analysis until block completion, so with kernels that use a lot of shared memory the analysis state reaches its limit. `--force-synchronization-limit 1` is therefore passed to racecheck unconditionally, on every machine: `cmake/Aruco3CudaSanitizer.cmake` sets it for the racecheck tool without branching on the machine. It was RTX Blackwell that made it necessary. The finer synchronization stretches the run time, so the racecheck timeout is raised from 600 s to 1800 s.
 
 For implementations that transcribe a rule, we also confirm that breaking the rule makes the tests fail. Mutations were actually injected into the four containment tree rules listed above, and all of them were confirmed to be caught by the tests.
 
@@ -196,7 +198,7 @@ The CLI layer in `main.cpp` is included in the measurement by launching the exec
 
 **Pin the CPU core type.** The DGX Spark GB10 mixes performance and efficiency cores, and being assigned to an efficiency core makes it nearly twice as slow under the same conditions. Measurements without pinning become bimodal depending on the assignment, making the GPU's advantage look larger than it is. The Jetson AGX Orin has a uniform configuration and is not affected.
 
-**Record the state of address space layout randomization (ASLR) with the results.** On the CPU route, which handles all resolutions, p50 moves from nothing more than per-process differences in memory layout. Percentiles within a single run do not capture this variation, so the median across independent processes is examined together with the run-to-run variance. Run-to-run variance on the GPU routes is an order of magnitude larger than on the CPU route: on the DGX Spark it is 17.7% for Hybrid and 14.1% for CUDA-Resident, against 0.6% for CPU.
+**Record the state of address space layout randomization (ASLR) with the results.** On the CPU route, which handles all resolutions, p50 moves from nothing more than per-process differences in memory layout. Percentiles within a single run do not capture this variation, so the median across independent processes is examined together with the run-to-run variance. On the DGX Spark, run-to-run variance on the GPU routes is an order of magnitude larger than on the CPU route: 17.7% for Hybrid and 14.1% for CUDA-Resident, against 0.6% for CPU. The other two machines do not behave that way, so the variance has to be reported per machine rather than assumed for the GPU routes.
 
 **Differences on the order of 10% cannot be judged by comparing separate sessions.** Because each version's distribution is wider than the difference between versions, they must be measured alternately within the same session.
 

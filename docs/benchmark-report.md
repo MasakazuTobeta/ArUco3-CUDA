@@ -2,7 +2,7 @@
 
 - Measurement date: 2026-08-29
 - Subject: an implementation that keeps everything from input image downscaling and thresholding through corner subpixel refinement resident on the GPU
-- Raw measurement results: `docs/measurements/`
+- Raw measurement results: `docs/measurements/`. That directory holds the 28-scene sweep, the startup measurement, the memory-mode comparison, and the accuracy evaluation. The 9-scene same-session set used in "Before and after optimization" and "Hybrid route breakdown", and the profiling runs behind the per-stage breakdowns, are **not** included in this repository, so the numbers taken from them cannot be re-derived by a reader. Each section below states which set it uses.
 
 ## Purpose
 
@@ -45,15 +45,17 @@ For Hybrid the center of the cost is returning the thresholded image to the host
 | Item | Value |
 | --- | --- |
 | Measured interval | **Detection only. Image loading and checksums are not included** |
-| Repetitions | 30 warmup, 200 latency, 100 throughput frames |
+| Repetitions | 30 warmup, 200 latency. **Throughput was not measured**: `conditions.throughput_frames` is 0 and `throughput_fps` is null in every measurement row of every result JSONL |
 | Startup cost | Measured separately. One image per process, three times |
 | OpenCV threads | 1 |
 | ASLR | Enabled. The container's privileges do not allow `setarch -R` |
 | Independent runs | 3 processes. We take the median of the p50 values and report the run-to-run variance alongside |
 | Percentiles | nearest-rank. No interpolation, so the value returned is always an actually measured one |
-| corpus | 28 scenes from the `full` preset of the synthetic corpus (4 resolutions x 0/1/4/16 markers + blur / noise / combined at 4 resolutions each) |
+| corpus | 28 scenes selected from the `full` preset of the synthetic corpus (4 resolutions x 0/1/4/16 markers + blur / noise / combined at 4 resolutions each) |
 | Dictionary | `DICT_ARUCO_MIP_36h12` |
 | ArUco3 detection strategy | Enabled. `minSideLengthCanonicalImg` = 32, `minMarkerLengthRatioOriginalImg` = 0.05 |
+
+The `n` in a scene name is the number of markers **placed**, not the number detected, and the `s` is the marker side in pixels. With the ArUco3 lower bound `32 + 0.05 x long side`, the placed side is at or below that bound in most of the higher-resolution scenes, so **20 of the 28 scenes detect nothing**; the remaining 8 detect 1 or 4 markers. The sweep is therefore a timing corpus, not a detection corpus.
 
 The measured interval does not include PNG decoding. Real-time processing does not decode PNG, and loading the image once per iteration would make decoding the bulk of the measured interval, which would not hold up as a comparison of end-to-end detection time. The `schema_version` of the result JSONL is 4; results from a different version are not aggregated together, because the same keys refer to different intervals.
 
@@ -96,7 +98,7 @@ The configuration of two integrated-GPU machines and one discrete-GPU machine is
 
 ### Summary of results
 
-1. **The three routes produce the same detection results.** The detection counts agree across all 252 combinations of 28 scenes x 3 routes x 3 machines. The degree of agreement in the coordinates is in [the accuracy evaluation results](accuracy-report.md).
+1. **The three routes produce the same detection results.** The detection counts agree across all 252 combinations of 28 scenes x 3 routes x 3 machines. **In 20 of the 28 scenes that count is 0**, so 180 of the 252 combinations are agreement on zero; the other 8 scenes detect 1 or 4 markers each. The degree of agreement in the coordinates is in [the accuracy evaluation results](accuracy-report.md).
 2. **The CPU beats CUDA-Resident in small scenes with a low contour point count.** That is 5 of the 28 scenes on the DGX Spark, 4 on the GeForce RTX 5070 Ti, and 1 on the Jetson AGX Orin. **Resolution alone does not determine it.** Even at the same 640x480, `noise_640x480` has many contour points, and on the DGX Spark the CPU takes 1.406 ms against 0.612 ms for CUDA-Resident, making the GPU 2.3 times faster. Conversely, the 5 scenes on the DGX Spark include one 1280x720 scene.
 3. **This, however, applies when the route is fixed to CUDA-Resident.** On the DGX Spark and the GeForce RTX 5070 Ti, **there is not a single scene out of the 28 where the CPU beats Hybrid.** If the faster GPU route can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on the Jetson AGX Orin is there one scene where the CPU beats both routes at once (`clean_640x480_n1_s128`, CPU 0.870 ms against the best GPU result of 0.896 ms).
 4. **What sets the boundary is neither resolution nor candidate count, but the contour point count after thresholding.** The coefficient per 1e5 contour points is 2.48 to 5.35 ms for the CPU and 2.54 to 5.48 ms for Hybrid, against 0.041 to 0.278 ms for CUDA-Resident.
@@ -104,7 +106,7 @@ The configuration of two integrated-GPU machines and one discrete-GPU machine is
 6. **The value of CUDA-Resident is that it has no slow scenes.** The spread across scenes is 3.4 to 4.1 times, which stays small compared with 11.6 to 20.8 times for the CPU and 10.0 to 43.7 times for Hybrid.
 7. **For a single detection the CPU remains faster by an order of magnitude.** Time until the first image's result is 2.2 to 6.1 ms for the CPU and 57.6 to 174.0 ms for the GPU routes. Breaking even takes roughly 100 to 420 frames with Hybrid and roughly 110 to 350 frames with CUDA-Resident.
 8. **Do not choose managed memory for input.** On a discrete GPU it is 6.4 to 30 times slower. On integrated GPUs it stays at 1.01 to 1.22 times, but it is never faster.
-9. **The run-to-run variance of the GPU routes is an order of magnitude larger than that of the CPU route.** A single measurement is not enough to judge.
+9. **The run-to-run variance of the GPU routes is an order of magnitude larger than that of the CPU route only on the DGX Spark** (0.6% against 17.7% and 14.1%). On the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%); CUDA-Resident is 0.5%, the same order as the CPU. On the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%). A single measurement is not enough to judge on the DGX Spark, or in the worst scenes on the Jetson AGX Orin.
 
 ### Which route is faster when
 
@@ -218,13 +220,18 @@ Sorted by ascending contour point count, the position where the winning route sw
 | noise_1280x720 | 99,074 | **Resident** (0.14) | **Resident** (0.16) | **Resident** (0.09) |
 | noise_3840x2160 | 127,319 | **Resident** (0.14) | **Resident** (0.19) | **Resident** (0.07) |
 
-**On the DGX Spark and the GeForce RTX 5070 Ti, CUDA-Resident wins once the contour points exceed roughly 20,000.** Below that Hybrid is faster, and on clean 640x480 the gap reaches 2 to 3 times.
+**Above roughly 20,000 contour points, CUDA-Resident wins on all three machines.** Below that the winner is not decided by the contour point count alone, so **20,000 is a rough guide and not a boundary**. The table contains counterexamples in which CUDA-Resident wins far below it, and they are grouped by native resolution rather than by contour points.
+
+- DGX Spark: the five 3840x2160 scenes below 20,000 points all go to CUDA-Resident (0.71 to 0.78) even though they have 0 to 3,669 points, and so does `combined_1920x1080` at 8,237 points (0.67).
+- GeForce RTX 5070 Ti: every scene at 1920x1080 and above goes to CUDA-Resident, the lowest of them at 0 points; `clean_1280x720_n0_s16` (0 points) also goes to CUDA-Resident, but at 0.94 that is close to a tie.
+
+Hybrid is faster below 20,000 points only at the lower resolutions: on the DGX Spark at 1920x1080 and below except `combined_1920x1080`, and on the GeForce RTX 5070 Ti at 1280x720 and below except `clean_1280x720_n0_s16`. On clean 640x480 the gap in Hybrid's favor reaches 2 to 3 times.
 
 **On the Jetson AGX Orin, CUDA-Resident wins in all 28 scenes.** Its CPU is the weakest of the three machines, so Hybrid's CPU stage is always at a disadvantage.
 
 ### Startup cost and break-even frames
 
-This is a cost that does not appear in the post-warmup percentiles. We measured it with one image per process (running several images in one process would let the second image onward use a warmed context, so the startup cost would not appear). 1280x720 with 4 markers, `M-Device`.
+This is a cost that does not appear in the post-warmup percentiles. We measured it with one image per process (running several images in one process would let the second image onward use a warmed context, so the startup cost would not appear). 1280x720 with 4 markers, `M-Device`. This set is published as `docs/measurements/2026-08-29-*-startup.jsonl`, so the table below can be recomputed.
 
 | Machine | Route | To the first image | Steady state | Break-even frames |
 | --- | --- | --- | --- | --- |
@@ -242,20 +249,22 @@ This is a cost that does not appear in the post-warmup percentiles. We measured 
 
 The reason no break-even frame count can be given for CUDA-Resident on the DGX Spark is that the steady state in this scene is almost the same as the CPU's (0.696 ms against 0.699 ms). **When the difference is small, the break-even frame count is meaningless, because the denominator of the division approaches 0.** In the 28-scene sweep on the same machine the values are 0.626 ms and 0.702 ms, which gives about 2300 frames. This scene is the boundary itself for the DGX Spark.
 
-The breakdown of the startup cost differs by machine. CUDA context creation itself, taken as the median of `cuda_context_ms` recorded in the `environment` row of the measurement results, is 16.5 ms on the DGX Spark, 9.0 ms on the Jetson AGX Orin, and 67.9 ms on the GeForce RTX 5070 Ti (27 runs per machine). The variance is large: the Jetson AGX Orin ranges from 6.3 ms to 116.2 ms and the GeForce RTX 5070 Ti from 65.5 ms to 212.8 ms. The first process is not warmed up, so its value comes out large. Context creation cannot be reduced from the implementation side.
+The breakdown of the startup cost differs by machine. CUDA context creation itself, taken as the median of `cuda_context_ms` recorded in the `environment` row of the measurement results, is 16.5 ms on the DGX Spark, 9.0 ms on the Jetson AGX Orin, and 67.9 ms on the GeForce RTX 5070 Ti (27 runs per machine). The variance is large: the Jetson AGX Orin ranges from 6.3 ms to 116.2 ms and the GeForce RTX 5070 Ti from 65.4 ms to 212.8 ms. The first process is not warmed up, so its value comes out large. Context creation cannot be reduced from the implementation side.
 
 ### Comparison of input memory types
 
 We measured the three types on the `CUDA-E2E` route. The parentheses give the ratio with `M-Pageable` as 1.
 
+**This comparison uses two scenes, not the 28-scene sweep.** The memory-mode JSONL holds 18 measurement rows per machine: 2 images x 3 memory modes x 3 processes. The two images are `clean_1280x720_n4_s128` and `clean_3840x2160_n4_s256`; the second has a marker side of 256 px, so it is **not** the `clean_3840x2160_n4_s128` of the sweep. Both detect 4 markers.
+
 | Machine | Scene | M-Pageable | M-Pinned | M-Managed |
 | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | 1280x720, 4 markers | 0.895 ms | 0.973 ms (1.09x) | 0.905 ms (1.01x) |
-| DGX Spark GB10 | 3840x2160, 4 markers | 1.099 ms | 1.267 ms (1.15x) | **1.345 ms** (1.22x) |
+| DGX Spark GB10 | 3840x2160, 4 markers (s256) | 1.099 ms | 1.267 ms (1.15x) | **1.345 ms** (1.22x) |
 | Jetson AGX Orin | 1280x720, 4 markers | 1.508 ms | 1.490 ms (0.99x) | 1.686 ms (1.12x) |
-| Jetson AGX Orin | 3840x2160, 4 markers | 3.311 ms | **2.389 ms** (0.72x) | 3.449 ms (1.04x) |
+| Jetson AGX Orin | 3840x2160, 4 markers (s256) | 3.311 ms | **2.389 ms** (0.72x) | 3.449 ms (1.04x) |
 | GeForce RTX 5070 Ti | 1280x720, 4 markers | 0.505 ms | 0.521 ms (1.03x) | **3.217 ms** (6.37x) |
-| GeForce RTX 5070 Ti | 3840x2160, 4 markers | 0.812 ms | **0.715 ms** (0.88x) | **24.773 ms** (30.52x) |
+| GeForce RTX 5070 Ti | 3840x2160, 4 markers (s256) | 0.812 ms | **0.715 ms** (0.88x) | **24.773 ms** (30.52x) |
 
 **Managed must not be used on a discrete GPU.** On the GeForce RTX 5070 Ti it is 6.4 times to **30 times** slower, because pages migrate from the host every time the device touches them. At 3840x2160 it takes 24.8 ms, which is no comparison to the 0.812 ms of pageable.
 
@@ -286,9 +295,9 @@ The spread of the p50 values across three independent processes.
 | Jetson AGX Orin | 0.4% (max 1.7%) | 3.5% (max 29.1%) | 0.5% (max 38.5%) |
 | GeForce RTX 5070 Ti | 0.5% (max 2.2%) | 0.4% (max 6.3%) | 0.0% (max 0.5%) |
 
-**The variance of the GPU routes is an order of magnitude larger than that of the CPU route.** It is especially pronounced on the DGX Spark. We believe this is because the GPU clock is not locked (unverified).
+**The variance of the GPU routes is an order of magnitude larger than that of the CPU route on the DGX Spark alone** (0.6% against 17.7% and 14.1%). We believe this is because the GPU clock is not locked (unverified). The other two machines do not follow it: on the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%) while CUDA-Resident is 0.5%, the same order as the CPU, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%). The Jetson AGX Orin medians hide its worst scene, where CUDA-Resident reaches 38.5% against 1.7% for the CPU.
 
-Two rules for measuring follow from this.
+Two rules for measuring follow from this. They are needed on the DGX Spark, and on the Jetson AGX Orin for the worst scenes; on the GeForce RTX 5070 Ti they cost nothing to keep.
 
 - **Do not judge from a single measurement.** Use the median of three or more independent processes. Unless noted otherwise, the values in this report are medians over three processes.
 - **A difference of around 10% cannot be decided by measurements taken in separate sessions.** The spread of the variance is wider than that difference. When comparing before and after an implementation change, measure them alternately within the same session.
@@ -297,7 +306,7 @@ The GPU stage of the Jetson AGX Orin has a wide range of 0.64 to 2.54 ms; even a
 
 ### Before and after optimization
 
-The current implementation has been through the following three changes. The comparison uses a set of 9 scenes measured alternately within the same session, a different measurement set from the 28-scene sweep above. Even the same scene differs by a few percent.
+The current implementation has been through the following three changes. The comparison uses a set of 9 scenes measured alternately within the same session, a different measurement set from the 28-scene sweep above. Even the same scene differs by a few percent. **This set is not included in `docs/measurements/`, and no measurement file for the state before optimization exists there at all, so none of the numbers in this section can be checked against the published data.** For reference, the 28-scene sweep gives an after-optimization ratio to CPU of 0.89 / 0.63 / 0.68 (DGX Spark / Jetson AGX Orin / GeForce RTX 5070 Ti) for 1280x720 with 4 markers, and it contains no 3840x2160 scene with detections.
 
 | Stage | Contents |
 | --- | --- |
@@ -346,7 +355,7 @@ The current implementation has been through the following three changes. The com
 
 #### What was targeted for optimization
 
-Before optimizing, we separated by stage the fixed cost that starts up at the first detection (DGX Spark, an increment of 783 us over the minimum).
+Before optimizing, we separated by stage the fixed cost that starts up at the first detection (DGX Spark, an increment of 783 us over the minimum). These figures, and the per-launch and issue-time figures below, come from profiling runs against the pre-optimization implementation. **Those runs are not included in `docs/measurements/`, so this breakdown cannot be re-derived from the published data either.**
 
 | Stage | Measured | Share of the increment |
 | --- | --- | --- |
@@ -373,7 +382,7 @@ Even after optimization, about half of the GPU stage is transfers (on the DGX Sp
 
 ### Hybrid route breakdown (9 scenes)
 
-A breakdown of the GPU stage and the CPU stage of Hybrid. This is a different measurement set from the 28-scene sweep above; the ratio takes the CPU as 1, and below 1 means Hybrid is faster.
+A breakdown of the GPU stage and the CPU stage of Hybrid. This is a different measurement set from the 28-scene sweep above, and **it is not included in `docs/measurements/` either**; the ratio takes the CPU as 1, and below 1 means Hybrid is faster.
 
 #### DGX Spark GB10
 
@@ -428,26 +437,31 @@ Even on a discrete GPU the difference between `M-Device` and `M-Pageable` is sma
 | Condition | Route to choose | Rationale |
 | --- | --- | --- |
 | A single detection (one image only) | **CPU** | Time to the first result: CPU 2.2 to 6.1 ms, GPU routes 57.6 to 174.0 ms |
-| A clean scene at 640x480 (with detections) | **CPU** | CPU ratio 1.18 to 1.72 |
+| A clean scene at 640x480 with detections, on the DGX Spark or the GeForce RTX 5070 Ti | **CPU** | CUDA-Resident / CPU is 1.18 to 1.72 |
+| A clean scene at 640x480 with detections, on the Jetson AGX Orin | **CUDA-Resident**, except with a single marker | CUDA-Resident / CPU is 0.79 to 0.89 for `clean_640x480_n4_s128`, `clean_640x480_n16_s64`, and `blur_640x480`. Only `clean_640x480_n1_s128` favors the CPU, and by 3% (1.03) |
 | Continuous processing on the Jetson AGX Orin | **CUDA-Resident** | Faster than Hybrid in all 28 scenes |
 | Scenes with many contours (noise, combined degradation) | **CUDA-Resident** | The coefficient per 1e5 contour points is 1/19 to 1/60 of the CPU's |
-| Clean scenes with fewer than 20,000 contour points (DGX Spark, GeForce RTX 5070 Ti) | **Hybrid** | 2 to 3 times faster at 640x480 |
+| Fewer than about 20,000 contour points, at 1920x1080 and below on the DGX Spark or at 1280x720 and below on the GeForce RTX 5070 Ti | **Hybrid** | 2 to 3 times faster at clean 640x480. Above those resolutions CUDA-Resident wins even at low contour point counts |
 | Wanting to bound the worst-case time | **CUDA-Resident** | The spread across scenes is 3.4 to 4.1 times; the CPU is 11.6 to 20.8 times |
 
-The figure shows the decision flow. It assumes continuous processing, and the contour point count is the value after thresholding.
+The figure shows the decision flow. It assumes continuous processing, and the contour point count is the value after thresholding. **The 640x480 branch and the resolution branch differ by machine**, so the machine is asked first.
 
 ```mermaid
 flowchart TD
     S{"Processing only one image?"} -->|Yes| CPU1["CPU"]
-    S -->|No| Q640{"A clean scene at 640x480?"}
+    S -->|No| M{"Jetson AGX Orin?"}
+    M -->|Yes| J{"A clean 640x480 scene with a single marker?"}
+    J -->|Yes| CPU3["CPU (ahead by only 3%)"]
+    J -->|No| R1["CUDA-Resident"]
+    M -->|No| Q640{"A clean scene at 640x480 with detections?"}
     Q640 -->|Yes| CPU2["CPU"]
-    Q640 -->|No| M{"Jetson AGX Orin?"}
-    M -->|Yes| R1["CUDA-Resident"]
-    M -->|No| W{"Want to bound the worst-case time?"}
+    Q640 -->|No| W{"Want to bound the worst-case time?"}
     W -->|Yes| R2["CUDA-Resident"]
     W -->|No| K{"Contour points above about 20,000?"}
     K -->|Yes| R3["CUDA-Resident"]
-    K -->|No| H["Hybrid"]
+    K -->|No| K2{"3840x2160 (GeForce RTX 5070 Ti: 1920x1080 and above)?"}
+    K2 -->|Yes| R4["CUDA-Resident"]
+    K2 -->|No| H["Hybrid"]
 ```
 
 For applications where the contour point count cannot be known in advance, making CUDA-Resident the default keeps the worst-case time bounded.
@@ -483,7 +497,9 @@ For applications where the contour point count cannot be known in advance, makin
   --output-dir /tmp/benchcorpus --manifest /tmp/benchcorpus/manifest.json
 
 B=./build/<preset>/bench/aruco3cuda_bench
-COMMON="--warmup 30 --latency-iterations 200 --throughput-frames 100 --cpu-list <cpu> --threads 1"
+# --throughput-frames 0 disables the throughput measurement. The harness defaults to 100,
+# but the results in docs/measurements/ were taken with it off, so keep it at 0 to reproduce them.
+COMMON="--warmup 30 --latency-iterations 200 --throughput-frames 0 --cpu-list <cpu> --threads 1"
 # 28 scenes: 4 resolutions x 0/1/4/16 markers, plus blur / noise / combined at each of the 4 resolutions.
 IMGS=""
 for res in 640x480 1280x720 1920x1080 3840x2160; do
@@ -501,10 +517,14 @@ for run in 1 2 3; do
   taskset -c <cpu> $B $IMGS $COMMON --route CUDA-Resident --memory-mode M-Device   >> results.jsonl
 done
 
-# The input memory type comparison is done on the CUDA-E2E route.
+# The input memory type comparison is done on the CUDA-E2E route, on two scenes only --
+# not on the 28 above. The 3840x2160 scene has a marker side of 256 px, not the 128 px
+# of the sweep, so it is a different image from clean_3840x2160_n4_s128.
+MEMIMGS="--input /tmp/benchcorpus/clean_1280x720_n4_s128.png"
+MEMIMGS="$MEMIMGS --input /tmp/benchcorpus/clean_3840x2160_n4_s256.png"
 for run in 1 2 3; do
   for m in M-Pageable M-Pinned M-Managed; do
-    taskset -c <cpu> $B $IMGS $COMMON --route CUDA-E2E --memory-mode $m >> results.jsonl
+    taskset -c <cpu> $B $MEMIMGS $COMMON --route CUDA-E2E --memory-mode $m >> results.jsonl
   done
 done
 python3 bench/aggregate.py results.jsonl

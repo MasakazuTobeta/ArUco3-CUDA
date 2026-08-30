@@ -17,21 +17,21 @@ Route names follow the [benchmark summary](benchmark-report.md). `CPU` is OpenCV
 
 ### Overall
 
-These are the results with the ArUco3 detection strategy enabled. All three routes detect the same 88 markers. The corner RMSE and maximum are values over these 88 detections.
+These are the results with the ArUco3 detection strategy enabled. All three routes detect the same 88 markers. The columns of the table do not share one denominator, so each header names the division it belongs to. Precision, rotation match, corner RMSE, and corner max are over the 88 detections. Recall (overall) is over all 480 ground truth markers, and recall (at or above bound) is over the 90 ground truth markers at or above the ArUco3 bound. The evaluator does not define precision for the at-or-above-bound division, because a false positive has no ground truth marker to take a side length from.
 
-| Machine | Route | precision | recall (overall) | recall (at or above bound) | rotation match | Corner RMSE | Corner max |
+| Machine | Route | precision (all detections) | recall (overall, 480 truth) | recall (at or above bound, 90 truth) | rotation match (all detections) | Corner RMSE (all detections) | Corner max (all detections) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | CPU | 100.00% | 18.33% | 94.44% | 85/85 | 0.5184 px | 3.6351 px |
-| DGX Spark GB10 | Hybrid | 100.00% | 18.33% | 94.44% | 85/85 | 0.5184 px | 3.6351 px |
-| DGX Spark GB10 | CUDA-Resident | 100.00% | 18.33% | 94.44% | 85/85 | 0.4806 px | 1.0936 px |
-| Jetson AGX Orin | CPU | 100.00% | 18.33% | 94.44% | 85/85 | 0.5184 px | 3.6351 px |
-| Jetson AGX Orin | Hybrid | 100.00% | 18.33% | 94.44% | 85/85 | 0.5184 px | 3.6351 px |
-| Jetson AGX Orin | CUDA-Resident | 100.00% | 18.33% | 94.44% | 85/85 | 0.4806 px | 1.0936 px |
-| GeForce RTX 5070 Ti | CPU | 100.00% | 18.33% | 94.44% | 85/85 | 0.5042 px | 3.6351 px |
-| GeForce RTX 5070 Ti | Hybrid | 100.00% | 18.33% | 94.44% | 85/85 | 0.5042 px | 3.6351 px |
-| GeForce RTX 5070 Ti | CUDA-Resident | 100.00% | 18.33% | 94.44% | 85/85 | 0.4653 px | 1.0936 px |
+| DGX Spark GB10 | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| DGX Spark GB10 | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| DGX Spark GB10 | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
+| Jetson AGX Orin | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| Jetson AGX Orin | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| Jetson AGX Orin | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
+| GeForce RTX 5070 Ti | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
+| GeForce RTX 5070 Ti | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
+| GeForce RTX 5070 Ti | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4653 px | 1.0936 px |
 
-Precision is 100.00% across all 18 combinations. There is not a single false positive anywhere in 91 scenes x 3 routes x 3 machines, and there are zero detections with an incorrect ID. Rotation matches the ground truth for the 85 of the 88 detections that are at or above the ArUco3 bound.
+Precision is 100.00% across all 9 combinations of 3 routes x 3 machines. There is not a single false positive anywhere in 91 scenes x 3 routes x 3 machines, and there are zero detections with an incorrect ID. The evaluator counts a misread ID as a false positive as well as a false negative, so precision at 100.00% is what rules ID errors out. Rotation matches the ground truth for all 88 detections, and 85 of those 88 are at or above the ArUco3 bound. The 9 combinations cover only the ArUco3-enabled measurements. The ArUco3-disabled runs of the same 3 routes x 3 machines are a separate set of 9, reported under "Differences with the ArUco3 strategy and subpixel refinement turned off" below.
 
 The RMSE values differ between the two aarch64 machines and the x86_64 machine **because the corpus images themselves do not match across architectures**. See "Corpus reproducibility" below. As long as routes are compared within the same machine, this difference does not enter.
 
@@ -45,6 +45,8 @@ The ArUco3 detection strategy inherently cannot detect markers whose side length
 | 1280x720 | 96 px |
 | 1920x1080 | 128 px |
 | 3840x2160 | 224 px |
+
+The evaluator classifies a ground truth marker as "at or above bound" when `side_px >= S + L * tau_i`, comparing the nominal side length of the marker against the bound (`tools/evaluate/main.cpp`, `record()`). `tau_i` is held as a `float`, and `0.05F` is slightly larger than 0.05, so the threshold actually compared against is slightly above the values in the table: 64.0000005, 96.0000010, 128.0000014, and 224.0000029 px. **A marker whose side length is exactly the value in the table therefore lands on the "below bound" side of the division.** The corpus contains 74 such markers.
 
 The corpus deliberately includes sizes below this bound. Therefore recall computed with all 480 ground truth markers as the denominator measures the strategy's inherent bound rather than misses by the implementation. The denominator splits as follows.
 
@@ -66,11 +68,22 @@ The 387 at the bottom right of the diagram are what pushes the overall recall do
 | At or above bound | 90 | 85 | 94.44% |
 | Below bound | 390 | 3 | 0.77% |
 
-The figure that represents misses by the implementation is 94.44%. Quoting 18.33% on its own leads to misreading the strategy's inherent bound as a defect of the implementation. Three markers below the bound are detected because the bound is a boundary rather than a step, and markers that fall just below it can sometimes be detected.
+The figure that represents misses by the implementation is 94.44%. Quoting 18.33% on its own leads to misreading the strategy's inherent bound as a defect of the implementation.
+
+All 3 detections in the "below bound" division are markers sitting exactly on the bound of their resolution. The other 316 markers below the bound produce no detection at all.
+
+| Resolution | Bound | Ground truth markers whose side is exactly the bound | Detected |
+| --- | --- | --- | --- |
+| 640x480 | 64 px | 21 (64 px side) | 2 |
+| 1280x720 | 96 px | 32 (96 px side) | 1 |
+| 1920x1080 | 128 px | 21 (128 px side) | 0 |
+| 3840x2160 | 224 px | 0 (preset `full` has no 224 px side) | - |
+
+These counts are derived by cross-checking the "By marker side length" and "By resolution" tables of `docs/measurements/2026-08-29-<machine>-accuracy.txt` against the scene list of preset `full`; the evaluator does not print the two breakdowns crossed with each other. The three routes agree on every cell. **A marker exactly at the bound is mostly not detected.** At 640x480 the downscale factor is exactly `S / (S + L * tau_i)` = 0.5, so a 64 px marker becomes exactly 32 px in the canonical image and whether it survives the resampling is marginal. This is the behavior the header comment of `minimum_detectable_side_px()` warns about.
 
 ### By condition (markers at or above the bound only)
 
-These are the values for the DGX Spark GB10. The recall of CPU and CUDA-Resident matches under every condition.
+These are the values for the DGX Spark GB10. The recall of CPU and CUDA-Resident matches under every condition. Every degradation condition contributes exactly 4 markers here, all of them from its 640x480 scene: the degradation scenes place 96 px markers, and at 1280x720 and above a 96 px side does not reach the bound, so those markers fall into the "below bound" division.
 
 | Condition | Ground truth | recall | CPU corner RMSE | CUDA-Resident corner RMSE |
 | --- | --- | --- | --- | --- |
@@ -86,7 +99,7 @@ These are the values for the DGX Spark GB10. The recall of CPU and CUDA-Resident
 
 There are 5 misses, broken down into 3 from combined degradation, 1 from occlusion, and 1 from border clipping. Rotation, perspective distortion, blur, noise, and illumination differences drop not a single marker on their own. What is dropped are cases where degradations overlap and cases where part of the marker is outside the image or under an occluding object.
 
-Apart from occlusion, the corner RMSE is nearly the same value for both routes. Under the clean condition, CPU is slightly smaller at 0.4910 px against CUDA-Resident's 0.4911 px, and for noise, illumination, and rotation the values are exactly equal. A difference appears only in the single occlusion condition, and this should not be read as a general superiority.
+The corner RMSE is exactly equal for both routes in 3 of the 9 conditions: rotation, noise, and illumination. **It differs in the other 6.** Under clean, CPU is smaller by 0.0001 px (0.4910 px against 0.4911 px). Under perspective, blur, border, and combined, CUDA-Resident is smaller, but by at most 0.0102 px (combined, 0.4317 px against 0.4215 px); the other three differ by 0.0003, 0.0032, and 0.0008 px. Occlusion is the only condition where the difference is larger than the last displayed digits, 1.1497 px against 0.4722 px, and it rests on the 3 occlusion detections at or above the bound. Neither the small differences nor the occlusion one should be read as a general superiority.
 
 ### Differences from the CPU reference
 
@@ -138,30 +151,36 @@ The difference is large when limited to blur scenes: 1.6282 px for CPU against 0
 
 ### Device memory
 
-This is the workspace of the CUDA-Resident route. The values are the same on all three machines.
+This is the workspace of the CUDA-Resident route. The values are the same on all three machines. The evaluator records bytes; **MB below is 10^6 bytes, not 2^20**, and the MiB (2^20) equivalent is given alongside.
 
 | Configuration | Peak workspace usage | Allocated capacity | Increase in allocation count over 91 detections |
 | --- | --- | --- | --- |
-| ArUco3 enabled | 17.51 MB | 22.69 MB | 0 |
-| ArUco3 disabled | 414.51 MB | 414.51 MB | 0 |
+| ArUco3 enabled | 17,512,724 bytes = 17.51 MB (16.70 MiB) | 22,685,440 bytes = 22.69 MB (21.64 MiB) | 0 |
+| ArUco3 disabled | 414,514,452 bytes = 414.51 MB (395.31 MiB) | 414,514,944 bytes = 414.51 MB (395.31 MiB) | 0 |
+
+In the ArUco3 disabled row the usage and the capacity are not the same number; they differ by 492 bytes and both round to 414.51 MB.
 
 There is not a single `cudaMalloc` during detection. Allocation is finished at initialization, and detection operates only within the already allocated region.
 
-Disabling the ArUco3 detection strategy multiplies the required amount by 23.7. This is because the image is not downscaled, so segmentation and thresholding are performed at full scale. The maximum is determined by the 3840x2160 scenes.
+Disabling the ArUco3 detection strategy multiplies the peak usage by 23.7 (414,514,452 / 17,512,724). This is because the image is not downscaled, so segmentation and thresholding are performed at full scale. The maximum is determined by the 3840x2160 scenes.
 
 ### Corpus reproducibility
 
-Corpus images generated from the same seed **do not match across machines**. Between the aarch64 DGX Spark GB10 and the x86_64 GeForce RTX 5070 Ti, 54 of the 91 scenes differ.
+Corpus images generated from the same seed **do not match across machines**.
 
-**The architecture difference is not the only cause.** Comparing the 28 benchmark scenes, **the hashes differ for 6 scenes (the 4 resolutions of `combined`, `blur_3840x2160`, and `noise_3840x2160`) even between the DGX Spark GB10 and the Jetson AGX Orin, both aarch64**. These two machines have the same OpenCV version, but differ in OS (Ubuntu 24.04 versus 20.04), CUDA Toolkit (13.0 versus 11.4), and compiler.
+The only per-scene image hashes kept in `docs/measurements/` are the `image_sha256` fields of `2026-08-29-<machine>-sweep.jsonl`, and those cover the 28 benchmark scenes, not all 91. **The comparison below is therefore over 28 scenes.** For the remaining 63 scenes of preset `full` no hash was recorded, so how many of the 91 differ is not something these measurements can answer.
 
-| Scene | Differing pixels | Max difference | Mean difference |
-| --- | --- | --- | --- |
-| clean_1280x720_n4_s128 | 736 / 921600 (0.0799%) | 4 gray levels | 0.00194 |
-| blur_1280x720 | 672 / 921600 (0.0729%) | 1 gray level | 0.00073 |
-| rotation_640x480 | 362 / 307200 (0.1178%) | 4 gray levels | 0.00265 |
+| Machine pair | Scenes whose hash differs, of the 28 benchmark scenes |
+| --- | --- |
+| DGX Spark GB10 vs GeForce RTX 5070 Ti (aarch64 vs x86_64) | 18 |
+| Jetson AGX Orin vs GeForce RTX 5070 Ti (aarch64 vs x86_64) | 18 |
+| DGX Spark GB10 vs Jetson AGX Orin (both aarch64) | 6 |
 
-The differing pixels stay at around 0.1% per scene, and the gray-level difference is at most 4. The corpus generator uses OpenCV's `warpPerspective` and `GaussianBlur`. We believe the cause is that SIMD paths and rounding do not agree across build environments, but the isolation has not been completed. **This needs to be explained by the difference in build environment, not architecture.**
+Across architectures the two aarch64 machines differ from the x86_64 machine in the same 18 scenes: all 4 `combined`, all 4 `noise`, 3 of the 4 `blur` (1280x720 and larger), and 7 of the 16 `clean` scenes.
+
+**The architecture difference is not the only cause.** Among the same 28 scenes, **the hashes differ for 6 scenes (the 4 resolutions of `combined`, `blur_3840x2160`, and `noise_3840x2160`) even between the DGX Spark GB10 and the Jetson AGX Orin, both aarch64**. These two machines have the same OpenCV version, but differ in OS (Ubuntu 24.04 versus 20.04), CUDA Toolkit (13.0 versus 11.4), and compiler.
+
+A pixel-level comparison of the differing scenes was not kept in `docs/measurements/`; only the hashes are on record, and a hash says that two images differ but not by how much. The magnitude of the difference is therefore not stated here. The corpus generator uses OpenCV's `warpPerspective` and `GaussianBlur`. We believe the cause is that SIMD paths and rounding do not agree across build environments, but the isolation has not been completed. **This needs to be explained by the difference in build environment, not architecture.**
 
 **This difference affects only comparisons of numbers across machines.** It does not affect measurements comparing CPU and CUDA-Resident within the same machine. Both see the same image. The magnitude of the effect is the difference between corner RMSE 0.5184 px and 0.5042 px, that is, 2.7%.
 
@@ -195,7 +214,8 @@ Power mode and clock are recorded in the `environment` line of the benchmark mea
 - The cause of corpus images not matching across architectures. We suspect OpenCV's SIMD paths, but have not isolated which function.
 - At which stage the 3 misses under combined degradation are dropped. We have not identified whether it is thresholding, contours, or dictionary matching.
 - Why extreme point search returns corners closer to the ground truth in blur scenes. With a denominator of only 16 markers, nothing beyond a tendency can be said.
-- How to handle 96 px markers at 1280x720. The bound is exactly 96 px, and the effective side length of the ground truth falls slightly below it due to rounding, so they do not fall into the "at or above bound" division. The method for deciding the boundary has not been settled.
+- How to handle markers whose side length is exactly the bound (64 px at 640x480, 96 px at 1280x720, 128 px at 1920x1080). Their ground truth side length is exactly the nominal bound, but the threshold the evaluator compares against is a few times 10^-7 px larger because `tau_i` is a `float`, so they land in the "below bound" division. Whether the comparison should be made tolerant, and on which side of the division these markers belong, has not been settled.
+- How much of the corpus differs across build environments. Hashes exist for the 28 benchmark scenes only, and no pixel-level comparison was retained.
 
 ## Appendix: Reproducing the measurements
 

@@ -79,7 +79,7 @@ Agreement required making the proximity merging of S6 follow the same rule as Op
 
 Among the non-representative candidates, those farther from the representative than `minGroupDistance * moduleSize` are kept rather than discarded, and are used as alternatives when identification of the representative fails. In addition, the containment relations among the candidates are held as a tree; identification proceeds from the inner candidates, and once a marker is confirmed, its outer (parent) candidate is excluded from identification. Since both the outer and inner boundaries of a marker's black frame become candidates, without this suppression the same marker would be counted twice.
 
-When `useAruco3Detection` is enabled, OpenCV overrides the corner refinement setting to `CORNER_REFINE_SUBPIX`, because subpixel correction is the only means of mapping corners obtained on the downscaled image back to the original size. This project performs the same override.
+When `useAruco3Detection` is enabled, OpenCV overrides the corner refinement setting to `CORNER_REFINE_SUBPIX`, because subpixel correction is the only means of mapping corners obtained on the downscaled image back to the original size. This project does not override the setting. `Detector::initialize()` rejects the two combinations instead and returns `Status::kInvalidConfig`: `use_aruco3_detection_` enabled together with `corner_refine_method_ == kNone`, because the corners would stay in downscaled coordinates, and `use_aruco3_detection_` disabled together with `kSubpix`, because the pyramid then has a single level and the refinement never runs. Silently rewriting the setting would leave the caller's coordinate systems inconsistent without saying so.
 
 ### Agreement of the S7 perspective transform with OpenCV
 
@@ -284,7 +284,7 @@ for j:
 
 Mathematically it is the same as bilinear, but the rounding accumulates, so replacing it with the bilinear expression changes the values. When the window extends outside the image, a different route (`adjustRect`) is taken, and the area outside the rectangle is filled by interpolating the edge values in the vertical direction only.
 
-The normal equations are in double precision and are accumulated one element at a time in row-major order. **Folding them in parallel changes the rounding and changes even the iteration count and whether the suppression is taken.** For that reason one thread handles one corner, and the inside is kept sequential. There are 4 corners per detection and at most 1024 detections, so parallelism across corners alone is sufficient.
+The normal equations are in double precision and are accumulated one element at a time in row-major order. **Folding them in parallel changes the rounding and changes even the iteration count and whether the suppression is taken.** For that reason each of the five sums is accumulated on a single thread in ascending index order. The parallelism is placed inside the corner instead: **one block of 192 threads handles one corner**. The block gathers the patch and computes the per-element products into shared memory in parallel, five threads then fold the five chains, and thread 0 solves the 2x2 system and decides whether to iterate again. There are 4 corners per detection and at most 1024 detections, so the launch does not start one block per corner slot: a fixed number of blocks strides over the slots, and that number is derived from the SM count of the device.
 
 The error is computed in single precision and then widened to double. `err = (dx*dx) + (dy*dy)` is a float operation, and its result goes into a `double err`.
 
@@ -320,7 +320,7 @@ flowchart TD
 | S0 input validation | - | Boundary validation on the host | Out of scope (done on the host) |
 | S1 pyramid | Output pixel | Launch a separable downsample kernel per level | High |
 | S2 segmentation | Output pixel | Bilinear or area downscaling | High |
-| S3 thresholding | Output pixel | Constant-time box mean via an integral image, or a sliding window in shared memory | High |
+| S3 thresholding | Output pixel | Box mean from separable row sums followed by a column pass, both in global memory | High |
 | S4 labeling | Pixel and label | Per-block union-find and inter-block merge | Medium |
 | S5 candidate extraction | Label | Corner estimation by extreme point search | Medium |
 | S6 filtering | Candidate | Predicate evaluation and stream compaction | High |
@@ -328,10 +328,10 @@ flowchart TD
 | S8 border verification | Candidate | One block per candidate, histogram in shared memory and integer sums | High |
 | S8 Dictionary matching | Candidate and codeword | Popcount over packed codewords and a minimum reduction | High |
 | S9 suppression and compaction | Candidate | Containment test per candidate, scan sequential in a single block, repacking by scan | Medium |
-| S10 corner correction | Corner | One thread per corner; the iteration is kept sequential | Medium |
+| S10 corner correction | Corner | One block per corner, striding over the corner slots; the accumulation of the normal equations is kept sequential | Medium |
 | S11 output | - | Device buffer or host transfer | - |
 
-S3 evaluates three window sizes by default. The CPU implementation runs everything up to contour extraction per window and merges the results, but in CUDA the initial plan is to process S3 through S5 simultaneously with the window direction as a third dimension and merge in S6.
+S3 evaluates three window sizes by default. The CPU implementation runs everything up to contour extraction per window and merges the results, and the CUDA implementation keeps the same per-window sequence: `Detector::Impl::dispatch` issues S3 for each window in turn, then loops over the windows again running S4, S5 and the S6 predicate filter, appending each window's candidates to a single list. The sweeps stay on one stream because the buffers they work in are shared across windows -- the row-sum scratch of S3, and the labels, the statistics and the quads of S4 and S5 -- so sweeps issued to separate streams would overwrite each other. The proximity merge across windows happens in S6, after the loop.
 
 ### Design options for quadrilateral candidate extraction
 
@@ -415,20 +415,20 @@ The inside ratio alone cannot reject the L shape and the cross, and the edge sup
 ### Synchronization and streams
 
 - The public API takes a caller-owned `cudaStream_t` and issues all kernels to that stream.
-- The core never calls `cudaDeviceSynchronize()`.
+- The per-frame path never calls `cudaDeviceSynchronize()`. `Detector::initialize()` calls it once, after uploading the dictionary from pageable host storage, so that the transfer is ordered against a `detect_async` issued on another stream, and the device self test in `run_device_self_test()` calls it to check its own kernel.
 - Synchronization occurs only at the point where the host needs the result count. An API that returns the device-side result buffer as is is provided so that the count need not be brought back to the host.
-- In benchmarks, per-stage CUDA events and wall-clock time are recorded separately.
+- Benchmarks record wall-clock time only. Separating kernel time with CUDA events is not implemented.
 
 ### Handling of machine differences
 
 - The common route is the authoritative one, and the same algorithm and the same accuracy tests are applied on `sm_87` and `sm_121`.
-- Tile size, block size, shared memory usage, and L2-aware partitioning are configuration values rather than compile-time constants, and are determined per machine by measurement.
+- The only machine-tuning value exposed as a setting is `cuda_block_dim_`, the block side of the 2D kernels. There are no settings for tile size, shared memory usage, or L2-aware partitioning. The one value derived per machine is the number of blocks the S10 refinement launches, taken from the SM count of the device. The reasoning for both is below.
 - Branching on `__CUDA_ARCH__` is localized as kernel specialization and does not change the behavior of the common route.
 
 ## Design decisions
 
 - Option A is the primary option for candidate extraction, and option C is always maintained as the compatibility baseline and fallback.
-- S3 through S5 are executed simultaneously along the window size direction, without the per-window sequential merging of the CPU implementation.
+- S3 through S5 are executed per window in a serial loop on a single stream, as in the CPU implementation, because the scratch buffers of those stages are shared across windows. Each window appends to one candidate list, and the proximity merge happens in S6.
 - Dictionary matching is done by popcount over packed codewords with the 4 rotations expanded in advance, so that the rotation search is not a branch.
 - Subpixel correction of the corners is implemented on the GPU without permitting delegation to the CPU, because it is directly tied to the accuracy of ArUco3.
 - The input is limited to 8-bit grayscale, and color conversion is the responsibility of the adapter.

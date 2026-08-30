@@ -41,7 +41,7 @@ These correspond to the actual directory structure.
 | core | `src/core/` | Detection processing in CUDA. Does not depend on OpenCV | Yes (`include/aruco3cuda/`) |
 | dictionary | `src/dictionary/` | The packed codeword table and matching | Yes |
 | util | `src/util/` | Shared code that depends on neither CUDA nor OpenCV | Partly (`include/aruco3cuda/util/`) |
-| hybrid | `hybrid/` | A comparison route that runs candidate extraction on the GPU and everything after it on the CPU. Requires OpenCV | No |
+| hybrid | `hybrid/` | A comparison route that runs downscaling and adaptive thresholding on the GPU and candidate extraction and decoding on the CPU. Requires OpenCV | No |
 | reference | `reference/` | Running the OpenCV ArUco3 CPU implementation and saving its results | No |
 | bench | `bench/` | Fixing the measurement conditions, warm-up, statistics, and recording environment information | No |
 | tools | `tools/` | Corpus generation, dictionary conversion, diff reporting, and accuracy evaluation | No |
@@ -69,7 +69,7 @@ These correspond to the actual directory structure.
 ### Asynchronous execution
 
 - The API takes a caller-owned CUDA stream.
-- The core does not perform unnecessary `cudaDeviceSynchronize()`.
+- The per-frame path does not call `cudaDeviceSynchronize()`. `initialize()` calls it once after the dictionary upload, to order that pageable transfer against a `detect_async` on another stream, and the device self test calls it for its own kernel.
 - Only APIs that need results on the host cause the synchronization they need.
 - The benchmark measures wall-clock time. Separating kernel time using CUDA events is not implemented.
 

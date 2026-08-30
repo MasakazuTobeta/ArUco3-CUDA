@@ -56,22 +56,23 @@ We target the detection of the ID, rotation, and corner coordinates of ArUco mar
 
 ### Detection flow
 
-Everything from the input image to the ID, rotation, and corners is processed on the GPU. `Detector` returns results on the device without host synchronization, and folds one frame's sequence of kernel launches into a CUDA Graph.
+Everything from the input image to the ID, rotation, and corners is processed on the GPU. `Detector` returns results on the device without host synchronization, and folds one frame's sequence of kernel launches into a CUDA Graph when the caller passes an explicit stream; the legacy default stream cannot be captured, so passing `nullptr` issues the kernels one stage at a time.
 
 ```mermaid
 flowchart TD
     A["Input image (8-bit grayscale)"] --> B["Downscaling / image pyramid"]
     B --> C["Adaptive thresholding"]
     C --> D["Connected components / quad candidate extraction"]
-    D --> E["Candidate grouping and containment tree"]
-    E --> F["Perspective transform, cell sampling, bit reading"]
-    F --> G["Dictionary matching"]
-    G --> H["Corner subpixel refinement (climbing the pyramid)"]
-    H --> I["ID, rotation, and corners on the device"]
-    I --> J["Retrieve to the host (optional)"]
+    D --> E["Candidate filtering and proximity merging"]
+    E --> F["Perspective transform and cell sampling"]
+    F --> G["Cell bit readout, border verification, and Dictionary matching"]
+    G --> H["Containment tree, identification suppression, and rotation cancellation"]
+    H --> I["Corner subpixel refinement (climbing the pyramid)"]
+    I --> J["ID, rotation, and corners on the device"]
+    J --> K["Retrieve to the host (optional)"]
 ```
 
-We do not perform pose estimation. When downstream processing is on the same device, the results can be used without going through `J` in the diagram. The per-stage design is in the [Detection Pipeline Design](design/detector-pipeline.md), and the public API is in the [Public API](design/public-api.md).
+We do not perform pose estimation. When downstream processing is on the same device, the results can be used without going through `K` in the diagram. The per-stage design is in the [Detection Pipeline Design](design/detector-pipeline.md), and the public API is in the [Public API](design/public-api.md).
 
 ### Target machines
 
@@ -87,9 +88,9 @@ The automated tests and Compute Sanitizer (memcheck / racecheck / initcheck / sy
 
 We measure over a synthetic corpus of 91 scenes and 480 ground truth markers, across 3 routes (CPU reference, Hybrid, CUDA-Resident) x 3 machines.
 
-- Precision is 100% in all 18 combinations. There are 0 false positives and 0 ID errors.
+- Precision is 100% in all 9 combinations. There are 0 false positives and 0 ID errors.
 - The ArUco3 detection strategy inherently cannot detect markers whose side, after downscaling, falls below a lower limit. **Recall over the whole corpus is 18.33%, and 94.44% (85 of 90 ground truth markers) when restricted to markers at or above the limit.** The overall value is a consequence of including many markers below the limit in the corpus, and is dominated by the lower limit of the strategy.
-- Rotation matches ground truth in all 85 detections.
+- Rotation matches ground truth in all 88 detections, of which 85 are at or above the limit.
 - The 5 misses break down as 3 combined degradation, 1 occlusion, and 1 border clipping. Rotation, projective distortion, blur, noise, and illumination difference each produce 0 misses on their own.
 
 The corner errors are as follows.
@@ -101,7 +102,7 @@ The corner errors are as follows.
 
 Agreement with the CPU reference is 91/91 images (maximum difference 0.000 px) for the Hybrid route and 90/91 images for the CUDA-Resident route. The one image that differs is a 640x480 scene with occlusion, and the difference is 3.804 px. The error against ground truth in this scene is 3.6351 px for the CPU and 1.0936 px for CUDA, so CUDA is closer to ground truth. The difference originates in the method of estimating the corners (CUDA uses extreme point search, OpenCV uses polygonal approximation of the contour); with ArUco3 turned off, all differences become sqrt(2) = 1.414 px. For details, see the [Accuracy Evaluation Results](accuracy-report.md).
 
-Note that corpus images generated with the same seed differ between aarch64 and x86_64 in 54 of 91 scenes (the difference is under 0.1% of pixels, with a maximum of 4 gray levels). This affects only comparisons across architectures.
+Note that corpus images generated with the same seed differ across build environments. Per-scene hashes were kept only for the 28 benchmark scenes; 18 of those differ between aarch64 and x86_64, and 6 differ between the two aarch64 machines. How many of the 91 scenes differ, and by how much, is not recorded. This affects only comparisons across machines.
 
 ### Speed
 
@@ -117,7 +118,7 @@ What determines the boundary is neither resolution nor candidate count, but the 
 | Hybrid | 2.54-5.48 ms | 0.965-0.980 | 10.0-43.7 times |
 | CUDA-Resident | 0.041-0.278 ms | 0.894-0.973 | 3.4-4.1 times |
 
-The coefficient for Hybrid is almost the same as for the CPU. This is because everything from contour extraction onward runs on the host, so it grows with the contour point count just as the CPU reference does. The switchover point between Hybrid and CUDA-Resident is about 20,000 contour points (on the DGX Spark and the GeForce RTX 5070 Ti). On the Jetson AGX Orin, CUDA-Resident wins in all 28 scenes.
+The coefficient for Hybrid is almost the same as for the CPU. This is because everything from contour extraction onward runs on the host, so it grows with the contour point count just as the CPU reference does. Above about 20,000 contour points, CUDA-Resident wins on all three machines. That figure is a rough guide and not a switchover point: below it the winner follows native resolution instead, and CUDA-Resident already wins at 3840x2160 on the DGX Spark and at 1920x1080 and above on the GeForce RTX 5070 Ti even in scenes with almost no contour points. On the Jetson AGX Orin, CUDA-Resident wins in all 28 scenes.
 
 Startup cost remains larger on the GPU routes. For 1280x720 with 4 markers, the end-to-end time when a single process handles just one image, and in the steady state, is as follows.
 
@@ -127,7 +128,7 @@ Startup cost remains larger on the GPU routes. For 1280x720 with 4 markers, the 
 | Jetson AGX Orin | 6.1 / 57.6 / 69.8 ms | 1.676 / 1.144 / 1.077 ms |
 | GeForce RTX 5070 Ti | 2.2 / 66.1 / 70.0 ms | 0.614 / 0.295 / 0.421 ms |
 
-Run-to-run variance also differs by route. The spread of the p50 across 3 independent processes is CPU 0.6% / Hybrid 17.7% / Resident 14.1% on the DGX Spark, 0.4% / 3.5% / 0.5% on the Jetson AGX Orin, and 0.5% / 0.4% / 0.0% on the GeForce RTX 5070 Ti. **Variance on the GPU routes is an order of magnitude larger than on the CPU route.**
+Run-to-run variance also differs by route. The spread of the p50 across 3 independent processes is CPU 0.6% / Hybrid 17.7% / Resident 14.1% on the DGX Spark, 0.4% / 3.5% / 0.5% on the Jetson AGX Orin, and 0.5% / 0.4% / 0.0% on the GeForce RTX 5070 Ti. **Variance on the GPU routes is an order of magnitude larger than on the CPU route only on the DGX Spark.** On the Jetson AGX Orin only Hybrid is larger, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route.
 
 As for the memory kind of the input, managed memory is 6.4-30 times slower than pageable on the discrete GPU, while on integrated GPUs it stays within 1.01-1.22 times. Even on an integrated GPU, skipping the explicit copy does not necessarily make it faster. For details, see the [Benchmark Report](benchmark-report.md) and [Memory Transfer Between Host and Device](design/memory-transfer.md).
 

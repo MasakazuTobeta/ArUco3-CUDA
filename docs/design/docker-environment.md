@@ -56,7 +56,7 @@ The `jetson-orin` profile has also been built and verified on the machine itself
 | Image size | 5.0 GB |
 | `verify-environment.sh` | All 5 checks pass |
 | `smoke-test.sh` | Pass |
-| `ctest` | 75 tests pass. 79 including Compute Sanitizer |
+| `ctest` | Pass. The suite registers 402 tests in the `portability` preset; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
 
 The image is larger than DGX Spark's 1.64 GB because the base image is `l4t-cuda:11.4.19-devel`, which contains the full CUDA installation. On Jetson there is no way to select only the required packages from NVIDIA's apt repository, so this difference is accepted.
 
@@ -105,7 +105,7 @@ The full CUDA Toolkit is 4.7 GB, but measuring the breakdown shows that 3.2 GB o
 | Package | Use |
 | --- | --- |
 | `cuda-nvcc-13-0` | nvcc, cudart, CRT, NVVM, PTX compiler |
-| `cuda-cccl-13-0` | CUB and Thrust. Used for compaction and prefix sum |
+| `cuda-cccl-13-0` | The CCCL headers (CUB, Thrust, libcu++) that ship with the toolkit. This project includes none of them: compaction and the prefix sum are written by hand in `src/core/scan.cu` and `src/core/candidate_filter.cu`. Whether the build still succeeds with this package removed has not been tested |
 | `cuda-sanitizer-13-0` | Compute Sanitizer |
 | `cuda-nvtx-13-0` | Annotations for interval measurement |
 | `cuda-cuobjdump-13-0`, `cuda-nvdisasm-13-0` | Checking the architecture of the generated binary |
