@@ -125,7 +125,7 @@ The exact versions of the installed packages are recorded in `/opt/aruco3cuda/cu
 
 In `mounted` mode the image is not independent of the host environment. So that this dependency does not stay implicit, `verify-environment.sh` displays the mode and, in `mounted`, warns against using it for measurement.
 
-**Behaviour and performance in `mounted` mode are not guaranteed.** The Toolkit comes from the host, so the container is not reproducible, and the version can differ from the one `pinned` installs: on the GeForce RTX 5070 Ti it does, 13.2 against 13.0. All three profiles are available in this mode because a user who already has the Toolkit installed should not have to carry a second copy in the image, but the guarantees the three machines verify apply to `pinned`. What is checked for `mounted` is that each profile builds and that the test suite passes, which was done on 2026-08-31. The suite registered 455 tests then; it registers 520 now, and the mounted profiles have not been re-run against the larger suite:
+**Behaviour and performance in `mounted` mode are not guaranteed.** The Toolkit comes from the host, so the container is not reproducible, and the version can differ from the one `pinned` installs: on the GeForce RTX 5070 Ti it does, 13.2 against 13.0. Three of the four profiles are available in this mode - the Jetson AGX Thor has no mounted variant - because a user who already has the Toolkit installed should not have to carry a second copy in the image, but the guarantees the four machines verify apply to `pinned`. What is checked for `mounted` is that each profile builds and that the test suite passes, which was done on 2026-08-31. The suite registered 455 tests then; it registers 520 now, and the mounted profiles have not been re-run against the larger suite:
 
 | Profile | Image size | Host Toolkit in use | Same as `pinned`? | Tests |
 | --- | --- | --- | --- | --- |
@@ -137,7 +137,7 @@ The GeForce RTX 5070 Ti is where the difference bites. Its host runs a newer Too
 
 ### Syncing to the machines
 
-To build and measure the same commit on all three machines, sync with `tools/sync-to-host.sh`.
+To build and measure the same commit on all four machines, sync with `tools/sync-to-host.sh`.
 
 ```
 tools/sync-to-host.sh tobeta@<host>
@@ -156,7 +156,7 @@ After the transfer, the script confirms that the checksums of every git-tracked 
 | `jetson-thor` | `ubuntu:24.04` (default, overridable) | Jetson AGX Thor | 110 | Not included |
 | `rtx-blackwell` | `ubuntu:24.04` | GeForce RTX 5070 Ti (GB203) | 120 | Included |
 
-All three profiles start from a plain `ubuntu` image and install the CUDA packages from an NVIDIA apt repository. Jetson uses a different repository from the other two: the CUDA build for Tegra is published at `repo.download.nvidia.com/jetson`, not at `developer.download.nvidia.com`. `ARUCO3_CUDA_REPO_FLAVOR` selects between them, because they differ in more than a URL. The CUDA repository ships a `cuda-keyring` package; the L4T repository publishes an armored key that has to be dearmored into its own keyring and bound to the source with `signed-by`.
+All four profiles start from a plain `ubuntu` image and install the CUDA packages from an NVIDIA apt repository. The two Jetsons use a different repository from the other two: the CUDA build for Tegra is published at `repo.download.nvidia.com/jetson`, not at `developer.download.nvidia.com`. `ARUCO3_CUDA_REPO_FLAVOR` selects between them, because they differ in more than a URL. The CUDA repository ships a `cuda-keyring` package; the L4T repository publishes an armored key that has to be dearmored into its own keyring and bound to the source with `signed-by`.
 
 Only the `common` component of the L4T repository is added. The CUDA packages are there, while `t234` holds the board support package and the L4T driver, and the driver is injected at run time by the NVIDIA Container Toolkit. Adding `t234` would put packages within apt's reach that must not end up in this image.
 
@@ -276,7 +276,7 @@ The driver version is deliberately not filled in this way. Where `nvidia-smi` ex
 ## Design decisions
 
 - `pinned`, which fixes the CUDA Toolkit into the image, is the default. The deliverable of this project is comparative measurement, and unless the compiler used for a measurement travels with the image, the results cannot be reproduced later. Narrowed down to only the required packages, the addition is 360 MB on DGX Spark and 176 MB on Jetson Orin, which does not outweigh reproducibility. `mounted` would make the Jetson image 540 MB instead of 726 MB; 186 MB is not worth giving up a self-contained image for.
-- `mounted` is kept as an option because there is a use for swapping the host's Toolkit and trying something quickly, and because a user who already has it installed should not have to carry a second copy in the image. All three profiles are offered in this mode. In this mode the image is not independent of the host environment, so `verify-environment.sh` displays the mode and warns against using it for measurement, and neither behaviour nor performance is guaranteed.
+- `mounted` is kept as an option because there is a use for swapping the host's Toolkit and trying something quickly, and because a user who already has it installed should not have to carry a second copy in the image. Three of the four profiles are offered in this mode; the Jetson AGX Thor has no mounted variant. In this mode the image is not independent of the host environment, so `verify-environment.sh` displays the mode and warns against using it for measurement, and neither behaviour nor performance is guaranteed.
 - In `mounted` mode, `/usr/local/cuda` is a multi-level symlink, so the mount source is set to the real directory. A mounted symlink cannot be resolved inside the container.
 - The base image is chosen per profile and is a plain `ubuntu` image rather than an `nvidia/cuda` or `l4t-cuda` one. This keeps the apt repository as the single source of the CUDA Toolkit, so there is never a Toolkit in the base image and a second one installed on top of it, and in `mounted` mode the mount is the only source.
 - OpenCV is included in the image because it is the authoritative source of the CPU reference results and its version must not change between measurements.

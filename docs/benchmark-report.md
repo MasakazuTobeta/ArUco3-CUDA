@@ -284,7 +284,7 @@ We measured the three types on the `CUDA-E2E` route. The parentheses give the ra
 
 **Managed must not be used on a discrete GPU.** On the GeForce RTX 5070 Ti it is 6.4 times to **30 times** slower, because pages migrate from the host every time the device touches them. At 3840x2160 it takes 24.8 ms, which is no comparison to the 0.812 ms of pageable.
 
-On integrated GPUs the disadvantage of managed is smaller (1.01 to 1.22 times on the DGX Spark, 1.04 to 1.12 times on the Jetson AGX Orin). **Even so, it is never faster than pageable.**
+On integrated GPUs the disadvantage of managed is smaller (1.01 to 1.22 times on the DGX Spark, 1.04 to 1.12 times on the Jetson AGX Orin, 1.04 to 1.27 times on the Jetson AGX Thor). **Even so, it is never faster than pageable.**
 
 **Pinned helps only on large images.** At 3840x2160 the Jetson AGX Orin reaches 0.72x, the GeForce RTX 5070 Ti 0.88x, and the Jetson AGX Thor 0.99x. At 1280x720 there is no difference on any of the four machines (0.99 to 1.09 times). While the transfer volume is small, the advantage of DMA reading directly is buried in the detection time itself.
 

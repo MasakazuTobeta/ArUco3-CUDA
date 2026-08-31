@@ -3,7 +3,7 @@
 #
 # Purpose:
 #   Synchronize the repository to a target machine used for evaluation. The same
-#   commit is built and measured on three machines, so anything missed during the
+#   commit is built and measured on four machines, so anything missed during the
 #   sync destroys the record of which machine measured what.
 #
 # Note on exclusions:
