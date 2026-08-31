@@ -57,7 +57,7 @@ For Hybrid the center of the cost is returning the thresholded image to the host
 
 The `n` in a scene name is the number of markers **placed**, not the number detected, and the `s` is the marker side in pixels. With the ArUco3 lower bound `32 + 0.05 x long side`, the placed side is at or below that bound in most of the higher-resolution scenes, so **20 of the 28 scenes detect nothing**; the remaining 8 detect 1 or 4 markers. The sweep is therefore a timing corpus, not a detection corpus.
 
-The measured interval does not include PNG decoding. Real-time processing does not decode PNG, and loading the image once per iteration would make decoding the bulk of the measured interval, which would not hold up as a comparison of end-to-end detection time. The `schema_version` of the result JSONL is 4; results from a different version are not aggregated together, because the same keys refer to different intervals.
+The measured interval does not include PNG decoding. Real-time processing does not decode PNG, and loading the image once per iteration would make decoding the bulk of the measured interval, which would not hold up as a comparison of end-to-end detection time. Every measurement file in this report is `schema_version` 4. The harness emits 5 since `cuda_toolkit` began carrying the patch version, and 4 and 5 are aggregated together because they emit the same keys over the same intervals and differ only in that precision. Version 3 and earlier are not, because the same keys there refer to different intervals or are absent altogether.
 
 ### Pinning the CPU core
 

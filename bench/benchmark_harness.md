@@ -24,6 +24,19 @@ The `CPU` route repeats detection alone on an already loaded image. If `cv::imre
 
 With this change, `p50` values are smaller than before. `schema_version` has been raised to 3 so that results from version 2 and earlier cannot be aggregated together with these.
 
+### The recorded CUDA Toolkit version includes the patch version
+
+`nvcc --version` prints `Cuda compilation tools, release 13.0, V13.0.88`, and the
+capture used to stop at the comma. A measurement file could then not establish on
+its own which Toolkit produced it. It is not a hypothetical gap: of the four
+machines measured, the Jetson AGX Thor runs `13.0.48` and the GeForce RTX 5070 Ti
+`13.0.88`, and both were recorded as `13.0`.
+
+`cuda_toolkit` now carries the `V` token, falling back to the release field when
+there is none. No key was added or renamed and no measured interval moved, so
+`schema_version` 4 and 5 are aggregated together; the reasoning is with
+`SUPPORTED_SCHEMA_VERSIONS` in `aggregate.py`.
+
 ### Startup cost is recorded separately
 
 Warm-up is separated from the measured interval, but it is not discarded. The time until the first result is available (`startup.time_to_first_result_ms`) and the time for detection on the first image alone (`startup.first_frame_ms`) are recorded. CUDA context creation happens only once per process, so it goes into the environment information (`cuda_context_ms`) rather than into the per-route measurements.

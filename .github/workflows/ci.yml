@@ -2,7 +2,7 @@
 #
 # Only the checks that can run on a runner without a GPU.
 #
-# Detection correctness can only be confirmed on a GPU, so the 518 automated
+# Detection correctness can only be confirmed on a GPU, so the 520 automated
 # tests and Compute Sanitizer run on real hardware: DGX Spark GB10, Jetson AGX
 # Orin, Jetson AGX Thor, and GeForce RTX 5070 Ti. What CI protects is that the code compiles and
 # that the documentation and formatting conventions hold; it is not a guarantee

@@ -44,7 +44,9 @@ if [ ! -x "${kCudaHome}/bin/nvcc" ]; then
     echo "       Rebuild the image, or check the ARUCO3_CUDA_PACKAGES setting."
   fi
 else
-  nvcc_version="$("${kCudaHome}/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')"
+  # Including the patch version; see the note in record-environment.sh.
+  nvcc_version="$("${kCudaHome}/bin/nvcc" --version \
+                   | sed -n 's/.*, V\([0-9][0-9.]*\).*/\1/p; s/.*release \([0-9][0-9.]*\).*/\1/p')"
   pass "nvcc ${nvcc_version} (${kCudaHome})"
   if [ "${kCudaMode}" = "mounted" ]; then
     warn "mounted mode depends on the host CUDA. Runs that produce measurements must use pinned mode."

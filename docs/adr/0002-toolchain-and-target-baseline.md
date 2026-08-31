@@ -232,10 +232,17 @@ The environment the sweep ran in is recorded separately, in
 [2026-08-31-jetson-orin-environment.json](../measurements/2026-08-31-jetson-orin-environment.json),
 captured from the same image (`sha256:99e3b92dba23e8050859ac55c49c7588d809e4438fe62aeff9fe3b79045655b5`).
 It carries the CUDA provenance, so the repository and all eight package versions
-are on record with the numbers. The sweep file itself cannot show that: the
-benchmark harness records `cuda_toolkit` only to the minor version, and the
-`l4t-cuda` image it replaced reports the same `11.4` on the same Ubuntu 20.04, so
-the two are indistinguishable from the sweep file alone.
+are on record with the numbers. The sweep file could not show that: at the time
+the benchmark harness recorded `cuda_toolkit` only to the minor version. **That
+was changed on 2026-08-31**; it records `11.4.315` since, though the sweep files
+on record here stay at the minor version.
+
+The conclusion holds either way for these two images. `nvcc` is `V11.4.315` build
+`cuda_11.4.r11.4/compiler.31964100_0` in the `l4t-cuda` image and in the apt-built
+one alike, so the patch version does not tell them apart and only the provenance
+in the environment record does. Where the patch version does earn its place is
+across machines: the Jetson AGX Thor runs `13.0.48` and the GeForce RTX 5070 Ti
+`13.0.88`, and both were recorded as plain `13.0`.
 
 The two records are complementary rather than redundant. The environment record
 alone carries the CUDA and OpenCV provenance, the CPU model and the total memory;

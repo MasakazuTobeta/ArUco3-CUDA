@@ -392,14 +392,19 @@ std::string read_os_pretty_name() {
     return std::string();
 }
 
-/// Schema version of the result JSONL. Raise it whenever a key is added or renamed.
+/// Schema version of the result JSONL. Raise it whenever a key is added or
+/// renamed, or when the meaning or the format of a recorded value changes.
 ///
 /// Change in 3: stages was added to the measurement line, and image loading and
 /// the checksum were taken out of the measured interval of the CPU route. Mixing
 /// these with results from version 2 or earlier would make the same key refer to
 /// a different interval.
 /// Change in 4: startup was added to the measurement line.
-constexpr int kSchemaVersion = 4;
+/// Change in 5: cuda_toolkit carries the patch version, taken from the V token
+/// of nvcc --version, where it used to stop at the minor version. No key was
+/// added or renamed and the measured intervals are identical to 4, so 4 and 5
+/// may be aggregated together; see SUPPORTED_SCHEMA_VERSIONS in aggregate.py.
+constexpr int kSchemaVersion = 5;
 
 void write_statistics(JsonWriter& writer, const std::string& name, const SampleStatistics& stats) {
     writer.key(name);
@@ -518,8 +523,17 @@ EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
                                                   std::to_string(probe.compute_capability_minor_);
         }
     }
+    // The V token carries the patch version; the release field stops at the
+    // minor version. Two machines can run the same minor version and different
+    // patch versions, which is not visible in the record otherwise. The V
+    // expression has to come first: it replaces the pattern space, so the
+    // release expression that follows only fires when there was no V token to
+    // find. read_command_line keeps the first line of output and drops the
+    // rest, so printing twice would hide the answer behind the fallback.
     environment.cuda_toolkit_version_ = read_command_line(
-            "nvcc --version 2>/dev/null | sed -n 's/.*release \\([0-9.]*\\).*/\\1/p'");
+            "nvcc --version 2>/dev/null | "
+            "sed -n 's/.*, V\\([0-9][0-9.]*\\).*/\\1/p; "
+            "s/.*release \\([0-9][0-9.]*\\).*/\\1/p'");
 
     // The driver version, the power mode, the clocks and the L4T release cannot
     // be obtained from a library. Their source differs from machine to machine,
@@ -1081,9 +1095,8 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     JsonWriter writer(out, 0);
     writer.begin_object();
     writer.member_string("type", "environment");
-    // version 2: added cpu_topology, cpu_affinity, address_randomization, the
-    // GPU clocks and the platform information, all needed to reproduce the
-    // measurement conditions.
+    // The per-version history is with kSchemaVersion, so that there is one
+    // changelog rather than two that drift apart.
     writer.member_int("schema_version", kSchemaVersion);
     writer.member_string("hostname", environment.hostname_);
     writer.member_string("os", environment.os_);
