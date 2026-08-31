@@ -5,9 +5,16 @@
 #   bind-mounts it read-only from the host. Overlay this on compose.yaml.
 #
 # Role:
-#   A mode intended for quick local experiments. The image is not independent of
-#   the host environment, so it must not be used for runs that produce benchmark
-#   results. Measurements are taken in pinned mode.
+#   A convenience for quick local experiments, and for a machine where installing
+#   a second copy of the Toolkit into the image is not wanted.
+#
+#   Behaviour and performance in this mode are not guaranteed. The Toolkit comes
+#   from the host, so the container is not reproducible and the version can
+#   differ from the one the pinned image installs; on the GeForce RTX 5070 Ti it
+#   does, 13.2 against 13.0. Measurements are taken in pinned mode, and the
+#   verification the three machines run covers pinned mode. What is checked here
+#   is that each profile builds and that the test suite passes; nothing more is
+#   promised.
 #
 # Usage:
 #   docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml build dgx-spark
@@ -33,3 +40,16 @@ services:
     image: aruco3-cuda:jetson-orin-mounted
     volumes:
       - ${ARUCO3_CUDA_HOST_PATH_JETSON:-/usr/local/cuda-11.4}:/usr/local/cuda:ro
+
+  # The base image differs from pinned mode here, where it is ubuntu:24.04. The
+  # host runs Ubuntu 22.04, and matching it keeps the mounted Toolkit binaries on
+  # the userspace they were built for. A newer container would satisfy the glibc
+  # requirement too, but nothing else about it is tested.
+  rtx-blackwell:
+    build:
+      args:
+        BASE_IMAGE: ${ARUCO3_RTX_BASE_IMAGE_MOUNTED:-ubuntu:22.04}
+        ARUCO3_CUDA_MODE: mounted
+    image: aruco3-cuda:rtx-blackwell-mounted
+    volumes:
+      - ${ARUCO3_CUDA_HOST_PATH_RTX:-/usr/local/cuda-13.2}:/usr/local/cuda:ro
