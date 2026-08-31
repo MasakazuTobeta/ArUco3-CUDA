@@ -23,8 +23,9 @@ We cover the implementation of detection (from the input image through to IDs an
 | DGX Spark GB10 | aarch64 | NVIDIA GB10 | Integrated | 12.1 | 13.0 |
 | Jetson AGX Orin | aarch64 | Orin | Integrated | 8.7 | 11.4 |
 | GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | Discrete | 12.0 | 13.0 |
+| Jetson AGX Thor | aarch64 | Thor | Integrated | 11.0 | 13.0 |
 
-The configuration of two integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally.
+The configuration of three integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally. The Jetson AGX Thor is a build and test target only; no measurements have been taken on it, so the speed and accuracy figures below come from the other three.
 
 ### Accuracy
 
