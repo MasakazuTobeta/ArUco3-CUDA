@@ -8,21 +8,22 @@ This document defines how we measure. The results themselves are in the [Benchma
 
 ## Scope
 
-The comparison baseline is the OpenCV ArUco3 detection strategy (CPU), and the subject of comparison is the CUDA implementation in this repository. We measure on the following three machines.
+The comparison baseline is the OpenCV ArUco3 detection strategy (CPU), and the subject of comparison is the CUDA implementation in this repository. We measure on the following four machines.
 
 | Machine | Architecture | GPU | GPU type | CC | CUDA |
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | aarch64 | NVIDIA GB10 | Integrated | 12.1 | 13.0 |
 | Jetson AGX Orin | aarch64 | Orin | Integrated | 8.7 | 11.4 |
+| Jetson AGX Thor | aarch64 | NVIDIA Thor | Integrated | 11.0 | 13.0 |
 | GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | Discrete | 12.0 | 13.0 |
 
-The configuration of two integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally. On an integrated GPU, the host and the device share the same physical memory, so transfer costs differ from a discrete GPU. In our measurements, however, transfer cost is small even on the discrete GPU, and it comes out larger on the integrated-GPU DGX Spark GB10. We have not identified the reason. Input memory kind does divide integrated and discrete clearly: managed memory is 6.4 to 30 times slower on the discrete GPU, while on integrated GPUs it stays within 1.01 to 1.22 times.
+The configuration of three integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally. On an integrated GPU, the host and the device share the same physical memory, so transfer costs differ from a discrete GPU. In our measurements, however, transfer cost is small even on the discrete GPU, and it comes out larger on the integrated-GPU DGX Spark GB10. We have not identified the reason. Input memory kind does divide integrated and discrete clearly: managed memory is 6.4 to 30 times slower on the discrete GPU, while on integrated GPUs it stays within 1.01 to 1.27 times.
 
 The input is a synthetic corpus. We do not handle real-image datasets. Pose estimation is also out of scope.
 
 ## Current state
 
-The synthetic corpus generator, the CPU reference runner, the measurement harness for four routes, and the accuracy evaluator against ground truth are all in place, and we can measure under the conditions below. The device-resident input route is measured on all three machines. The routes that take host input are used for comparing input memory kinds.
+The synthetic corpus generator, the CPU reference runner, the measurement harness for four routes, and the accuracy evaluator against ground truth are all in place, and we can measure under the conditions below. The device-resident input route is measured on all four machines. The routes that take host input are used for comparing input memory kinds.
 
 ### Routes compared
 
@@ -139,7 +140,7 @@ The commands needed for reproduction are in the Reproducing the measurements sec
 
 - The accuracy results reproduce stably under the target conditions.
 - Compute Sanitizer detects no memory errors and no races.
-- The same test corpus passes on all three machines.
+- The same test corpus passes on all four machines.
 - The performance results state the measured interval and the synchronization points explicitly.
 - We can explain both the conditions where CUDA wins and the conditions where the CPU wins.
 

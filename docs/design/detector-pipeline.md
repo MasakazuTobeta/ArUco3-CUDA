@@ -133,7 +133,7 @@ If one side of the canonical is at most 32, the horizontal block split of OpenCV
 
 ### First half of S8: Otsu and border verification
 
-Cell ratios are computed from the canonical image, and candidates are filtered by the number of errors in the outer ring of cells. All three machines match the CPU baseline exactly (ratios 0 / 4096 cells, error counts 0 / 64 candidates).
+Cell ratios are computed from the canonical image, and candidates are filtered by the number of errors in the outer ring of cells. The three machines measured for this match the CPU baseline exactly (ratios 0 / 4096 cells, error counts 0 / 64 candidates).
 
 Unlike S7, no machine difference appeared. The computations in this stage are the following three, and in none of them does SIMD multiply-add fusion reach the result.
 
@@ -292,9 +292,9 @@ The error is computed in single precision and then widened to double. `err = (dx
 
 Unlike the preceding stages, a 1 ULP difference becomes a discrete difference. The iteration count changes by one, and if the branch that restores the initial position on convergence failure flips, the corners move by the window radius. For that reason the verification was split into two parts.
 
-**First, that there is no transcription error.** An oracle transcribing `cv::cornerSubPix` and `cv::getRectSubPix` verbatim to the host is placed in the tests, and bit agreement is required. The oracle is compiled with `-ffp-contract=off`, giving it the same semantics as `-fmad=false` on the GPU side. Including degenerate inputs, all three machines matched 128/128.
+**First, that there is no transcription error.** An oracle transcribing `cv::cornerSubPix` and `cv::getRectSubPix` verbatim to the host is placed in the tests, and bit agreement is required. The oracle is compiled with `-ffp-contract=off`, giving it the same semantics as `-fmad=false` on the GPU side. Including degenerate inputs, the three machines measured for this matched 128/128.
 
-**Second, the difference from OpenCV.** The difference from the actual `cv::cornerSubPix` varies by machine. On inputs close to real use, all three machines are within an RMSE of 0.000012 px, but on degenerate inputs where the determinant approaches 0, a difference of up to 6.72 px appears on aarch64. This is because the convergence-failure decision flips and is then doubled while climbing the levels. It is not an implementation error but the result of a rounding difference amplified into a discrete branch.
+**Second, the difference from OpenCV.** The difference from the actual `cv::cornerSubPix` varies by machine. On inputs close to real use, the three machines measured for this are within an RMSE of 0.000012 px, but on degenerate inputs where the determinant approaches 0, a difference of up to 6.72 px appears on aarch64. This is because the convergence-failure decision flips and is then doubled while climbing the levels. It is not an implementation error but the result of a rounding difference amplified into a discrete branch.
 
 ### Stage breakdown
 
@@ -437,7 +437,7 @@ The inside ratio alone cannot reject the L shape and the cross, and the edge sup
 
 `DetectorConfig::cuda_block_dim_` is a setting that overrides the block side for 2D kernels, but **it reaches only 5 out of 12** (3 in `preprocess.cu` and 2 in `threshold.cu`). `labeling.cu`, `candidate_filter.cu`, and `quad_extract.cu` fix it at 16.
 
-We will **neither** widen the reach nor remove the setting itself. In measurements sweeping 8 / 16 / 32 on three machines, **16 was optimal on every machine**, and 32 was 3 to 8% slower. There is no reason to change it even though it is exposed as a setting, and widening its reach would gain nothing.
+We will **neither** widen the reach nor remove the setting itself. In measurements sweeping 8 / 16 / 32 on the three machines measured at the time, **16 was optimal on every machine**, and 32 was 3 to 8% slower. There is no reason to change it even though it is exposed as a setting, and widening its reach would gain nothing.
 
 To avoid redoing the same sweep, the measured facts are left here.
 

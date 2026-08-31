@@ -352,8 +352,10 @@ other machines use lists it too, so widening the preset does not break them. The
   Without it CMake fails with `Unable to (re)create the private pkgRedirects
   directory`, which names neither permissions nor the user. The first three machines
   all run uid 1000 and never exercised this.
-- No measurements were taken on the Thor. It is a build and test target for now; the
-  benchmark and accuracy figures still come from the other three.
+- The Thor was a build and test target when this was decided, with the benchmark and
+  accuracy figures coming from the other three. **It was measured on 2026-08-31**, the
+  same day, and both reports cover all four machines since; see the [benchmark
+  report](../benchmark-report.md) and the [accuracy report](../accuracy-report.md).
 
 ## See also
 
