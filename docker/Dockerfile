@@ -5,7 +5,9 @@
 #
 # How the CUDA Toolkit is supplied:
 #   ARUCO3_CUDA_MODE=pinned  (default) installs only the required CUDA packages
-#                                      into the image.
+#                                      into the image, from the NVIDIA apt
+#                                      repository named by
+#                                      ARUCO3_CUDA_REPO_FLAVOR.
 #   ARUCO3_CUDA_MODE=mounted           bind-mounts it from the host at run time.
 #
 #   pinned is the default because it makes the compiler used for the measurements
@@ -21,12 +23,13 @@
 #   In either mode the NVIDIA driver libraries are injected by the NVIDIA
 #   Container Toolkit.
 #
-# Constraint (mounted mode):
-#   Since host CUDA Toolkit binaries run inside the container, the glibc in
-#   BASE_IMAGE must be at least the version the host CUDA Toolkit requires. The
-#   base image is therefore matched to the host environment per profile.
-#     DGX Spark  : CUDA 13.0 / Ubuntu 24.04 -> ubuntu:24.04
-#     Jetson Orin: CUDA 11.4 / Ubuntu 20.04 -> ubuntu:20.04
+# Base image per profile:
+#   Every profile starts from a plain Ubuntu image and installs CUDA from an
+#   NVIDIA apt repository. The Ubuntu version is matched to the CUDA version so
+#   that glibc is new enough, which also makes mounted mode work, where host
+#   Toolkit binaries run inside the container.
+#     DGX Spark, RTX Blackwell: CUDA 13.0 -> ubuntu:24.04
+#     Jetson Orin             : CUDA 11.4 -> ubuntu:20.04
 ARG BASE_IMAGE=ubuntu:24.04
 
 FROM ${BASE_IMAGE} AS toolchain
@@ -40,14 +43,18 @@ RUN /tmp/install-toolchain.sh && rm -f /tmp/install-toolchain.sh
 FROM toolchain AS cuda
 
 ARG ARUCO3_CUDA_MODE=pinned
+ARG ARUCO3_CUDA_REPO_FLAVOR=cuda
 ARG ARUCO3_CUDA_REPO_DISTRO=ubuntu2404
 ARG ARUCO3_CUDA_REPO_ARCH=sbsa
+ARG ARUCO3_CUDA_REPO_SUITE=r35.4
 ARG ARUCO3_CUDA_PACKAGES="cuda-nvcc-13-0 cuda-cccl-13-0 cuda-sanitizer-13-0 cuda-nvtx-13-0 cuda-cuobjdump-13-0 cuda-nvdisasm-13-0 cuda-profiler-api-13-0"
 
 COPY scripts/install-cuda-toolkit.sh /tmp/install-cuda-toolkit.sh
 RUN ARUCO3_CUDA_MODE="${ARUCO3_CUDA_MODE}" \
+    ARUCO3_CUDA_REPO_FLAVOR="${ARUCO3_CUDA_REPO_FLAVOR}" \
     ARUCO3_CUDA_REPO_DISTRO="${ARUCO3_CUDA_REPO_DISTRO}" \
     ARUCO3_CUDA_REPO_ARCH="${ARUCO3_CUDA_REPO_ARCH}" \
+    ARUCO3_CUDA_REPO_SUITE="${ARUCO3_CUDA_REPO_SUITE}" \
     ARUCO3_CUDA_PACKAGES="${ARUCO3_CUDA_PACKAGES}" \
       /tmp/install-cuda-toolkit.sh \
     && rm -f /tmp/install-cuda-toolkit.sh

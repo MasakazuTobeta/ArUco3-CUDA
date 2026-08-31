@@ -78,7 +78,7 @@ For OpenCV, the latest in the 4.x line is 4.14.0, and 5.0.0 has been released as
 7. The generated artifacts may use exceptions on the host side, but the core's public API returns `Status`. Details follow the [public API draft](../design/public-api.md).
 8. Pin the toolchain in a development container rather than by installing directly on the host. Pin the CUDA Toolkit in the image as well, and install only the necessary packages. Keep the mode that bind-mounts from the host for local experimentation, but do not use it for runs that involve measurement. Details follow the [Docker environment design](../design/docker-environment.md).
 9. Set the minimum CUDA Toolkit version to 11.4. We confirmed on the actual machine that the target Jetson AGX Orin runs JetPack 5.1.2 (L4T R35.4.1) and that the bundled CUDA is 11.4. Keep the common path within what this version can compile.
-10. Use `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` as the base image for Jetson's pinned mode. It contains only CUDA and is smaller than `l4t-jetpack`.
+10. Use `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` as the base image for Jetson's pinned mode. It contains only CUDA and is smaller than `l4t-jetpack`. **This was changed on 2026-08-31**; see [the 2026-08-31 update](#2026-08-31-update-building-the-jetson-image-from-ubuntu-and-the-l4t-apt-repository).
 
 ## Rationale
 
@@ -156,6 +156,82 @@ signer:         Canonical Ltd. Kernel Module Signing
 ```
 
 This package installs the module for the latest HWE kernel rather than the running kernel, so after installation you must reboot and start on the new kernel.
+
+## 2026-08-31 update: building the Jetson image from ubuntu and the L4T apt repository
+
+### Background
+
+Item 10 made Jetson the only profile that pulls its base image from NGC. The other
+two start from `ubuntu:24.04` and install the CUDA packages this project uses from
+NVIDIA's apt repository. The asymmetry was accepted because the
+[Docker environment design](../design/docker-environment.md) recorded that on
+Jetson there was no way to select individual packages from an apt repository.
+
+That was wrong. The CUDA build for Tegra is published at
+`repo.download.nvidia.com/jetson`, a different host from the
+`developer.download.nvidia.com` the other profiles use, and every package this
+project needs is there individually. Checked on the machine:
+
+| Package | Version in `jetson/common r35.4` | Installed size |
+| --- | --- | --- |
+| `cuda-nvcc-11-4` | 11.4.315-1 | 98.1 MB |
+| `cuda-nvdisasm-11-4` | 11.4.298-1 | 31.8 MB |
+| `cuda-sanitizer-11-4` | 11.4.298-1 | 27.6 MB |
+| `cuda-cccl-11-4` | 11.4.298-1 | 12.1 MB |
+| `cuda-cudart-dev-11-4` | 11.4.298-1 | 5.0 MB |
+| `cuda-nvtx-11-4`, `cuda-cuobjdump-11-4`, `cuda-profiler-api-11-4`, and dependencies | | 1.8 MB |
+| **Total** | | **176.4 MB** |
+
+Three things had to hold before this was worth doing, and all three were checked on
+the machine.
+
+- **The toolkit is the same one.** `nvcc` from the apt package and `nvcc` in
+  `l4t-cuda:11.4.19-devel` are both `V11.4.315`, build
+  `cuda_11.4.r11.4/compiler.31964100_0`, and `libcudart` is `11.4.298` on both
+  sides. This is a packaging change, not a version change, so the benchmark
+  results stay comparable.
+- **The driver is not dragged in.** The dependency closure is
+  `cuda-nvcc-11-4` → `cuda-cudart-dev-11-4` → `cuda-cudart-11-4`,
+  `cuda-cccl-11-4`, `cuda-driver-dev-11-4`, and from there only
+  `cuda-toolkit-*-config-common`. `nvidia-l4t-cuda`, the L4T driver runtime, never
+  appears. The driver keeps coming from the NVIDIA Container Toolkit, which
+  injects 219 libraries and 37 symlinks listed in the host's `l4t.csv`, including
+  `libcuda.so.1`.
+- **`ubuntu:20.04` is what was already underneath.** `l4t-cuda:11.4.19-devel` is
+  built on Ubuntu 20.04.6, so `install-toolchain.sh` and `build-opencv.sh` were
+  already running on that userspace, including the path that fetches CMake from
+  Kitware because 20.04 ships 3.16.
+
+### Change to the decision
+
+Item 10 is replaced. The Jetson profile starts from `ubuntu:20.04` and installs
+the CUDA packages from `repo.download.nvidia.com/jetson/common`, selected by
+`ARUCO3_CUDA_REPO_FLAVOR=jetson`. The suite comes from `ARUCO3_JETSON_L4T_SUITE`
+and defaults to `r35.4`.
+
+`install-cuda-toolkit.sh` gains the flavour switch because the two repositories
+differ in more than a URL: the CUDA repository ships a `cuda-keyring` package,
+while the L4T repository publishes an armored key that has to be dearmored into
+its own keyring and bound to the source with `signed-by`. Only the `common`
+component is added; `t234` holds the board support package and the L4T driver,
+which must not end up in this image.
+
+### Consequences
+
+- No profile depends on NGC any more. All three are `ubuntu` plus an NVIDIA apt
+  repository.
+- The recorded provenance names the packages and their exact versions. Under the
+  NGC base image it recorded `"packages": []`, so the image tag was the only
+  evidence of which toolkit produced a measurement.
+- **The coupling to the L4T version remains.** The suite is pinned to `r35.4`, so
+  a move to JetPack 6 changes the suite, the package versions, and the base image
+  to `ubuntu:22.04`. That is the same coupling the base image tag had; it is not
+  loosened, only moved.
+- `mounted` mode is unaffected. It was measured at 540 MB against the 5.0 GB of
+  the NGC image, and it was considered as the way to drop NGC. It was rejected
+  because the image then stops being self-contained: reproducing a measurement
+  later, or on a machine whose host toolkit has moved, needs the toolkit to
+  travel with the image.
 
 ## See also
 
