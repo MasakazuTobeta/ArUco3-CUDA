@@ -4,7 +4,7 @@
 #
 # Split by whether a device is needed. test_binding.py runs anywhere, so CI
 # without a GPU runs it too; test_detect.py needs a device and runs only on the
-# three physical machines. Filtering inside one file would hide which of the two
+# four physical machines. Filtering inside one file would hide which of the two
 # a failure came from.
 find_package(Python3 COMPONENTS Interpreter)
 if(NOT Python3_Interpreter_FOUND)

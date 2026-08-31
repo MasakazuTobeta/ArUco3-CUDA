@@ -289,8 +289,8 @@ same instability the benchmark report already records for the Jetson GPU stage.
 
 ### Consequences
 
-- No profile depends on NGC any more. All three are `ubuntu` plus an NVIDIA apt
-  repository.
+- No profile depends on NGC any more. Every one of them is `ubuntu` plus an NVIDIA
+  apt repository, the Jetson AGX Thor profile added later included.
 - The recorded provenance names the packages and their exact versions. Under the
   NGC base image it recorded `"packages": []`, so the image tag was the only
   evidence of which toolkit produced a measurement.
