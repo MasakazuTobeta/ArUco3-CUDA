@@ -56,7 +56,15 @@ The `jetson-orin` profile has also been built and verified on the machine itself
 | Image size | 726 MB |
 | `verify-environment.sh` | All 5 checks pass |
 | `smoke-test.sh` | Pass |
-| `ctest` | Pass. The suite registers 455 tests in the `portability` preset; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
+| `ctest` | Pass, with the `native` preset. The suite registers 455 tests; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
+
+The `portability` preset cannot be used on this machine. CUDA 11.4 supports up to `sm_87`, so the preset fails while CMake is still testing the compiler:
+
+```
+nvcc fatal : Unsupported gpu architecture 'compute_120'
+```
+
+Use `native` or `jetson-orin` here. The registered test count is the same either way, because it does not depend on the target architecture.
 
 This image is smaller than DGX Spark's 1.64 GB because `INSTALL_DEV_TOOLS=0` leaves out the development tools and because CUDA 11.4 packages are smaller than the 13.0 ones: the eight selected packages and their dependencies install 176 MB, against about 300 MB on DGX Spark.
 

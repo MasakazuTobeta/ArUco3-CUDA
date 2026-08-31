@@ -102,7 +102,7 @@ docker compose -f docker/compose.yaml run --rm "$PROFILE" bash -c '
   cmake --preset native && cmake --build --preset native && ctest --preset native'
 ```
 
-The `native` preset detects the architecture of the machine it runs on automatically. To cover all three machines with a single binary, use the `portability` preset, which generates all three of `sm_87`, `sm_120`, and `sm_121`. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
+The `native` preset detects the architecture of the machine it runs on automatically. To cover all three machines with a single binary, use the `portability` preset, which generates all three of `sm_87`, `sm_120`, and `sm_121`. That binary runs on all three, but it can only be built where the CUDA Toolkit supports every listed architecture: the Jetson AGX Orin is on CUDA 11.4, which stops at `sm_87` and rejects the preset at configure time, so use `native` or `jetson-orin` there. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
 
 ## Usage
 
