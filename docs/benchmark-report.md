@@ -95,7 +95,7 @@ We move the `M-Pinned` copy outside the measured interval because the evaluation
 
 The configuration of three integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
 
-The Jetson AGX Thor was measured on 2026-08-31; the other three on 2026-08-29. Its files carry that date. It was not present for the earlier analysis, so the contour point regression below covers three machines only: the counting step is not in this repository and the regression input was not kept, so it cannot be extended to a fourth machine after the fact.
+The Jetson AGX Thor was measured on 2026-08-31; the other three on 2026-08-29. Its files carry that date.
 
 ## Current state
 
@@ -147,7 +147,7 @@ Native resolution is not an explanatory variable. Since the ArUco3 detection str
 
 The number of quadrilateral candidates is not an explanatory variable either. `noise_1280x720` has **zero detections** and yet is one of the heaviest scenes for the CPU route.
 
-What matters is the **contour point count after thresholding**. `noise_1280x720` has 99,074 points and `clean_1280x720_n4` has 6,390, a 15-fold difference.
+What matters is the **contour point count after thresholding**. `noise_1280x720` has 122,607 points and `clean_1280x720_n4` has 6,373, a 19-fold difference.
 
 #### How the contour points are counted
 
@@ -158,19 +158,26 @@ The contour point count is a value derived from the corpus images by the followi
 3. Apply `cv::findContours` to each thresholded image with `RETR_LIST` and `CHAIN_APPROX_NONE`, and sum the point counts of all contours.
 4. Take the sum over the three windows as the contour point count for that scene.
 
-These are the same settings the OpenCV detector uses internally. **This counting procedure is not part of the code in this repository.** The regression input data is not included in `docs/measurements/` either, so a reader cannot verify the R2 values and coefficients above directly.
+These are the same settings the OpenCV detector uses internally, and they are read from `DetectorConfig` rather than repeated, so they cannot drift apart.
+
+**The procedure is now a tool: `tools/contourcount`.** Its output for the 28 sweep scenes is committed as `docs/measurements/2026-08-31-contour-points-aarch64.json` and `-x86_64.json`, one per corpus, so the regression input can be regenerated and the coefficients below can be checked. Two corpora because the same seed produces slightly different images on the two architectures; the counts nonetheless agree to 0.002% in total, and to the point on the two headline scenes.
+
+Two details of the downscale decide whether the count comes out right, and both were found the hard way while writing the tool. The factor is computed in `float` and the size rounded with `lrint`, as `detail::plan_scales` does, because a `double` lands on the other side of a rounding boundary and gives a size one pixel different. And it is the **size** that is handed to `cv::resize`, not the factor: OpenCV recomputes the interpolation coefficients as `dst / src` when given a size, and uses the factor as given when given a factor, so the two produce different pixels at the same output size. The detector takes the first path, as `src/core/preprocess.cu` says where it computes `inverse_scale = dst / src`. Passing the factor instead inflates the count by up to a factor of three on a high-texture scene, while leaving it exactly right at 640x480 and 1920x1080, where the size divides evenly and the two agree.
 
 #### Regression results
 
-We fit `time = b0 + b1 x segMpx + b2 x Mpx + b3 x [has detections] + b4 x detection count + b5 x (contour points / 1e5)` to the 28 scenes. R2 is 0.977 to 0.988 for the CPU, 0.965 to 0.980 for Hybrid, and 0.894 to 0.973 for CUDA-Resident.
+We fit `time = b0 + b1 x segMpx + b2 x Mpx + b3 x [has detections] + b4 x detection count + b5 x (contour points / 1e5)` to the 28 scenes. R2 is 0.966 to 0.979 for the CPU, 0.886 to 0.953 for Hybrid, and 0.892 to 0.969 for CUDA-Resident.
 
 **The coefficient per 1e5 contour points** is what separates the routes.
 
 | Machine | CPU | Hybrid | CUDA-Resident | Ratio (CPU / Resident) |
 | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | 2.56 ms | 2.70 ms | **0.077 ms** | 33x |
-| Jetson AGX Orin | 5.35 ms | 5.48 ms | **0.278 ms** | 19x |
-| GeForce RTX 5070 Ti | 2.48 ms | 2.54 ms | **0.041 ms** | 60x |
+| DGX Spark GB10 | 1.70 ms | 1.79 ms | **0.050 ms** | 34x |
+| Jetson AGX Orin | 3.55 ms | 3.63 ms | **0.182 ms** | 19x |
+| Jetson AGX Thor | 2.70 ms | 2.92 ms | **0.100 ms** | 27x |
+| GeForce RTX 5070 Ti | 1.64 ms | 1.67 ms | **0.027 ms** | 61x |
+
+The three machines that had coefficients before keep them: recomputing from the committed input reproduces 2.558, 2.696 and 0.077 for the DGX Spark against the published 2.56, 2.70 and 0.077, and likewise on the other two. The R2 values match as well. What is new is that the input is committed and the counting is a tool, so this can now be checked rather than taken on trust, and the Jetson AGX Thor could be added at all.
 
 **Hybrid's coefficient is nearly the same as the CPU's.** Hybrid runs only preprocessing and thresholding on the GPU and everything from contour extraction onward on the host. Only CUDA-Resident is 19 to 60 times smaller, and this is the essential difference between the three routes.
 
@@ -224,7 +231,7 @@ Sorted by ascending contour point count, the position where the winning route sw
 | noise_1280x720 | 99,074 | **Resident** (0.14) | **Resident** (0.16) | **Resident** (0.09) |
 | noise_3840x2160 | 127,319 | **Resident** (0.14) | **Resident** (0.19) | **Resident** (0.07) |
 
-**Above roughly 20,000 contour points, CUDA-Resident wins on all four machines.** Below that the winner is not decided by the contour point count alone, so **20,000 is a rough guide and not a boundary**. The table contains counterexamples in which CUDA-Resident wins far below it, and they are grouped by native resolution rather than by contour points.
+**Above roughly 18,000 contour points, CUDA-Resident wins on all four machines.** On the recounted scale the highest count at which the CPU still wins anywhere is 18,330, on the GeForce RTX 5070 Ti. The figure was 20,000 on the old scale, and the two agree more closely than the change in the counts would suggest. Below that the winner is not decided by the contour point count alone, so **20,000 is a rough guide and not a boundary**. The table contains counterexamples in which CUDA-Resident wins far below it, and they are grouped by native resolution rather than by contour points.
 
 - DGX Spark: the five 3840x2160 scenes below 20,000 points all go to CUDA-Resident (0.71 to 0.78) even though they have 0 to 3,669 points, and so does `combined_1920x1080` at 8,237 points (0.67).
 - GeForce RTX 5070 Ti: every scene at 1920x1080 and above goes to CUDA-Resident, the lowest of them at 0 points; `clean_1280x720_n0_s16` (0 points) also goes to CUDA-Resident, but at 0.94 that is close to a tie.
@@ -292,18 +299,40 @@ On the DGX Spark, pinned is **slower** (1.09 to 1.15 times). We believe this is 
 
 This direction agrees with the measurements in the direction of passing results from the device to the host ([memory handoff between host and device](design/memory-transfer.md)). In the input direction the differences came out even larger.
 
-**This is the only axis on which integrated and discrete split.** The ranking of speed is determined by the absolute performance of the GPU rather than by integrated versus discrete, and all three machines in that regression fit the same form of equation. The regression covers three machines, not the Jetson AGX Thor, for the reason given at the top of this document. We cannot state whether it generalizes.
+**This is the only axis on which integrated and discrete split.** The ranking of speed is determined by the absolute performance of the GPU rather than by integrated versus discrete, and all four machines fit the same form of regression equation. With one discrete machine against three integrated ones, we still cannot state whether that generalizes.
 
 ### Run-to-run variance and measurement caveats
 
-The spread of the p50 values across three independent processes.
+The relative range of the three p50 values, `(max - min) / min`, taken per scene over the three independent processes. The table gives the median over the 28 sweep scenes and the worst scene. The definition is written down here because it was not before, and recovering it from the numbers took four wrong guesses.
 
 | Machine | CPU | Hybrid | CUDA-Resident |
 | --- | --- | --- | --- |
 | DGX Spark GB10 | 0.6% (max 2.6%) | **17.7%** (max 50.3%) | **14.1%** (max 69.2%) |
 | Jetson AGX Orin | 0.4% (max 1.7%) | 3.5% (max 29.1%) | 0.5% (max 38.5%) |
-| Jetson AGX Thor | 1.6% (max 1.8%) | 5.3% (max 6.6%) | **16.5%** (max 18.9%) |
+| Jetson AGX Thor | 0.4% (max 1.8%) | 3.0% (max 55.6%) | 0.2% (max 0.8%) |
 | GeForce RTX 5070 Ti | 0.5% (max 2.2%) | 0.4% (max 6.3%) | 0.0% (max 0.5%) |
+
+**The variance of the GPU routes is an order of magnitude larger than that of the CPU route on the DGX Spark alone** (0.6% against 17.7% and 14.1%). The other three do not follow it: on the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%) while CUDA-Resident is 0.5%, the same order as the CPU; the Jetson AGX Thor behaves the same way (3.0% against 0.4%, with CUDA-Resident at 0.2%); and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route. The Jetson AGX Orin medians hide its worst scene, where CUDA-Resident reaches 38.5% against 1.7% for the CPU, and the Thor hides a 55.6% scene on Hybrid.
+
+#### The GPU clock explains the variance where it appears
+
+The earlier text guessed that an unlocked GPU clock was the cause and marked the guess unverified. It has now been tested on the Jetson AGX Thor.
+
+The GPU clock was pinned to its maximum through devfreq, `min_freq = max_freq` on `gpu-gpc-0`, holding 1575 MHz. Only the GPU: `jetson_clocks` would have pinned the CPU too and destroyed the control. The power mode stayed at MAXN, which is what every measurement here uses. MAXN sets a power budget and does not pin a clock; under it the GPU still scaled between 315 MHz and 1575 MHz.
+
+The measurement that moves is the single-image one, where the process handles one 1280x720 image with 4 markers and the GPU starts cold. Within-run spread of that measurement:
+
+| Route | p50, clock dynamic | p50, clock pinned | Spread, dynamic | Spread, pinned |
+| --- | --- | --- | --- | --- |
+| CPU (the control) | 1.420 ms | 1.424 ms | 1.6% | 1.6% |
+| Hybrid | 0.561 ms | 0.529 ms | 5.3% | 6.4% |
+| CUDA-Resident | 0.837 ms | 0.836 ms | **16.5%** | **5.5%** |
+
+CUDA-Resident's spread falls to a third while its median moves by 0.1%, and the CPU route, which never touches the GPU, does not move at all. That is the control the earlier guess lacked.
+
+**It only helps while the GPU is cold.** Repeating the 28-scene sweep with the clock pinned changes almost nothing: CUDA-Resident's median within-run spread goes from 0.9% to 0.8%. One process handles 28 images there, so the clock has ramped by the second image and there is nothing left to fix. In the single-image case the ramp is most of what is being measured.
+
+This is a property of the measurement conditions rather than of the implementation. Pinning the clock is a way to measure repeatably; it is not a change to make in order to detect faster, because the medians do not move.
 
 **The variance of the GPU routes is an order of magnitude larger than that of the CPU route on the DGX Spark** (0.6% against 17.7% and 14.1%), **and on the Jetson AGX Thor for CUDA-Resident** (1.6% against 16.5%). We believe this is because the GPU clock is not locked (unverified). The other two machines do not follow it: on the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%) while CUDA-Resident is 0.5%, the same order as the CPU, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%). The Jetson AGX Orin medians hide its worst scene, where CUDA-Resident reaches 38.5% against 1.7% for the CPU.
 
@@ -497,8 +526,6 @@ For applications where the contour point count cannot be known in advance, makin
 - The CUDA Toolkit on the Jetson AGX Orin is 11.4 while the other three machines are on 13.0, and the influence of the toolkit version has not been separated out.
 - The per-kernel-launch cost on the GeForce RTX 5070 Ti has not been measured.
 - There is only one discrete-GPU machine against three integrated ones, so we cannot state whether the integrated-versus-discrete results generalize.
-- The Jetson AGX Thor was added after the contour point analysis and is absent from it. Its sweep, startup, memory-mode and accuracy measurements are complete; the regression coefficients and the 20,000 contour point guide come from the other three.
-- The processing that counts contour points is not in this repository, and the regression input data was not kept, so a reader cannot verify the R2 values and coefficients. The counting procedure is described above, but is not provided as a tool.
 
 ## Reproducing the measurements
 
