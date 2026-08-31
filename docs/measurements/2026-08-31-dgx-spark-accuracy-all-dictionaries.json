@@ -1,0 +1,1541 @@
+{
+ "schema_version": 1,
+ "preset": "full",
+ "sceneCount": 91,
+ "seed": 20260827,
+ "matchRadiusRatio": 0.5,
+ "cornerTolerancePx": 1.0,
+ "machine": "dgx-spark",
+ "dictionaries": [
+  {
+   "dictionary": "DICT_4X4_50",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 15218964,
+    "workspaceCapacityBytes": 20391680,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.480568,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 81,
+     "falsePositive": 0,
+     "falseNegative": 9,
+     "rotationAgreed": 81,
+     "recall": 0.9,
+     "cornerRmsePx": 0.484461,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.480568,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 81,
+     "falsePositive": 0,
+     "falseNegative": 9,
+     "rotationAgreed": 81,
+     "recall": 0.9,
+     "cornerRmsePx": 0.484461,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.481538,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.483739,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_4X4_100",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 15218964,
+    "workspaceCapacityBytes": 20391680,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 1.181509,
+     "cornerMaxPx": 17.239647
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 1.188396,
+     "cornerMaxPx": 17.239647
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 1.181509,
+     "cornerMaxPx": 17.239647
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 1.188396,
+     "cornerMaxPx": 17.239647
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.481589,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.48379,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_4X4_250",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 15218964,
+    "workspaceCapacityBytes": 20391680,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.481889,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.484092,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.481889,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.484092,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 0.481576,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.483777,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_4X4_1000",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 15218964,
+    "workspaceCapacityBytes": 20391680,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 1.181631,
+     "cornerMaxPx": 17.239647
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 1.188519,
+     "cornerMaxPx": 17.239647
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 83,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 397,
+     "rotationAgreed": 83,
+     "precision": 1.0,
+     "recall": 0.172917,
+     "cornerRmsePx": 1.181631,
+     "cornerMaxPx": 17.239647
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 1.188519,
+     "cornerMaxPx": 17.239647
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 84,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 396,
+     "rotationAgreed": 84,
+     "precision": 1.0,
+     "recall": 0.175,
+     "cornerRmsePx": 0.480297,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 7,
+     "rotationAgreed": 83,
+     "recall": 0.922222,
+     "cornerRmsePx": 0.482462,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_5X5_50",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 16283924,
+    "workspaceCapacityBytes": 21456640,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 84,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 396,
+     "rotationAgreed": 84,
+     "precision": 1.0,
+     "recall": 0.175,
+     "cornerRmsePx": 0.480607,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.484172,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 84,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 396,
+     "rotationAgreed": 84,
+     "precision": 1.0,
+     "recall": 0.175,
+     "cornerRmsePx": 0.480607,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.484172,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 85,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 395,
+     "rotationAgreed": 85,
+     "precision": 1.0,
+     "recall": 0.177083,
+     "cornerRmsePx": 0.479028,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 7,
+     "rotationAgreed": 83,
+     "recall": 0.922222,
+     "cornerRmsePx": 0.482524,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_5X5_100",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 16283924,
+    "workspaceCapacityBytes": 21456640,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 82,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 398,
+     "rotationAgreed": 82,
+     "precision": 1.0,
+     "recall": 0.170833,
+     "cornerRmsePx": 0.482216,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 81,
+     "falsePositive": 0,
+     "falseNegative": 9,
+     "rotationAgreed": 81,
+     "recall": 0.9,
+     "cornerRmsePx": 0.484449,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 82,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 398,
+     "rotationAgreed": 82,
+     "precision": 1.0,
+     "recall": 0.170833,
+     "cornerRmsePx": 0.482216,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 81,
+     "falsePositive": 0,
+     "falseNegative": 9,
+     "rotationAgreed": 81,
+     "recall": 0.9,
+     "cornerRmsePx": 0.484449,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 84,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 396,
+     "rotationAgreed": 84,
+     "precision": 1.0,
+     "recall": 0.175,
+     "cornerRmsePx": 0.480339,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 7,
+     "rotationAgreed": 83,
+     "recall": 0.922222,
+     "cornerRmsePx": 0.482505,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_5X5_250",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 16283924,
+    "workspaceCapacityBytes": 21456640,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 85,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 395,
+     "rotationAgreed": 85,
+     "precision": 1.0,
+     "recall": 0.177083,
+     "cornerRmsePx": 0.481562,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.484589,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 85,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 395,
+     "rotationAgreed": 85,
+     "precision": 1.0,
+     "recall": 0.177083,
+     "cornerRmsePx": 0.481562,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.484589,
+     "cornerMaxPx": 1.010369
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 85,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 395,
+     "rotationAgreed": 85,
+     "precision": 1.0,
+     "recall": 0.177083,
+     "cornerRmsePx": 0.481171,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 83,
+     "falsePositive": 0,
+     "falseNegative": 7,
+     "rotationAgreed": 83,
+     "recall": 0.922222,
+     "cornerRmsePx": 0.482511,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_5X5_1000",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 16283924,
+    "workspaceCapacityBytes": 21456640,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 84,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 396,
+     "rotationAgreed": 84,
+     "precision": 1.0,
+     "recall": 0.175,
+     "cornerRmsePx": 0.480594,
+     "cornerMaxPx": 1.013764
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 81,
+     "falsePositive": 0,
+     "falseNegative": 9,
+     "rotationAgreed": 81,
+     "recall": 0.9,
+     "cornerRmsePx": 0.484644,
+     "cornerMaxPx": 1.013764
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 84,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 396,
+     "rotationAgreed": 84,
+     "precision": 1.0,
+     "recall": 0.175,
+     "cornerRmsePx": 0.480594,
+     "cornerMaxPx": 1.013764
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 81,
+     "falsePositive": 0,
+     "falseNegative": 9,
+     "rotationAgreed": 81,
+     "recall": 0.9,
+     "cornerRmsePx": 0.484644,
+     "cornerMaxPx": 1.013764
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 85,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 395,
+     "rotationAgreed": 85,
+     "precision": 1.0,
+     "recall": 0.177083,
+     "cornerRmsePx": 0.479896,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 82,
+     "falsePositive": 0,
+     "falseNegative": 8,
+     "rotationAgreed": 82,
+     "recall": 0.911111,
+     "cornerRmsePx": 0.483878,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_6X6_50",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 17512724,
+    "workspaceCapacityBytes": 22685440,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.518841,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 86,
+     "falsePositive": 0,
+     "falseNegative": 4,
+     "rotationAgreed": 86,
+     "recall": 0.955556,
+     "cornerRmsePx": 0.520677,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.518841,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 86,
+     "falsePositive": 0,
+     "falseNegative": 4,
+     "rotationAgreed": 86,
+     "recall": 0.955556,
+     "cornerRmsePx": 0.520677,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.482042,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 86,
+     "falsePositive": 0,
+     "falseNegative": 4,
+     "rotationAgreed": 86,
+     "recall": 0.955556,
+     "cornerRmsePx": 0.482245,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_6X6_100",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 17512724,
+    "workspaceCapacityBytes": 22685440,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 89,
+     "truePositive": 89,
+     "falsePositive": 0,
+     "falseNegative": 391,
+     "rotationAgreed": 89,
+     "precision": 1.0,
+     "recall": 0.185417,
+     "cornerRmsePx": 0.518261,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.521026,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 89,
+     "truePositive": 89,
+     "falsePositive": 0,
+     "falseNegative": 391,
+     "rotationAgreed": 89,
+     "precision": 1.0,
+     "recall": 0.185417,
+     "cornerRmsePx": 0.518261,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.521026,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 89,
+     "truePositive": 89,
+     "falsePositive": 0,
+     "falseNegative": 391,
+     "rotationAgreed": 89,
+     "precision": 1.0,
+     "recall": 0.185417,
+     "cornerRmsePx": 0.481734,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.48246,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_6X6_250",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 17512724,
+    "workspaceCapacityBytes": 22685440,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 86,
+     "truePositive": 86,
+     "falsePositive": 0,
+     "falseNegative": 394,
+     "rotationAgreed": 86,
+     "precision": 1.0,
+     "recall": 0.179167,
+     "cornerRmsePx": 0.518761,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.521153,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 86,
+     "truePositive": 86,
+     "falsePositive": 0,
+     "falseNegative": 394,
+     "rotationAgreed": 86,
+     "precision": 1.0,
+     "recall": 0.179167,
+     "cornerRmsePx": 0.518761,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.521153,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 87,
+     "truePositive": 87,
+     "falsePositive": 0,
+     "falseNegative": 393,
+     "rotationAgreed": 87,
+     "precision": 1.0,
+     "recall": 0.18125,
+     "cornerRmsePx": 0.480237,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 86,
+     "falsePositive": 0,
+     "falseNegative": 4,
+     "rotationAgreed": 86,
+     "recall": 0.955556,
+     "cornerRmsePx": 0.482326,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_6X6_1000",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 17512724,
+    "workspaceCapacityBytes": 22685440,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 87,
+     "truePositive": 87,
+     "falsePositive": 0,
+     "falseNegative": 393,
+     "rotationAgreed": 87,
+     "precision": 1.0,
+     "recall": 0.18125,
+     "cornerRmsePx": 0.48125,
+     "cornerMaxPx": 1.013764
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.483665,
+     "cornerMaxPx": 1.013764
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 87,
+     "truePositive": 87,
+     "falsePositive": 0,
+     "falseNegative": 393,
+     "rotationAgreed": 87,
+     "precision": 1.0,
+     "recall": 0.18125,
+     "cornerRmsePx": 0.48125,
+     "cornerMaxPx": 1.013764
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.483665,
+     "cornerMaxPx": 1.013764
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 87,
+     "truePositive": 87,
+     "falsePositive": 0,
+     "falseNegative": 393,
+     "rotationAgreed": 87,
+     "precision": 1.0,
+     "recall": 0.18125,
+     "cornerRmsePx": 0.481267,
+     "cornerMaxPx": 1.010369
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.483683,
+     "cornerMaxPx": 1.010369
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_7X7_50",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 18905364,
+    "workspaceCapacityBytes": 24078080,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.515813,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.520325,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.515813,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.520325,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.478749,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.48136,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_7X7_100",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 18905364,
+    "workspaceCapacityBytes": 24078080,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 91,
+     "truePositive": 91,
+     "falsePositive": 0,
+     "falseNegative": 389,
+     "rotationAgreed": 91,
+     "precision": 1.0,
+     "recall": 0.189583,
+     "cornerRmsePx": 0.51573,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.522811,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 91,
+     "truePositive": 91,
+     "falsePositive": 0,
+     "falseNegative": 389,
+     "rotationAgreed": 91,
+     "precision": 1.0,
+     "recall": 0.189583,
+     "cornerRmsePx": 0.51573,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.522811,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 92,
+     "truePositive": 92,
+     "falsePositive": 0,
+     "falseNegative": 388,
+     "rotationAgreed": 92,
+     "precision": 1.0,
+     "recall": 0.191667,
+     "cornerRmsePx": 0.478576,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.482971,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_7X7_250",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 18905364,
+    "workspaceCapacityBytes": 24078080,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.513356,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.52074,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 90,
+     "truePositive": 90,
+     "falsePositive": 0,
+     "falseNegative": 390,
+     "rotationAgreed": 90,
+     "precision": 1.0,
+     "recall": 0.1875,
+     "cornerRmsePx": 0.513356,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 84,
+     "falsePositive": 0,
+     "falseNegative": 6,
+     "rotationAgreed": 84,
+     "recall": 0.933333,
+     "cornerRmsePx": 0.52074,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 91,
+     "truePositive": 91,
+     "falsePositive": 0,
+     "falseNegative": 389,
+     "rotationAgreed": 91,
+     "precision": 1.0,
+     "recall": 0.189583,
+     "cornerRmsePx": 0.475719,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.480861,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_7X7_1000",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 18905364,
+    "workspaceCapacityBytes": 24078080,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 92,
+     "truePositive": 92,
+     "falsePositive": 0,
+     "falseNegative": 388,
+     "rotationAgreed": 92,
+     "precision": 1.0,
+     "recall": 0.191667,
+     "cornerRmsePx": 0.513027,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.521578,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 92,
+     "truePositive": 92,
+     "falsePositive": 0,
+     "falseNegative": 388,
+     "rotationAgreed": 92,
+     "precision": 1.0,
+     "recall": 0.191667,
+     "cornerRmsePx": 0.513027,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.521578,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 94,
+     "truePositive": 94,
+     "falsePositive": 0,
+     "falseNegative": 386,
+     "rotationAgreed": 94,
+     "precision": 1.0,
+     "recall": 0.195833,
+     "cornerRmsePx": 0.510756,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 87,
+     "falsePositive": 0,
+     "falseNegative": 3,
+     "rotationAgreed": 87,
+     "recall": 0.966667,
+     "cornerRmsePx": 0.518968,
+     "cornerMaxPx": 3.635142
+    }
+   }
+  },
+  {
+   "dictionary": "DICT_ARUCO_MIP_36h12",
+   "deviceMemory": {
+    "workspacePeakUsedBytes": 17512724,
+    "workspaceCapacityBytes": 22685440,
+    "detectCallCount": 91,
+    "allocationsDuringDetect": 0
+   },
+   "CPU": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 88,
+     "truePositive": 88,
+     "falsePositive": 0,
+     "falseNegative": 392,
+     "rotationAgreed": 88,
+     "precision": 1.0,
+     "recall": 0.183333,
+     "cornerRmsePx": 0.518351,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.522269,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "Hybrid": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 88,
+     "truePositive": 88,
+     "falsePositive": 0,
+     "falseNegative": 392,
+     "rotationAgreed": 88,
+     "precision": 1.0,
+     "recall": 0.183333,
+     "cornerRmsePx": 0.518351,
+     "cornerMaxPx": 3.635142
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.522269,
+     "cornerMaxPx": 3.635142
+    }
+   },
+   "CUDA": {
+    "truth": {
+     "imageCount": 91,
+     "truthCount": 480,
+     "observedCount": 88,
+     "truePositive": 88,
+     "falsePositive": 0,
+     "falseNegative": 392,
+     "rotationAgreed": 88,
+     "precision": 1.0,
+     "recall": 0.183333,
+     "cornerRmsePx": 0.480553,
+     "cornerMaxPx": 1.093585
+    },
+    "detectable": {
+     "imageCount": 91,
+     "truthCount": 90,
+     "observedCount": 0,
+     "truePositive": 85,
+     "falsePositive": 0,
+     "falseNegative": 5,
+     "rotationAgreed": 85,
+     "recall": 0.944444,
+     "cornerRmsePx": 0.483401,
+     "cornerMaxPx": 1.093585
+    }
+   }
+  }
+ ]
+}

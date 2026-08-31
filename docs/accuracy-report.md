@@ -234,6 +234,52 @@ The corpus is generated from a seed by this tool, so no prior generation is requ
 
 The results are in `docs/measurements/2026-08-29-<machine>-accuracy{,-noaruco3}.{json,txt}`.
 
+## Across the bundled dictionaries
+
+Every bundled dictionary was evaluated on all three machines with the same procedure as above: `aruco3cuda_evaluate --dictionary <name>`, the `full` preset, 91 scenes, seed 20260827. Seventeen runs per machine, about two minutes each machine. The data is in [docs/measurements](measurements/), one file per machine.
+
+The corpus is regenerated with the dictionary under test, because the markers themselves differ. That is the limit of this comparison: a difference in recall between two dictionaries mixes the dictionary with the images it produced, and cannot be attributed to either.
+
+### Results, CUDA route, markers at or above the ArUco3 lower bound
+
+| Dictionary | Bits | Detected | Recall | Precision | Corner RMSE | Workspace peak |
+| --- | --- | --- | --- | --- | --- | --- |
+| `DICT_4X4_50` | 4 | 82 / 90 | 0.911 | 1.000 | 0.484 px | 14.51 MB |
+| `DICT_4X4_100` | 4 | 82 / 90 | 0.911 | 1.000 | 0.484 px | 14.51 MB |
+| `DICT_4X4_250` | 4 | 82 / 90 | 0.911 | 1.000 | 0.484 px | 14.51 MB |
+| `DICT_4X4_1000` | 4 | 83 / 90 | 0.922 | 1.000 | 0.482 px | 14.51 MB |
+| `DICT_5X5_50` | 5 | 83 / 90 | 0.922 | 1.000 | 0.483 px | 15.53 MB |
+| `DICT_5X5_100` | 5 | 83 / 90 | 0.922 | 1.000 | 0.483 px | 15.53 MB |
+| `DICT_5X5_250` | 5 | 83 / 90 | 0.922 | 1.000 | 0.483 px | 15.53 MB |
+| `DICT_5X5_1000` | 5 | 82 / 90 | 0.911 | 1.000 | 0.484 px | 15.53 MB |
+| `DICT_6X6_50` | 6 | 86 / 90 | 0.956 | 1.000 | 0.482 px | 16.70 MB |
+| `DICT_6X6_100` | 6 | 84 / 90 | 0.933 | 1.000 | 0.482 px | 16.70 MB |
+| `DICT_6X6_250` | 6 | 86 / 90 | 0.956 | 1.000 | 0.482 px | 16.70 MB |
+| `DICT_6X6_1000` | 6 | 84 / 90 | 0.933 | 1.000 | 0.484 px | 16.70 MB |
+| `DICT_7X7_50` | 7 | 85 / 90 | 0.944 | 1.000 | 0.481 px | 18.03 MB |
+| `DICT_7X7_100` | 7 | 85 / 90 | 0.944 | 1.000 | 0.483 px | 18.03 MB |
+| `DICT_7X7_250` | 7 | 85 / 90 | 0.944 | 1.000 | 0.481 px | 18.03 MB |
+| `DICT_7X7_1000` | 7 | 87 / 90 | 0.967 | 1.000 | 0.519 px | 18.03 MB |
+| `DICT_ARUCO_MIP_36h12` | 6 | 85 / 90 | 0.944 | 1.000 | 0.483 px | 16.70 MB |
+
+### What holds everywhere
+
+**Precision is 1.000 for all seventeen, on all three machines.** Not one false positive in 51 runs.
+
+**Rotation agreement is 100%** in every run.
+
+**Recall is identical on all three machines**, dictionary by dictionary, to the last digit. The implementation produces the same detections on Blackwell, Ampere, and a discrete GPU.
+
+### What differs, and why
+
+**Workspace peak scales with the marker size and with nothing else**: 14.51 MB at 4x4, 15.53 MB at 5x5, 16.70 MB at 6x6, 18.03 MB at 7x7, the same value for every dictionary of a given size regardless of its code count. That follows from the canonical patch being `(bits + 2 * border) * perspective_remove_pixel_per_cell` pixels on a side. It is the one structural difference between dictionaries that the measurements show cleanly.
+
+**Corner RMSE differs by architecture, not by dictionary.** The two aarch64 machines agree exactly; the GeForce RTX 5070 Ti is lower by about 0.015 px for every dictionary. That is the corpus difference already recorded in the README: the same seed produces slightly different images on x86_64, so the ground truth the corners are measured against is not the same image.
+
+**Recall varies from 0.911 to 0.967, and this should not be read as a ranking.** The same marker size spans 0.911 to 0.922 at 4x4 and 5x5, and 0.933 to 0.956 at 6x6, so the spread within one size is as large as the spread between sizes. With a corpus that changes along with the dictionary, this measurement cannot separate the two.
+
+`DICT_7X7_1000` is the one outlier worth noting: 0.519 px RMSE with a 3.64 px maximum, against 0.48 px and about 1.0 px everywhere else. Whether one bad detection drives it has not been checked.
+
 ## See also
 
 - [Evaluation plan](evaluation-plan.md)
