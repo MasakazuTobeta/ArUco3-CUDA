@@ -269,9 +269,20 @@ set_tests_properties(cli.report.unwritable_output PROPERTIES FIXTURES_REQUIRED c
 # the bit order, the border polarity, or the corner ordering shows up as a
 # missing id rather than as a plausible-looking picture nobody checks.
 if(TARGET aruco3cuda_example_generate_marker)
+  # kExampleMarker has exactly one writer, the fixture below, and every other
+  # test that passes --output writes somewhere of its own. The argument-handling
+  # tests below expect a non-zero exit and never reach write_pgm, so pointing
+  # them at the fixture's file happened to work - but ctest orders tests by the
+  # previous run's timings, not by the fixture graph, and FIXTURES_REQUIRED only
+  # puts the setup first. It does not stop anything else from writing the file
+  # afterwards. Two of these tests do succeed, and one of them renders an 8x8
+  # marker; when it landed between the setup and the detect tests, they read an
+  # 8x8 image, found nothing, and failed. Keeping one writer per file is what
+  # makes the ordering irrelevant.
   set(kExampleMarker "${CMAKE_CURRENT_BINARY_DIR}/example-marker.pgm")
   set(kExampleTinyMarker "${CMAKE_CURRENT_BINARY_DIR}/example-tiny-marker.pgm")
   set(kExampleAsciiPgm "${CMAKE_CURRENT_BINARY_DIR}/example-ascii.pgm")
+  set(kExampleScratch "${CMAKE_CURRENT_BINARY_DIR}/example-scratch")
 
   # ASCII PGM must be rejected with a reason rather than misread. Written at
   # configure time because no tool in this repository produces a P2 file.
@@ -288,21 +299,27 @@ if(TARGET aruco3cuda_example_generate_marker)
   aruco3cuda_add_cli_test(cli.example.generate_marker.missing_value
     aruco3cuda_example_generate_marker FALSE --id)
   aruco3cuda_add_cli_test(cli.example.generate_marker.invalid_integer
-    aruco3cuda_example_generate_marker FALSE --id abc --output "${kExampleMarker}")
+    aruco3cuda_example_generate_marker FALSE --id abc
+    --output "${kExampleScratch}-invalid-integer.pgm")
   aruco3cuda_add_cli_test(cli.example.generate_marker.unknown_dictionary
-    aruco3cuda_example_generate_marker FALSE --dictionary DICT_NOPE --output "${kExampleMarker}")
+    aruco3cuda_example_generate_marker FALSE --dictionary DICT_NOPE
+    --output "${kExampleScratch}-unknown-dictionary.pgm")
   aruco3cuda_add_cli_test(cli.example.generate_marker.unwritable_output
     aruco3cuda_example_generate_marker FALSE --output /nonexistent-dir/marker.pgm)
   # Boundary: DICT_ARUCO_MIP_36h12 holds 250 ids, so 249 is the last valid one.
   aruco3cuda_add_cli_test(cli.example.generate_marker.last_id
-    aruco3cuda_example_generate_marker TRUE --id 249 --size 64 --output "${kExampleMarker}")
+    aruco3cuda_example_generate_marker TRUE --id 249 --size 64
+    --output "${kExampleScratch}-last-id.pgm")
   aruco3cuda_add_cli_test(cli.example.generate_marker.id_past_end
-    aruco3cuda_example_generate_marker FALSE --id 250 --output "${kExampleMarker}")
+    aruco3cuda_example_generate_marker FALSE --id 250
+    --output "${kExampleScratch}-id-past-end.pgm")
   # Boundary: the smallest renderable side is the cell count, 6 + 2 * 1 = 8.
   aruco3cuda_add_cli_test(cli.example.generate_marker.smallest_size
-    aruco3cuda_example_generate_marker TRUE --size 8 --margin 0 --output "${kExampleMarker}")
+    aruco3cuda_example_generate_marker TRUE --size 8 --margin 0
+    --output "${kExampleScratch}-smallest-size.pgm")
   aruco3cuda_add_cli_test(cli.example.generate_marker.size_below_cell_count
-    aruco3cuda_example_generate_marker FALSE --size 7 --margin 0 --output "${kExampleMarker}")
+    aruco3cuda_example_generate_marker FALSE --size 7 --margin 0
+    --output "${kExampleScratch}-size-below-cell-count.pgm")
 
   # Fixture: a marker large enough to be detected, and one deliberately below the
   # ArUco3 lower bound.
