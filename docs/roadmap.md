@@ -14,7 +14,7 @@ We cover the implementation of detection (from the input image through to IDs an
 
 - Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and corner subpixel refinement completes on the GPU. `Detector` returns results on the device without host synchronization, and one frame's sequence of kernel launches is folded into a CUDA Graph when the caller passes an explicit stream. The legacy default stream cannot be captured, so passing `nullptr` issues the kernels one stage at a time. The list of stages is in the [Detection Pipeline Design](design/detector-pipeline.md).
 - We can compare three routes under the same conditions: the CPU reference (OpenCV ArUco3), Hybrid (only preprocessing and thresholding on the GPU), and GPU-resident.
-- The automated tests and the four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass on all three machines.
+- The automated tests and the four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass on all four machines.
 
 ### Target machines
 
@@ -29,13 +29,13 @@ The configuration of three integrated-GPU machines and one discrete-GPU machine 
 
 ### Accuracy
 
-Over a synthetic corpus of 91 scenes and 480 ground truth markers, all 9 combinations of 3 routes x 3 machines give 100% precision, 0 false positives, and 0 ID errors. Recall is 94.44% for sizes at or above the ArUco3 detection strategy's detection limit, and 18.33% over the whole corpus. The overall value is low because the corpus deliberately includes sizes below the limit; it does not represent misses by the implementation. The limit per resolution and the breakdown by condition are in the [Accuracy Evaluation Results](accuracy-report.md).
+Over a synthetic corpus of 91 scenes and 480 ground truth markers, all 12 combinations of 3 routes x 4 machines give 100% precision, 0 false positives, and 0 ID errors. Recall is 94.44% for sizes at or above the ArUco3 detection strategy's detection limit, and 18.33% over the whole corpus. The overall value is low because the corpus deliberately includes sizes below the limit; it does not represent misses by the implementation. The limit per resolution and the breakdown by condition are in the [Accuracy Evaluation Results](accuracy-report.md).
 
 ### Speed
 
-We compare end-to-end time measuring detection only, across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not included in the measured interval.
+We compare end-to-end time measuring detection only, across 28 scenes x 3 routes x 4 machines. Image loading and checksums are not included in the measured interval.
 
-**There are conditions where the CPU wins.** On the synthetic corpus, the CPU beats CUDA-Resident on small scenes with few contour points: out of 28 scenes, this applies to 5 scenes on the DGX Spark GB10, 4 scenes on the GeForce RTX 5070 Ti, and 1 scene on the Jetson AGX Orin. Resolution alone does not decide it; even at the same 640x480, the GPU wins on scenes with many contour points. When the route can be chosen per scene, the only case where the CPU beats both GPU routes at once is 1 scene on the Jetson AGX Orin. What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. Since the contour point count on real images can be higher than on the synthetic corpus, the boundary may move, but we have not confirmed this yet. For details, see the [Benchmark Report](benchmark-report.md).
+**There are conditions where the CPU wins.** On the synthetic corpus, the CPU beats CUDA-Resident on small scenes with few contour points: out of 28 scenes, this applies to 5 scenes on the DGX Spark GB10, 4 scenes on the GeForce RTX 5070 Ti, 1 scene on the Jetson AGX Orin, and none at all on the Jetson AGX Thor. Resolution alone does not decide it; even at the same 640x480, the GPU wins on scenes with many contour points. When the route can be chosen per scene, the only case where the CPU beats both GPU routes at once is 1 scene on the Jetson AGX Orin. What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. Since the contour point count on real images can be higher than on the synthetic corpus, the boundary may move, but we have not confirmed this yet. For details, see the [Benchmark Report](benchmark-report.md).
 
 ### Device memory
 
@@ -56,7 +56,7 @@ flowchart LR
     subgraph NOW["Current range"]
         A["GPU-resident detection"]
         B["Accuracy evaluation on the synthetic corpus"]
-        C["End-to-end time comparison on three machines"]
+        C["End-to-end time comparison on four machines"]
     end
     subgraph NEXT["Future range"]
         D["Evaluation on a real-image corpus"]
@@ -70,7 +70,7 @@ flowchart LR
 - **Evaluation on a real-image corpus.** We will confirm how the crossover point and the detection rates obtained on the synthetic corpus move on real images.
 - **Per-stage kernel time.** The current per-stage times are wall-clock values that include host synchronization. Separating them with CUDA events would let us decide by measurement which stage to cut.
 - **Reducing startup cost.** CUDA context creation cannot be reduced, but narrowing the target architectures, or preloading cubins, may shorten kernel loading.
-- **Widening dictionary support.** Seventeen dictionaries are bundled, and accuracy is recorded for every one of them on all three machines ([Accuracy Evaluation Results](accuracy-report.md)). The benchmark figures were taken with `DICT_ARUCO_MIP_36h12` alone; a per-dictionary sweep has not been run, because the dictionary was measured to make no difference to time that rises above the run-to-run spread. The policy is in the [Dictionary Policy](dictionaries.md).
+- **Widening dictionary support.** Seventeen dictionaries are bundled, and accuracy is recorded for every one of them on all four machines ([Accuracy Evaluation Results](accuracy-report.md)). The benchmark figures were taken with `DICT_ARUCO_MIP_36h12` alone; a per-dictionary sweep has not been run, because the dictionary was measured to make no difference to time that rises above the run-to-run spread. The policy is in the [Dictionary Policy](dictionaries.md).
 - **Considering an upstream proposal.** If we can assess the effectiveness and the maintenance cost, we will consider proposing this to OpenCV. The venue for discussion is [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118).
 
 ## Open questions

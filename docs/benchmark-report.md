@@ -90,15 +90,18 @@ We move the `M-Pinned` copy outside the measured interval because the evaluation
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | NVIDIA GB10 | 12.1 | integrated | Cortex-X925 / A725 | 13.0 |
 | Jetson AGX Orin | Orin | 8.7 | integrated | Cortex-A78AE (MAXN) | 11.4 |
+| Jetson AGX Thor | NVIDIA Thor | 11.0 | integrated | Neoverse-V3AE x14 (MAXN) | 13.0 |
 | GeForce RTX 5070 Ti | GeForce RTX 5070 Ti | 12.0 | **discrete** | Intel Core Ultra 7 265 | 13.0 |
 
-The configuration of two integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
+The configuration of three integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
+
+The Jetson AGX Thor was measured on 2026-08-31; the other three on 2026-08-29. Its files carry that date. It was not present for the earlier analysis, so the contour point regression below covers three machines only: the counting step is not in this repository and the regression input was not kept, so it cannot be extended to a fourth machine after the fact.
 
 ## Current state
 
 ### Summary of results
 
-1. **The three routes produce the same detection results.** The detection counts agree across all 252 combinations of 28 scenes x 3 routes x 3 machines. **In 20 of the 28 scenes that count is 0**, so 180 of the 252 combinations are agreement on zero; the other 8 scenes detect 1 or 4 markers each. The degree of agreement in the coordinates is in [the accuracy evaluation results](accuracy-report.md).
+1. **The three routes produce the same detection results.** The detection counts agree across all 336 combinations of 28 scenes x 3 routes x 4 machines. **In 20 of the 28 scenes that count is 0**, so 240 of the 336 combinations are agreement on zero; the other 8 scenes detect 1 or 4 markers each. The degree of agreement in the coordinates is in [the accuracy evaluation results](accuracy-report.md).
 2. **The CPU beats CUDA-Resident in small scenes with a low contour point count.** That is 5 of the 28 scenes on the DGX Spark, 4 on the GeForce RTX 5070 Ti, and 1 on the Jetson AGX Orin. **Resolution alone does not determine it.** Even at the same 640x480, `noise_640x480` has many contour points, and on the DGX Spark the CPU takes 1.406 ms against 0.612 ms for CUDA-Resident, making the GPU 2.3 times faster. Conversely, the 5 scenes on the DGX Spark include one 1280x720 scene.
 3. **This, however, applies when the route is fixed to CUDA-Resident.** On the DGX Spark and the GeForce RTX 5070 Ti, **there is not a single scene out of the 28 where the CPU beats Hybrid.** If the faster GPU route can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on the Jetson AGX Orin is there one scene where the CPU beats both routes at once (`clean_640x480_n1_s128`, CPU 0.870 ms against the best GPU result of 0.896 ms).
 4. **What sets the boundary is neither resolution nor candidate count, but the contour point count after thresholding.** The coefficient per 1e5 contour points is 2.48 to 5.35 ms for the CPU and 2.54 to 5.48 ms for Hybrid, against 0.041 to 0.278 ms for CUDA-Resident.
@@ -110,7 +113,7 @@ The configuration of two integrated-GPU machines and one discrete-GPU machine is
 
 ### Which route is faster when
 
-The scenes where the CPU route beats CUDA-Resident, or ties with it, are as follows. The ratio takes the CPU as 1; a value greater than 1 means the CPU is faster.
+The scenes where the CPU route beats CUDA-Resident, or ties with it, are as follows. The ratio takes the CPU as 1; a value greater than 1 means the CPU is faster. **The Jetson AGX Thor has no such scene** and so appears nowhere in this table.
 
 | Machine | Scene | Detections | CPU | CUDA-Resident | Ratio |
 | --- | --- | --- | --- | --- | --- |
@@ -181,9 +184,10 @@ The minimum and maximum over the 28 scenes.
 | --- | --- | --- | --- |
 | DGX Spark GB10 | 0.416 to 4.846 ms (**11.6x**) | 0.131 to 4.054 ms (**31.0x**) | 0.185 to 0.744 ms (**4.0x**) |
 | Jetson AGX Orin | 0.832 to 12.123 ms (**14.6x**) | 0.870 to 8.712 ms (**10.0x**) | 0.483 to 1.630 ms (**3.4x**) |
+| Jetson AGX Thor | 0.792 to 8.923 ms (**11.3x**) | 0.367 to 6.170 ms (**16.8x**) | 0.298 to 0.966 ms (**3.2x**) |
 | GeForce RTX 5070 Ti | 0.226 to 4.696 ms (**20.8x**) | 0.088 to 3.832 ms (**43.7x**) | 0.126 to 0.516 ms (**4.1x**) |
 
-**CUDA-Resident varies by only 3.4 to 4.1 times.** The CPU varies by 11.6 to 20.8 times and Hybrid by 10.0 to 43.7 times. For applications designed around worst-case rather than best-case time, this is its greatest advantage.
+**CUDA-Resident varies by only 3.2 to 4.1 times.** The CPU varies by 11.3 to 20.8 times and Hybrid by 10.0 to 43.7 times. For applications designed around worst-case rather than best-case time, this is its greatest advantage.
 
 ### Switching between Hybrid and CUDA-Resident
 
@@ -220,14 +224,14 @@ Sorted by ascending contour point count, the position where the winning route sw
 | noise_1280x720 | 99,074 | **Resident** (0.14) | **Resident** (0.16) | **Resident** (0.09) |
 | noise_3840x2160 | 127,319 | **Resident** (0.14) | **Resident** (0.19) | **Resident** (0.07) |
 
-**Above roughly 20,000 contour points, CUDA-Resident wins on all three machines.** Below that the winner is not decided by the contour point count alone, so **20,000 is a rough guide and not a boundary**. The table contains counterexamples in which CUDA-Resident wins far below it, and they are grouped by native resolution rather than by contour points.
+**Above roughly 20,000 contour points, CUDA-Resident wins on all four machines.** Below that the winner is not decided by the contour point count alone, so **20,000 is a rough guide and not a boundary**. The table contains counterexamples in which CUDA-Resident wins far below it, and they are grouped by native resolution rather than by contour points.
 
 - DGX Spark: the five 3840x2160 scenes below 20,000 points all go to CUDA-Resident (0.71 to 0.78) even though they have 0 to 3,669 points, and so does `combined_1920x1080` at 8,237 points (0.67).
 - GeForce RTX 5070 Ti: every scene at 1920x1080 and above goes to CUDA-Resident, the lowest of them at 0 points; `clean_1280x720_n0_s16` (0 points) also goes to CUDA-Resident, but at 0.94 that is close to a tie.
 
 Hybrid is faster below 20,000 points only at the lower resolutions: on the DGX Spark at 1920x1080 and below except `combined_1920x1080`, and on the GeForce RTX 5070 Ti at 1280x720 and below except `clean_1280x720_n0_s16`. On clean 640x480 the gap in Hybrid's favor reaches 2 to 3 times.
 
-**On the Jetson AGX Orin, CUDA-Resident wins in all 28 scenes.** Its CPU is the weakest of the three machines, so Hybrid's CPU stage is always at a disadvantage.
+**On the Jetson AGX Thor, CUDA-Resident wins in all 28 scenes**, the only machine of the four where it does. On the Jetson AGX Orin it wins in 27 of the 28; the CPU takes `clean_640x480_n1_s128` by 3% (0.870 ms against 0.896 ms). Both have the weakest CPUs of the four, so Hybrid's CPU stage is at a disadvantage there.
 
 ### Startup cost and break-even frames
 
@@ -241,6 +245,9 @@ This is a cost that does not appear in the post-warmup percentiles. We measured 
 | Jetson AGX Orin | CPU | 6.1 ms | 1.676 ms | - |
 | Jetson AGX Orin | Hybrid | 57.6 ms | 1.144 ms | about 100 |
 | Jetson AGX Orin | CUDA-Resident | 69.8 ms | 1.077 ms | about 110 |
+| Jetson AGX Thor | CPU | 5.2 ms | 1.420 ms | - |
+| Jetson AGX Thor | Hybrid | 93.2 ms | 0.561 ms | about 166 |
+| Jetson AGX Thor | CUDA-Resident | 92.8 ms | 0.837 ms | about 111 |
 | GeForce RTX 5070 Ti | CPU | 2.2 ms | 0.614 ms | - |
 | GeForce RTX 5070 Ti | Hybrid | 66.1 ms | 0.295 ms | about 200 |
 | GeForce RTX 5070 Ti | CUDA-Resident | 70.0 ms | 0.421 ms | about 350 |
@@ -263,6 +270,8 @@ We measured the three types on the `CUDA-E2E` route. The parentheses give the ra
 | DGX Spark GB10 | 3840x2160, 4 markers (s256) | 1.099 ms | 1.267 ms (1.15x) | **1.345 ms** (1.22x) |
 | Jetson AGX Orin | 1280x720, 4 markers | 1.508 ms | 1.490 ms (0.99x) | 1.686 ms (1.12x) |
 | Jetson AGX Orin | 3840x2160, 4 markers (s256) | 3.311 ms | **2.389 ms** (0.72x) | 3.449 ms (1.04x) |
+| Jetson AGX Thor | 1280x720, 4 markers | 1.268 ms | 1.270 ms (1.00x) | 1.319 ms (1.04x) |
+| Jetson AGX Thor | 3840x2160, 4 markers (s256) | 1.706 ms | 1.692 ms (0.99x) | 2.173 ms (1.27x) |
 | GeForce RTX 5070 Ti | 1280x720, 4 markers | 0.505 ms | 0.521 ms (1.03x) | **3.217 ms** (6.37x) |
 | GeForce RTX 5070 Ti | 3840x2160, 4 markers (s256) | 0.812 ms | **0.715 ms** (0.88x) | **24.773 ms** (30.52x) |
 
@@ -270,7 +279,7 @@ We measured the three types on the `CUDA-E2E` route. The parentheses give the ra
 
 On integrated GPUs the disadvantage of managed is smaller (1.01 to 1.22 times on the DGX Spark, 1.04 to 1.12 times on the Jetson AGX Orin). **Even so, it is never faster than pageable.**
 
-**Pinned helps only on large images.** At 3840x2160 the Jetson AGX Orin reaches 0.72x and the GeForce RTX 5070 Ti 0.88x. At 1280x720 there is no difference on any of the three machines (0.99 to 1.09 times). While the transfer volume is small, the advantage of DMA reading directly is buried in the detection time itself.
+**Pinned helps only on large images.** At 3840x2160 the Jetson AGX Orin reaches 0.72x, the GeForce RTX 5070 Ti 0.88x, and the Jetson AGX Thor 0.99x. At 1280x720 there is no difference on any of the four machines (0.99 to 1.09 times). While the transfer volume is small, the advantage of DMA reading directly is buried in the detection time itself.
 
 On the DGX Spark, pinned is **slower** (1.09 to 1.15 times). We believe this is because an integrated GPU does not cross PCIe, so there is no DMA advantage, and because page-locked regions change how the CPU-side cache is handled (unverified).
 
@@ -283,7 +292,7 @@ On the DGX Spark, pinned is **slower** (1.09 to 1.15 times). We believe this is 
 
 This direction agrees with the measurements in the direction of passing results from the device to the host ([memory handoff between host and device](design/memory-transfer.md)). In the input direction the differences came out even larger.
 
-**This is the only axis on which integrated and discrete split.** The ranking of speed is determined by the absolute performance of the GPU rather than by integrated versus discrete, and all three machines fit the same form of regression equation. With only three machines, however, we cannot state whether this generalizes.
+**This is the only axis on which integrated and discrete split.** The ranking of speed is determined by the absolute performance of the GPU rather than by integrated versus discrete, and all three machines in that regression fit the same form of equation. The regression covers three machines, not the Jetson AGX Thor, for the reason given at the top of this document. We cannot state whether it generalizes.
 
 ### Run-to-run variance and measurement caveats
 
@@ -293,9 +302,10 @@ The spread of the p50 values across three independent processes.
 | --- | --- | --- | --- |
 | DGX Spark GB10 | 0.6% (max 2.6%) | **17.7%** (max 50.3%) | **14.1%** (max 69.2%) |
 | Jetson AGX Orin | 0.4% (max 1.7%) | 3.5% (max 29.1%) | 0.5% (max 38.5%) |
+| Jetson AGX Thor | 1.6% (max 1.8%) | 5.3% (max 6.6%) | **16.5%** (max 18.9%) |
 | GeForce RTX 5070 Ti | 0.5% (max 2.2%) | 0.4% (max 6.3%) | 0.0% (max 0.5%) |
 
-**The variance of the GPU routes is an order of magnitude larger than that of the CPU route on the DGX Spark alone** (0.6% against 17.7% and 14.1%). We believe this is because the GPU clock is not locked (unverified). The other two machines do not follow it: on the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%) while CUDA-Resident is 0.5%, the same order as the CPU, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%). The Jetson AGX Orin medians hide its worst scene, where CUDA-Resident reaches 38.5% against 1.7% for the CPU.
+**The variance of the GPU routes is an order of magnitude larger than that of the CPU route on the DGX Spark** (0.6% against 17.7% and 14.1%), **and on the Jetson AGX Thor for CUDA-Resident** (1.6% against 16.5%). We believe this is because the GPU clock is not locked (unverified). The other two machines do not follow it: on the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%) while CUDA-Resident is 0.5%, the same order as the CPU, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%). The Jetson AGX Orin medians hide its worst scene, where CUDA-Resident reaches 38.5% against 1.7% for the CPU.
 
 Two rules for measuring follow from this. They are needed on the DGX Spark, and on the Jetson AGX Orin for the worst scenes; on the GeForce RTX 5070 Ti they cost nothing to keep.
 
@@ -372,7 +382,7 @@ In scenes with 0 detections, what remains is almost entirely kernel launch cost.
 
 As a result of folding into a CUDA Graph, the host-side issue time fell from **0.241 ms to 0.023 ms**. End to end it shrank by 0.18 to 0.30 ms. Since it only launches the same kernels with the same arguments in the same order, there is in principle no room for the rounding to change. The danger is not rounding but staleness of the baked-in references: when the input dimensions, pitch, or pointers change, the graph is discarded. **CUDA does not allow capture on the default stream (`nullptr`)**, so in that case we issue one stage at a time.
 
-For kernels that use shared memory, **the block count is derived from the SM count rather than from the upper bound on corners**. Using the upper bound directly limits how many blocks fit on one SM, splitting the launch into waves. This is a form of degradation that appears badly only on the Jetson AGX Orin out of the three machines, and a single machine would not reveal it.
+For kernels that use shared memory, **the block count is derived from the SM count rather than from the upper bound on corners**. Using the upper bound directly limits how many blocks fit on one SM, splitting the launch into waves. This is a form of degradation that appears badly only on the Jetson AGX Orin out of the four machines, and a single machine would not reveal it.
 
 #### Transfer optimization on the Hybrid route
 
@@ -432,11 +442,13 @@ Even on a discrete GPU the difference between `M-Device` and `M-Pageable` is sma
 
 ### Choosing among the three routes
 
+
 **There is no "always fastest route".** The ranking of the three routes changes with the scene.
 
 | Condition | Route to choose | Rationale |
 | --- | --- | --- |
 | A single detection (one image only) | **CPU** | Time to the first result: CPU 2.2 to 6.1 ms, GPU routes 57.6 to 174.0 ms |
+| Any scene on the Jetson AGX Thor | **CUDA-Resident** | It beats the CPU in all 28 scenes, the only machine of the four where that holds |
 | A clean scene at 640x480 with detections, on the DGX Spark or the GeForce RTX 5070 Ti | **CPU** | CUDA-Resident / CPU is 1.18 to 1.72 |
 | A clean scene at 640x480 with detections, on the Jetson AGX Orin | **CUDA-Resident**, except with a single marker | CUDA-Resident / CPU is 0.79 to 0.89 for `clean_640x480_n4_s128`, `clean_640x480_n16_s64`, and `blur_640x480`. Only `clean_640x480_n1_s128` favors the CPU, and by 3% (1.03) |
 | Continuous processing on the Jetson AGX Orin | **CUDA-Resident** | Faster than Hybrid in all 28 scenes |
@@ -482,9 +494,10 @@ For applications where the contour point count cannot be known in advance, makin
 - The cause of the variance in the GPU stage of the Jetson AGX Orin (0.64 to 2.54 ms).
 - The reason pinned is slower than pageable on the DGX Spark.
 - The reason the difference between `M-Device` and `M-Pageable` comes out larger on the integrated-GPU DGX Spark than on the discrete-GPU GeForce RTX 5070 Ti.
-- The CUDA Toolkit on the Jetson AGX Orin is 11.4 while the other two machines are on 13.0, and the influence of the toolkit version has not been separated out.
+- The CUDA Toolkit on the Jetson AGX Orin is 11.4 while the other three machines are on 13.0, and the influence of the toolkit version has not been separated out.
 - The per-kernel-launch cost on the GeForce RTX 5070 Ti has not been measured.
-- There are only three machines, so we cannot state whether the integrated-versus-discrete GPU results generalize.
+- There is only one discrete-GPU machine against three integrated ones, so we cannot state whether the integrated-versus-discrete results generalize.
+- The Jetson AGX Thor was added after the contour point analysis and is absent from it. Its sweep, startup, memory-mode and accuracy measurements are complete; the regression coefficients and the 20,000 contour point guide come from the other three.
 - The processing that counts contour points is not in this repository, and the regression input data was not kept, so a reader cannot verify the R2 values and coefficients. The counting procedure is described above, but is not provided as a tool.
 
 ## Reproducing the measurements

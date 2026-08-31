@@ -99,9 +99,9 @@ GitHub Actions runs on runners without a GPU. Therefore **a green CI does not me
 | Python tests that need no device | CI (`test/python/test_binding.py`) |
 | The C++ and Python renderers agree byte for byte | CI |
 | 54 tests that need no device | CI |
-| **455 automated tests** | **3 physical machines** |
-| **4 Compute Sanitizer tools** | **3 physical machines** |
-| **Cross-check against the CPU baseline** | **3 physical machines** (requires OpenCV) |
+| **518 automated tests** | **4 physical machines** |
+| **4 Compute Sanitizer tools** | **4 physical machines** |
+| **Cross-check against the CPU baseline** | **4 physical machines** (requires OpenCV) |
 
 CI does not build OpenCV because building it from source would take up most of the CI time, which is out of proportion to the goal of detecting compilation regressions. Comparison against the CPU baseline is done on physical machines.
 
