@@ -238,6 +238,8 @@ CMake Error: Unable to (re)create the private pkgRedirects directory
 
 which names neither permissions nor the user. The other three machines all run uid 1000 and never showed this.
 
+`docker/.env` belongs to the machine it sits on, so `tools/sync-to-host.sh` excludes it: it is in `.gitignore` and therefore never exists in the source tree, and until 2026-09-01 the sync's `--delete` removed it from the target on every run. The sync also reads the target's uid and warns, with the two lines to write, when a machine that is not uid 1000 has no `docker/.env` - the failure it prevents otherwise surfaces as the CMake error above, one build later and nowhere near the sync that caused it.
+
 Write permission on the named volume is needed only when installing the CUDA-enabled OpenCV into `/opt/opencv-cuda`. That operation is run with an explicit `--user root`.
 
 ```bash
