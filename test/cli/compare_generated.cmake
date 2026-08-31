@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Confirm that what dictgen generates matches the committed generated file.
+# Confirm that what dictgen generates for ${DICTIONARY} matches the committed file.
 # A mismatch means either the OpenCV version changed or the generator's behavior did.
 execute_process(
-  COMMAND "${DICTGEN}" --dictionary DICT_ARUCO_MIP_36h12 --output "${GENERATED}"
+  COMMAND "${DICTGEN}" --dictionary "${DICTIONARY}" --output "${GENERATED}"
   RESULT_VARIABLE generate_result
   OUTPUT_QUIET)
 if(NOT generate_result EQUAL 0)

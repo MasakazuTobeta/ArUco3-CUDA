@@ -69,7 +69,7 @@ flowchart LR
 - **Evaluation on a real-image corpus.** We will confirm how the crossover point and the detection rates obtained on the synthetic corpus move on real images.
 - **Per-stage kernel time.** The current per-stage times are wall-clock values that include host synchronization. Separating them with CUDA events would let us decide by measurement which stage to cut.
 - **Reducing startup cost.** CUDA context creation cannot be reduced, but narrowing the target architectures, or preloading cubins, may shorten kernel loading.
-- **Widening dictionary support.** We currently evaluate with the dictionary fixed to `DICT_ARUCO_MIP_36h12`. The policy is in the [Dictionary Policy](dictionaries.md).
+- **Widening dictionary support.** Seventeen dictionaries are bundled, and accuracy is recorded for every one of them on all three machines ([Accuracy Evaluation Results](accuracy-report.md)). The benchmark figures were taken with `DICT_ARUCO_MIP_36h12` alone; a per-dictionary sweep has not been run, because the dictionary was measured to make no difference to time that rises above the run-to-run spread. The policy is in the [Dictionary Policy](dictionaries.md).
 - **Considering an upstream proposal.** If we can assess the effectiveness and the maintenance cost, we will consider proposing this to OpenCV. The venue for discussion is [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118).
 
 ## Open questions
