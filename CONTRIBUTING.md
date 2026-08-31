@@ -73,6 +73,7 @@ This file is the set of rules shared by the humans and agents who work in this r
 - Provide a test route that uses Compute Sanitizer.
 - Aim for 100% C0 and C1 coverage, and record the reason for exclusion where it is not met. For CUDA device code, verify execution paths through input partitioning and boundary values, separately from host coverage. Measure with `cmake --preset coverage` followed by `cmake --build build/coverage --target coverage-report`, and record the current state and the reasons for shortfalls in the [implementation plan](docs/implementation-plan.md).
 - For tests that deliberately make a CUDA API fail, include `DeliberateError` in the suite name so they can be excluded from Compute Sanitizer runs.
+- A file a test reads must have exactly one writer. `ctest` runs in parallel and orders tests by the previous run's timings, and `FIXTURES_REQUIRED` only guarantees that the setup runs first - it does not stop another test from writing the file afterwards. Give every test that produces output a path of its own, and verify with `ctest --schedule-random`.
 - Do not substitute performance tests for accuracy tests.
 
 ## Benchmark Rules

@@ -45,8 +45,14 @@ function(aruco3cuda_add_python_sample_test test_name script expect_success)
   endif()
 endfunction()
 
+# One writer per file, for the reason set out in test/cli/CMakeLists.txt.
+# kPythonMarker is written only by the fixture below. None of these
+# argument-handling tests has ever clobbered it, because each expects a non-zero
+# exit and the sample validates before it writes - but that is a property of the
+# sample, not of the test, and it is not what the fixture should depend on.
 set(kPythonMarker "${CMAKE_CURRENT_BINARY_DIR}/python-marker.pgm")
 set(kPythonAsciiPgm "${CMAKE_CURRENT_BINARY_DIR}/python-ascii.pgm")
+set(kPythonScratch "${CMAKE_CURRENT_BINARY_DIR}/python-scratch")
 file(WRITE "${kPythonAsciiPgm}" "P2\n2 2\n255\n0 0 0 0\n")
 
 aruco3cuda_add_python_sample_test(python.example.generate_marker.help
@@ -58,13 +64,13 @@ aruco3cuda_add_python_sample_test(python.example.generate_marker.no_output
 aruco3cuda_add_python_sample_test(python.example.generate_marker.unknown_option
   generate_marker.py FALSE --nonexistent-option x)
 aruco3cuda_add_python_sample_test(python.example.generate_marker.invalid_integer
-  generate_marker.py FALSE --id abc --output "${kPythonMarker}")
+  generate_marker.py FALSE --id abc --output "${kPythonScratch}-invalid-integer.pgm")
 aruco3cuda_add_python_sample_test(python.example.generate_marker.unknown_dictionary
-  generate_marker.py FALSE --dictionary DICT_NOPE --output "${kPythonMarker}")
+  generate_marker.py FALSE --dictionary DICT_NOPE --output "${kPythonScratch}-unknown-dictionary.pgm")
 aruco3cuda_add_python_sample_test(python.example.generate_marker.id_past_end
-  generate_marker.py FALSE --id 250 --output "${kPythonMarker}")
+  generate_marker.py FALSE --id 250 --output "${kPythonScratch}-id-past-end.pgm")
 aruco3cuda_add_python_sample_test(python.example.generate_marker.size_below_cell_count
-  generate_marker.py FALSE --size 7 --margin 0 --output "${kPythonMarker}")
+  generate_marker.py FALSE --size 7 --margin 0 --output "${kPythonScratch}-size-below-cell-count.pgm")
 aruco3cuda_add_python_sample_test(python.example.generate_marker.unwritable_output
   generate_marker.py FALSE --output /nonexistent-dir/marker.pgm)
 
