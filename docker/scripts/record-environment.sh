@@ -146,7 +146,11 @@ fi
 
 nvcc_version=""
 if [ -x "${kCudaHome}/bin/nvcc" ]; then
-  nvcc_version="$("${kCudaHome}/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')"
+  # The V token carries the patch version, as in 11.4.315, where the release
+  # field stops at 11.4. The V expression comes first because it replaces the
+  # pattern space, so the one behind it only fires when there was no V token.
+  nvcc_version="$("${kCudaHome}/bin/nvcc" --version \
+                   | sed -n 's/.*, V\([0-9][0-9.]*\).*/\1/p; s/.*release \([0-9][0-9.]*\).*/\1/p')"
 fi
 
 jq -n \

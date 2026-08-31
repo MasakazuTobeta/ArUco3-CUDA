@@ -78,11 +78,15 @@ if [ "${kMode}" != "pinned" ]; then
     exit 2
 fi
 
+# The V token carries the patch version, as in 11.4.315, where the release field
+# stops at 11.4. The V expression comes first because it replaces the pattern
+# space, so the release expression behind it only fires when there was no V token
+# to find.
 detect_nvcc() {
     if [ -x /usr/local/cuda/bin/nvcc ]; then
-        /usr/local/cuda/bin/nvcc --version | sed -n 's/.*release \([0-9.]*\).*/\1/p'
+        /usr/local/cuda/bin/nvcc --version | sed -n 's/.*, V\([0-9][0-9.]*\).*/\1/p; s/.*release \([0-9][0-9.]*\).*/\1/p'
     elif command -v nvcc >/dev/null 2>&1; then
-        nvcc --version | sed -n 's/.*release \([0-9.]*\).*/\1/p'
+        nvcc --version | sed -n 's/.*, V\([0-9][0-9.]*\).*/\1/p; s/.*release \([0-9][0-9.]*\).*/\1/p'
     fi
 }
 

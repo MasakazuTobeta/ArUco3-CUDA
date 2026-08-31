@@ -427,4 +427,21 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/bench/aggregate.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
   set_tests_properties(cli.aggregate.rejects_broken_input PROPERTIES WILL_FAIL TRUE TIMEOUT 300)
+
+  # SUPPORTED_SCHEMA_VERSIONS is a hand-maintained set, and both ways of getting
+  # it wrong are silent. cli.aggregate.summarize only proves that the version the
+  # harness emits right now is accepted, so it would stay green if the set were
+  # narrowed to that one version and every published measurement file became
+  # unreadable by its own aggregator. These two tests pin both ends: a version
+  # that must be excluded, and the version the committed corpus is written in.
+  add_test(NAME cli.aggregate.rejects_unsupported_schema
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/bench/aggregate.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/schema-version-3.jsonl")
+  set_tests_properties(cli.aggregate.rejects_unsupported_schema PROPERTIES
+    WILL_FAIL TRUE TIMEOUT 300)
+  add_test(NAME cli.aggregate.reads_the_committed_corpus
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/bench/aggregate.py"
+            "${PROJECT_SOURCE_DIR}/docs/measurements/2026-08-29-jetson-orin-memory-modes.jsonl")
+  set_tests_properties(cli.aggregate.reads_the_committed_corpus PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "=== Measurement results ===")
 endif()

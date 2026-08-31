@@ -16,11 +16,21 @@ import json
 import sys
 from collections import defaultdict
 
-# Schema versions that can be read. Silently mixing results of different
-# versions would make the same key refer to a different measured interval.
-# Version 3 removed image loading and checksumming from the measured interval of
-# the CPU route, so values from version 2 and earlier are not comparable.
-SUPPORTED_SCHEMA_VERSIONS = {4}
+# Schema versions that can be read. Versions may share this set only when they
+# emit the same set of keys, each with the same meaning, over the same measured
+# intervals. Silently mixing versions that do not would make the same key refer
+# to something else, or make a table silently sparse.
+#
+# 4 and 5 satisfy it: no key was added or renamed and the intervals are
+# identical, only the precision of cuda_toolkit changed, so the committed
+# version-4 files aggregate together with anything measured from now on.
+#
+# 3 does not, even though its intervals match 4: a version-3 measurement line
+# has no startup and no cuda_context_ms, so the startup table would silently
+# drop those rows while the context cost of the version-4 rows was attributed to
+# them. Version 2 and earlier differ in the interval itself - version 3 took
+# image loading and the checksum out of the measured interval of the CPU route.
+SUPPORTED_SCHEMA_VERSIONS = {4, 5}
 
 
 def short_name(path):
@@ -47,6 +57,21 @@ def machine_label(environment):
     if gpu:
         return gpu
     return environment.get("hostname") or "(unknown)"
+
+
+def environment_key(environment):
+    """Identity of the machine an environment line describes.
+
+    Used to collapse repeated environment lines. The CUDA Toolkit is compared at
+    minor-version precision only: a version-4 record says 11.4 where a version-5
+    record of the same Toolkit says 11.4.315, and the same machine measured
+    across that change must collapse to one entry rather than be listed twice.
+    The cost is that two genuinely different patch versions of the same minor
+    version collapse as well, and only the first is printed.
+    """
+    toolkit = ".".join((environment.get("cuda_toolkit") or "").split(".")[:2])
+    return (environment.get("hostname"), environment.get("gpu_name"), toolkit,
+            environment.get("power_mode"))
 
 
 def load_records(paths):
@@ -82,11 +107,8 @@ def load_records(paths):
                     record["_source"] = path
                     current_environment = record
                     # Collapse repeated environment lines for the same machine.
-                    key = (record.get("hostname"), record.get("gpu_name"),
-                           record.get("cuda_toolkit"), record.get("power_mode"))
-                    if key not in {(e.get("hostname"), e.get("gpu_name"),
-                                    e.get("cuda_toolkit"), e.get("power_mode"))
-                                   for e in environments}:
+                    key = environment_key(record)
+                    if key not in {environment_key(e) for e in environments}:
                         environments.append(record)
                 elif kind == "measurement":
                     record["_source"] = path

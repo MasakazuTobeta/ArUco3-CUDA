@@ -189,6 +189,9 @@ struct EnvironmentRecord {
     std::string architecture_;
     std::string opencv_version_;
     int opencv_threads_ = 0;
+    /// Version of the CUDA Toolkit that nvcc reports, including the patch
+    /// version, as in 11.4.315. Falls back to the minor version when nvcc
+    /// prints no V token, and is empty when nvcc cannot be run at all.
     std::string cuda_toolkit_version_;
     std::string gpu_name_;
     std::string gpu_compute_capability_;
@@ -287,7 +290,7 @@ bool measure_image(const std::string& image_path, const BenchmarkConfig& config,
 /// Synchronization: host only, with no synchronization point.
 ///
 /// Example input: the return value of collect_environment()
-/// Example output: {"type":"environment","schema_version":3,...}
+/// Example output: {"type":"environment","schema_version":5,...}
 void write_environment_line(std::ostream& out, const EnvironmentRecord& environment);
 
 /// Write a measurement result as one JSONL line.
