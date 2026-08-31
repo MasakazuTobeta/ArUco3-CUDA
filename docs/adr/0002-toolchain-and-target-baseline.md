@@ -216,6 +216,47 @@ its own keyring and bound to the source with `signed-by`. Only the `common`
 component is added; `t234` holds the board support package and the L4T driver,
 which must not end up in this image.
 
+### Re-measurement
+
+The claim that this changes the packaging and not the compiler was checked by
+running the sweep again on the new image and comparing it against
+[2026-08-29](../measurements/2026-08-29-jetson-orin-sweep.jsonl). The result is
+[2026-08-31](../measurements/2026-08-31-jetson-orin-sweep-after-image-change.jsonl),
+taken with the procedure in the [benchmark report](../benchmark-report.md): the
+same 28 scenes, 3 routes, 3 independent runs, 30 warm-up and 200 measured
+iterations, pinned to CPU 0, MAXN. All 28 corpus images hash identically to the
+ones measured in August, so the inputs are the same bytes and not merely the same
+generator settings.
+
+Ratios are new median-of-three p50 over old median-of-three p50.
+
+| Route | Scenes | Minimum | Median | Maximum |
+| --- | --- | --- | --- | --- |
+| CPU | 28 | 0.995 | 1.000 | 1.006 |
+| Hybrid | 28 | 0.958 | 0.997 | 1.081 |
+| CUDA-Resident | 28 | 0.994 | 1.001 | 1.375 |
+| All | 84 | 0.958 | **1.000** | 1.375 |
+
+The CPU route is the control. It runs OpenCV and never touches anything `nvcc`
+compiled, so its spread of 0.5% is the measurement noise floor for this machine
+on this day, and it says the two sessions are comparable at all.
+
+The one ratio far from 1 is `CUDA-Resident` on `clean_640x480_n0_s16.png`, the
+smallest and emptiest scene, at 0.483 ms against 0.665 ms. It is not a
+regression. The scene is bimodal on this machine, and the August data already
+contains both modes:
+
+| | run 1 | run 2 | run 3 |
+| --- | --- | --- | --- |
+| 2026-08-29 p50 | 0.483 | 0.664 | 0.480 |
+| 2026-08-31 p50 | 0.626 | 0.669 | 0.665 |
+| `min_ms`, both dates | 0.470 to 0.473 across all six runs | | |
+
+The fastest iteration is the same to three decimal places in every run on both
+dates. What differs is how often a run settles into the slower mode, and the
+median of three picked the fast mode in August and the slow mode now. This is the
+same instability the benchmark report already records for the Jetson GPU stage.
+
 ### Consequences
 
 - No profile depends on NGC any more. All three are `ubuntu` plus an NVIDIA apt
