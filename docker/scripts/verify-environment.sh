@@ -110,8 +110,20 @@ int main() {
         return 1;
     }
     touch_kernel<<<1, 32>>>(device_buffer);
+    // A launch and an execution fail in different ways, and only the second one
+    // reaches cudaDeviceSynchronize. A launch that never started - no code
+    // compiled for this device's architecture, or a bad configuration - is
+    // reported by cudaGetLastError alone, and synchronizing afterwards returns
+    // success. Checking only the synchronize let this probe print OK for a
+    // kernel that could not run at all, which is the one thing it exists to
+    // catch.
+    const cudaError_t launch = cudaGetLastError();
     status = cudaDeviceSynchronize();
     cudaFree(device_buffer);
+    if (launch != cudaSuccess) {
+        std::printf("ERROR kernel launch %s\n", cudaGetErrorString(launch));
+        return 1;
+    }
     if (status != cudaSuccess) {
         std::printf("ERROR kernel %s\n", cudaGetErrorString(status));
         return 1;
