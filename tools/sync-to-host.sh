@@ -17,6 +17,20 @@
 #   .git is not transferred either. The target machine only builds and measures; it
 #   never commits.
 #
+#   docker/.env is excluded because it belongs to the target, not to the source.
+#   It carries ARUCO3_UID and ARUCO3_GID, and the Jetson AGX Thor cannot configure
+#   without it: its login user is uid 2002 against the compose default of 1000. The
+#   file is in .gitignore, so it never exists here, and --delete removed it on the
+#   target on every sync - leaving a machine that failed its next build with a
+#   permission error naming neither the user nor the file. Excluding it also means
+#   a developer's own docker/.env is never pushed over a target's, which is right:
+#   the uid is the target's business.
+#
+#   .gitignore is not handed to --exclude-from wholesale, tempting as it looks.
+#   rsync has no equivalent of its "!" negation, so /data/** would take effect
+#   while !/data/manifest/ would not, and a committed manifest would silently stop
+#   being transferred. Machine-local paths are named here one at a time instead.
+#
 # Usage:
 #   tools/sync-to-host.sh <user>@<host>
 #   tools/sync-to-host.sh <user>@<host> ~/ArUco3-CUDA
@@ -44,6 +58,7 @@ if ! rsync -a --delete \
     --exclude '/build/' \
     --exclude '/build-*/' \
     --exclude '.git' \
+    --exclude '/docker/.env' \
     "${kSourceDir}/" "${kTarget}:${kRemotePath}/"; then
   echo "synchronization failed" >&2
   exit 1
@@ -116,3 +131,29 @@ if [ "${missing}" -ne 0 ]; then
   exit 1
 fi
 echo "synchronization complete; all tracked files match"
+
+# The container runs as ${ARUCO3_UID:-1000}:${ARUCO3_GID:-1000} and writes into
+# the bind-mounted checkout, so a target whose login user is not uid 1000 needs
+# docker/.env to say so. That file is excluded from the transfer above, which
+# keeps the sync from deleting it but cannot create one that was never there. A
+# target in that state fails its next configure with a permission error that
+# points nowhere near the cause, so it is named here instead.
+#
+# This reads the target and sends nothing. A failure to read it is not a sync
+# failure: the files arrived and were verified either way.
+remote_state="$(ssh "${kTarget}" \
+  "cd ${kRemotePath} 2>/dev/null && printf '%s %s ' \"\$(id -u)\" \"\$(id -g)\" \
+   && grep -sc '^ARUCO3_UID=' docker/.env" 2>/dev/null)"
+set -- ${remote_state:-}
+remote_uid="${1:-}"
+remote_gid="${2:-}"
+env_sets_uid="${3:-0}"
+if [ -n "${remote_uid}" ] && { [ "${remote_uid}" != "1000" ] || [ "${remote_gid}" != "1000" ]; } \
+   && [ "${env_sets_uid}" = "0" ]; then
+  echo "warning: ${kTarget} runs as uid ${remote_uid} gid ${remote_gid}, and" >&2
+  echo "         ${kRemotePath}/docker/.env does not set ARUCO3_UID." >&2
+  echo "         The container would run as 1000:1000 and could not write to the" >&2
+  echo "         bind mount. CMake reports that as a pkgRedirects permission error." >&2
+  echo "         Fix it on that machine with:" >&2
+  echo "           printf 'ARUCO3_UID=%s\\nARUCO3_GID=%s\\n' ${remote_uid} ${remote_gid} > docker/.env" >&2
+fi
