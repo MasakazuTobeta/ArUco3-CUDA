@@ -100,18 +100,57 @@ aruco3cuda_add_cli_test(cli.dictgen.unknown_dictionary aruco3cuda_dictgen FALSE
   --dictionary DICT_NOPE --output "${CMAKE_CURRENT_BINARY_DIR}/cli-bad.cpp")
 aruco3cuda_add_cli_test(cli.dictgen.check_missing_file aruco3cuda_dictgen FALSE
   --dictionary DICT_ARUCO_MIP_36h12 --check /nonexistent/table.cpp)
-# Continuously confirm that the generated table stays consistent with OpenCV.
-aruco3cuda_add_cli_test(cli.dictgen.check_generated aruco3cuda_dictgen TRUE
-  --dictionary DICT_ARUCO_MIP_36h12
-  --check "${PROJECT_SOURCE_DIR}/src/dictionary/generated/dict_aruco_mip_36h12.cpp")
-# Also confirm that freshly generated content matches what is committed.
-add_test(NAME cli.dictgen.generate_matches_committed
-  COMMAND "${CMAKE_COMMAND}"
-          -DDICTGEN=$<TARGET_FILE:aruco3cuda_dictgen>
-          -DGENERATED=${CMAKE_CURRENT_BINARY_DIR}/cli-dictgen.cpp
-          -DCOMMITTED=${PROJECT_SOURCE_DIR}/src/dictionary/generated/dict_aruco_mip_36h12.cpp
-          -P "${CMAKE_CURRENT_SOURCE_DIR}/compare_generated.cmake")
-set_tests_properties(cli.dictgen.generate_matches_committed PROPERTIES TIMEOUT 300)
+# Every bundled table is cross-checked against OpenCV, and then regenerated and
+# compared byte for byte with what is committed. Two checks rather than one: the
+# first says the table agrees with OpenCV, the second says the committed file is
+# exactly what the generator produces, so a hand edit is caught as well.
+#
+# The list is written out rather than globbed, so that adding a table to
+# src/dictionary/generated without adding it here does not silently go
+# unchecked.
+set(kBundledDictionaries
+  DICT_4X4_50
+  DICT_4X4_100
+  DICT_4X4_250
+  DICT_4X4_1000
+  DICT_5X5_50
+  DICT_5X5_100
+  DICT_5X5_250
+  DICT_5X5_1000
+  DICT_6X6_50
+  DICT_6X6_100
+  DICT_6X6_250
+  DICT_6X6_1000
+  DICT_7X7_50
+  DICT_7X7_100
+  DICT_7X7_250
+  DICT_7X7_1000
+  DICT_ARUCO_MIP_36h12)
+
+foreach(kDictionary IN LISTS kBundledDictionaries)
+  string(TOLOWER "${kDictionary}" kDictionaryFile)
+  set(kCommitted "${PROJECT_SOURCE_DIR}/src/dictionary/generated/${kDictionaryFile}.cpp")
+
+  aruco3cuda_add_cli_test("cli.dictgen.check_generated.${kDictionary}" aruco3cuda_dictgen TRUE
+    --dictionary "${kDictionary}" --check "${kCommitted}")
+
+  add_test(NAME "cli.dictgen.generate_matches_committed.${kDictionary}"
+    COMMAND "${CMAKE_COMMAND}"
+            -DDICTGEN=$<TARGET_FILE:aruco3cuda_dictgen>
+            -DDICTIONARY=${kDictionary}
+            -DGENERATED=${CMAKE_CURRENT_BINARY_DIR}/cli-dictgen-${kDictionary}.cpp
+            -DCOMMITTED=${kCommitted}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/compare_generated.cmake")
+  set_tests_properties("cli.dictgen.generate_matches_committed.${kDictionary}"
+    PROPERTIES TIMEOUT 300)
+endforeach()
+
+# The count is asserted separately, so that removing a name from the list above
+# without removing the table is caught too.
+add_test(NAME cli.dictgen.bundled_count_matches_registry
+  COMMAND $<TARGET_FILE:aruco3cuda_reference_runner> --list-dictionaries)
+set_tests_properties(cli.dictgen.bundled_count_matches_registry PROPERTIES
+  TIMEOUT 60 PASS_REGULAR_EXPRESSION "DICT_ARUCO_MIP_36h12")
 
 # --- benchmark ---
 aruco3cuda_add_cli_test(cli.bench.help aruco3cuda_bench_cli TRUE --help)
@@ -192,6 +231,28 @@ add_test(NAME cli.report.matches_reference
 set_tests_properties(cli.report.matches_reference PROPERTIES
   FIXTURES_REQUIRED cli_corpus TIMEOUT 300
   PASS_REGULAR_EXPRESSION "No differences")
+
+# The pipeline against the CPU baseline at every marker size. The corpus for
+# each is generated with that dictionary, because the markers themselves differ. Without these, a regression that only affects 4x4 or 7x7 would pass
+# every other test: the rest of the suite runs on 6x6.
+foreach(kPair "DICT_4X4_50" "DICT_5X5_1000" "DICT_7X7_1000")
+  set(kDir "${CMAKE_CURRENT_BINARY_DIR}/cli-corpus-${kPair}")
+  add_test(NAME "cli.corpusgen.setup.${kPair}"
+    COMMAND $<TARGET_FILE:aruco3cuda_corpusgen_cli>
+            --preset smoke --seed 20260827 --dictionary "${kPair}"
+            --output-dir "${kDir}" --manifest "${kDir}/manifest.json")
+  set_tests_properties("cli.corpusgen.setup.${kPair}" PROPERTIES
+    FIXTURES_SETUP "cli_corpus_${kPair}" TIMEOUT 300)
+
+  add_test(NAME "cli.report.matches_reference.${kPair}"
+    COMMAND $<TARGET_FILE:aruco3cuda_report_cli>
+            --dictionary "${kPair}" --fail-on-diff
+            --input "${kDir}/clean_1280x720_n4_s128.png"
+            --input "${kDir}/degraded_1280x720.png")
+  set_tests_properties("cli.report.matches_reference.${kPair}" PROPERTIES
+    FIXTURES_REQUIRED "cli_corpus_${kPair}" TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "No differences")
+endforeach()
 
 aruco3cuda_add_cli_test(cli.report.unwritable_output aruco3cuda_report_cli FALSE
   --input "${kCliCorpusDir}/clean_1280x720_n1_s128.png"

@@ -36,6 +36,31 @@ TEST(DictionaryTest, builtin_table_metadata_matches_specification) {
 
 // Nominal: the registry count and index-based lookup agree.
 TEST(DictionaryTest, registry_lists_all_builtin_tables) {
+    // The sixteen DICT_NxN_* dictionaries plus DICT_ARUCO_MIP_36h12. Asserted as
+    // an exact count so that losing a table, or gaining one that nothing else
+    // knows about, fails here.
+    EXPECT_EQ(aruco3cuda::builtin_dictionary_count(), 17U);
+    for (const char* name :
+         {"DICT_4X4_50", "DICT_4X4_1000", "DICT_5X5_50", "DICT_5X5_1000", "DICT_6X6_50",
+          "DICT_6X6_1000", "DICT_7X7_50", "DICT_7X7_1000", "DICT_ARUCO_MIP_36h12"}) {
+        EXPECT_NE(aruco3cuda::find_builtin_dictionary(name), nullptr) << name;
+    }
+    // Left out on purpose: its markers are unchanged by a 180 degree rotation.
+    EXPECT_EQ(aruco3cuda::find_builtin_dictionary("DICT_ARUCO_ORIGINAL"), nullptr);
+    // Not ArUco.
+    EXPECT_EQ(aruco3cuda::find_builtin_dictionary("DICT_APRILTAG_36h11"), nullptr);
+
+    // Every table is reachable, well formed, and distinctly named.
+    for (std::size_t i = 0; i < aruco3cuda::builtin_dictionary_count(); ++i) {
+        const aruco3cuda::DictionaryTable* table = aruco3cuda::builtin_dictionary_at(i);
+        ASSERT_NE(table, nullptr) << i;
+        EXPECT_GE(table->marker_size_, 4) << table->name_;
+        EXPECT_LE(table->marker_size_, 7) << table->name_;
+        EXPECT_GT(table->code_count_, 0) << table->name_;
+        EXPECT_NE(table->codes_, nullptr) << table->name_;
+        EXPECT_EQ(aruco3cuda::find_builtin_dictionary(table->name_), table) << table->name_;
+    }
+
     ASSERT_GE(aruco3cuda::builtin_dictionary_count(), 1U);
     for (std::size_t i = 0; i < aruco3cuda::builtin_dictionary_count(); ++i) {
         ASSERT_NE(aruco3cuda::builtin_dictionary_at(i), nullptr);

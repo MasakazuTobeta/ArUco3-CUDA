@@ -219,7 +219,7 @@ with aruco3cuda.Detector() as detector:
 ## Limitations
 
 - Evaluation covers the synthetic corpus only. A real-image corpus has not been prepared, and accuracy and the crossover point on real images have not been measured.
-- The supported dictionary is `DICT_ARUCO_MIP_36h12`. The plan is to add other dictionaries using the same loader and lookup format ([Dictionary policy](docs/dictionaries.md)).
+- Seventeen dictionaries are bundled: the sixteen `DICT_NxN_*` of OpenCV 4.x, and `DICT_ARUCO_MIP_36h12`. `DICT_ARUCO_ORIGINAL` is deliberately left out, because it contains markers that are unchanged by a 180 degree rotation, so their orientation cannot be recovered. The AprilTag families OpenCV lists alongside them are out of scope. `ARUCO_MIP_16h3` and `_25h7` exist only in the GPLv3 ArUco distribution and cannot be bundled ([Dictionary policy](docs/dictionaries.md)).
 - Pose estimation is out of scope.
 - Per-stage times are wall-clock and include host synchronization. Per-stage measurement using CUDA events has not been done.
 - A single `Detector` instance cannot be used from multiple threads at the same time.

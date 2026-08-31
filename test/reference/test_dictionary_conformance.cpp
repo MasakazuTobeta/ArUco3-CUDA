@@ -8,10 +8,12 @@
 #include <opencv2/core.hpp>
 #include <opencv2/objdetect/aruco_detector.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "aruco3cuda/dictionary.hpp"
@@ -19,16 +21,63 @@
 
 namespace {
 
-const aruco3cuda::DictionaryTable& generated_table() {
-    const aruco3cuda::DictionaryTable* table =
-            aruco3cuda::find_builtin_dictionary("DICT_ARUCO_MIP_36h12");
-    EXPECT_NE(table, nullptr);
-    return *table;
-}
+/// One dictionary under test: our name and the OpenCV enumerator for it.
+struct DictionaryCase {
+    const char* name_;
+    int opencv_id_;
+    /// Minimum Hamming distance over every pair of ids and rotations. OpenCV
+    /// does not publish it, so it is recomputed by check 5 and compared against
+    /// the value recorded here, which was itself obtained by that computation.
+    /// It is kept as a literal so that a change in the table shows up as a
+    /// failure rather than as a silently different number.
+    int minimum_distance_;
+};
 
-cv::aruco::Dictionary opencv_dictionary() {
-    return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
-}
+/// The dictionaries exercised here.
+///
+/// Not all eighteen. Every marker size is represented, plus the two 6x6
+/// dictionaries that differ only in their codewords, and the largest of each
+/// size. What this file checks beyond the tables themselves is the decode and
+/// identify paths, and those depend on the marker size rather than on which
+/// dictionary of that size is used. Table correctness for all eighteen is
+/// covered mechanically by `dictgen --check` in test/cli, which compares every
+/// committed table against OpenCV.
+const DictionaryCase kCases[] = {
+        {"DICT_4X4_50", cv::aruco::DICT_4X4_50, 4},
+        {"DICT_5X5_1000", cv::aruco::DICT_5X5_1000, 5},
+        {"DICT_6X6_250", cv::aruco::DICT_6X6_250, 11},
+        {"DICT_7X7_1000", cv::aruco::DICT_7X7_1000, 14},
+        {"DICT_ARUCO_MIP_36h12", cv::aruco::DICT_ARUCO_MIP_36h12, 12},
+};
+
+class DictionaryConformanceTest : public ::testing::TestWithParam<DictionaryCase> {
+protected:
+    const aruco3cuda::DictionaryTable& generated_table() const {
+        const aruco3cuda::DictionaryTable* table =
+                aruco3cuda::find_builtin_dictionary(GetParam().name_);
+        EXPECT_NE(table, nullptr) << GetParam().name_;
+        return *table;
+    }
+
+    cv::aruco::Dictionary opencv_dictionary() const {
+        return cv::aruco::getPredefinedDictionary(GetParam().opencv_id_);
+    }
+
+    /// Ids to exercise where walking every id would be wasteful. Clamped and
+    /// deduplicated, because the smallest dictionaries hold fewer ids than the
+    /// fixed sample would name.
+    std::vector<int> sample_ids() const {
+        const int last = generated_table().code_count_ - 1;
+        std::vector<int> ids;
+        for (const int candidate : {0, 1, 42, 128, last}) {
+            const int clamped = candidate > last ? last : candidate;
+            if (std::find(ids.begin(), ids.end(), clamped) == ids.end()) {
+                ids.push_back(clamped);
+            }
+        }
+        return ids;
+    }
+};
 
 /// Converts an OpenCV bits Mat into the packed representation.
 aruco3cuda::MarkerCode pack_from_mat(const cv::Mat& bits, int marker_size) {
@@ -47,7 +96,7 @@ aruco3cuda::MarkerCode pack_from_mat(const cv::Mat& bits, int marker_size) {
 
 // Check 1: the ID count, the marker size, and the maximum number of
 // correctable bits match the OpenCV reference.
-TEST(DictionaryConformanceTest, metadata_matches_opencv) {
+TEST_P(DictionaryConformanceTest, metadata_matches_opencv) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     EXPECT_EQ(table.code_count_, dictionary.bytesList.rows);
@@ -57,7 +106,7 @@ TEST(DictionaryConformanceTest, metadata_matches_opencv) {
 
 // Check 2: the packed codewords for every ID and all four rotations match
 // OpenCV's bytesList.
-TEST(DictionaryConformanceTest, all_codewords_match_opencv_bytes_list) {
+TEST_P(DictionaryConformanceTest, all_codewords_match_opencv_bytes_list) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     ASSERT_EQ(table.code_count_, dictionary.bytesList.rows);
@@ -77,7 +126,7 @@ TEST(DictionaryConformanceTest, all_codewords_match_opencv_bytes_list) {
 
 // Check 3: decoding the marker image of every ID recovers the original ID and
 // rotation.
-TEST(DictionaryConformanceTest, decodes_generated_marker_images) {
+TEST_P(DictionaryConformanceTest, decodes_generated_marker_images) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
 
@@ -128,16 +177,15 @@ TEST(DictionaryConformanceTest, decodes_generated_marker_images) {
 }
 
 // Check 4: accept / reject decisions under bit flips match OpenCV.
-TEST(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
+TEST_P(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     // OpenCV uses maxCorrectionBits * maxCorrectionRate as the number of
     // tolerated errors.
     constexpr double kMaxCorrectionRate = 0.6;
     const int allowed_errors = static_cast<int>(dictionary.maxCorrectionBits * kMaxCorrectionRate);
-    ASSERT_EQ(allowed_errors, 3);
 
-    const std::vector<int> ids_under_test = {0, 1, 42, 128, table.code_count_ - 1};
+    const std::vector<int> ids_under_test = sample_ids();
     for (const int id : ids_under_test) {
         for (int flips = 0; flips <= dictionary.maxCorrectionBits + 1; ++flips) {
             cv::Mat bits = cv::aruco::Dictionary::getBitsFromByteList(
@@ -178,7 +226,7 @@ TEST(DictionaryConformanceTest, accept_reject_matches_opencv_for_bit_flips) {
 // state that is "neither black nor white". That state cannot be expressed once
 // it is collapsed into a single bit pattern, so here we cross-check on the
 // ratios themselves.
-TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
+TEST_P(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
     const cv::aruco::Dictionary dictionary = opencv_dictionary();
     const aruco3cuda::DictionaryTable& table = generated_table();
     constexpr double kMaxCorrectionRate = 0.6;
@@ -191,7 +239,7 @@ TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
     std::mt19937_64 rng(20260828U);
     std::uniform_int_distribution<std::size_t> pick(0U, ratio_values.size() - 1U);
 
-    const std::vector<int> ids_under_test = {0, 1, 42, 128, table.code_count_ - 1};
+    const std::vector<int> ids_under_test = sample_ids();
     std::size_t ambiguous_cases = 0;
     for (const int id : ids_under_test) {
         for (int trial = 0; trial < 200; ++trial) {
@@ -247,11 +295,25 @@ TEST(DictionaryConformanceTest, identify_from_cell_ratios_matches_opencv) {
 }
 
 // Check 5: recomputing the minimum Hamming distance matches the nominal value.
-TEST(DictionaryConformanceTest, minimum_hamming_distance_matches_nominal) {
+TEST_P(DictionaryConformanceTest, minimum_hamming_distance_matches_nominal) {
     const aruco3cuda::DictionaryTable& table = generated_table();
     int distance = 0;
     ASSERT_EQ(aruco3cuda::minimum_hamming_distance(table, &distance), aruco3cuda::Status::kOk);
-    EXPECT_EQ(distance, 12);
+    EXPECT_EQ(distance, GetParam().minimum_distance_);
+
+    // A code of minimum distance d can correct at most (d - 1) / 2 errors.
+    // Checking that against the maxCorrectionBits OpenCV publishes ties our
+    // recomputation to a number obtained independently, which comparing against
+    // a literal alone would not do. It holds for every bundled dictionary.
+    // DICT_ARUCO_ORIGINAL, which is not bundled, is where it breaks: its minimum
+    // distance is 1 while OpenCV declares one correctable bit. See
+    // docs/dictionaries.md for why that dictionary is left out.
+    EXPECT_EQ(table.max_correction_bits_, (distance - 1) / 2);
 }
+
+INSTANTIATE_TEST_SUITE_P(AllMarkerSizes, DictionaryConformanceTest, ::testing::ValuesIn(kCases),
+                         [](const ::testing::TestParamInfo<DictionaryCase>& parameter) {
+                             return std::string(parameter.param.name_);
+                         });
 
 }  // namespace

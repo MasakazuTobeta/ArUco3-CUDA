@@ -38,7 +38,7 @@ We target the detection of the ID, rotation, and corner coordinates of ArUco mar
 ### In scope
 
 - A CUDA implementation of the ArUco3 detection strategy (from downscaling and thresholding through candidate extraction, dictionary matching, and corner subpixel refinement)
-- The predefined dictionary `DICT_ARUCO_MIP_36h12`. Other dictionaries will be added incrementally using the same loader and lookup format ([Dictionary Policy](dictionaries.md))
+- Seventeen predefined dictionaries: the sixteen `DICT_NxN_*` of OpenCV 4.x, and `DICT_ARUCO_MIP_36h12`. The dictionary is a parameter of `Detector::initialize` ([Dictionary Policy](dictionaries.md))
 - Asynchronous execution with CUDA streams, and a device-resident result representation
 - Accuracy comparison against the OpenCV CPU implementation, and comparison of end-to-end time
 - Comparison of the GPU-resident input, host input, and CPU/GPU hybrid routes
