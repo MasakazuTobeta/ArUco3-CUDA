@@ -75,7 +75,7 @@ These correspond to the actual directory structure.
 
 ### Hardware portability
 
-- Jetson Orin is built as `sm_87`, DGX Spark GB10 as `sm_121`, and GeForce RTX 5070 Ti (GB203) as `sm_120`, each separately. The Compute Capability reported by the GB10 machine is 12.1, which is a different target from GB203's 12.0. See [ADR-0002](adr/0002-toolchain-and-target-baseline.md) for details.
+- Jetson Orin is built as `sm_87`, Jetson Thor as `sm_110`, DGX Spark GB10 as `sm_121`, and GeForce RTX 5070 Ti (GB203) as `sm_120`, each separately. The Compute Capability reported by the GB10 machine is 12.1, which is a different target from GB203's 12.0. See [ADR-0002](adr/0002-toolchain-and-target-baseline.md) for details.
 - The algorithm and the data representation are kept common.
 - Blackwell-specific features are handled as compile-time options or as localized kernel specializations.
 - The common path is the baseline, and the same accuracy tests are applied to machine-specific routes.

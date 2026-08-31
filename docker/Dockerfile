@@ -28,8 +28,8 @@
 #   NVIDIA apt repository. The Ubuntu version is matched to the CUDA version so
 #   that glibc is new enough, which also makes mounted mode work, where host
 #   Toolkit binaries run inside the container.
-#     DGX Spark, RTX Blackwell: CUDA 13.0 -> ubuntu:24.04
-#     Jetson Orin             : CUDA 11.4 -> ubuntu:20.04
+#     DGX Spark, Jetson Thor, RTX Blackwell: CUDA 13.0 -> ubuntu:24.04
+#     Jetson Orin                          : CUDA 11.4 -> ubuntu:20.04
 ARG BASE_IMAGE=ubuntu:24.04
 
 FROM ${BASE_IMAGE} AS toolchain

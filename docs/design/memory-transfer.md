@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document measures how host and device share memory on the three target machines and records which method to choose. It shows, using device properties and measured values, the conditions under which the intuition that "transfers are unnecessary on an integrated GPU" holds and the conditions under which it does not.
+This document measures how host and device share memory on the target machines and records which method to choose. It shows, using device properties and measured values, the conditions under which the intuition that "transfers are unnecessary on an integrated GPU" holds and the conditions under which it does not.
 
 ## Scope
 
@@ -28,15 +28,16 @@ These are measured values from `cudaGetDeviceProperties`.
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | 1 | 1 | 1 | **1** | **1** |
 | Jetson AGX Orin | 1 | 1 | 1 | **0** | **0** |
+| Jetson AGX Thor | 1 | 1 | 1 | **1** | **1** |
 | GeForce RTX 5070 Ti | 0 | 1 | 1 | 1 | 1 |
 
-**`integrated` alone is not enough to decide.** The Jetson Orin is an integrated GPU, yet its `concurrentManagedAccess` is 0. In that case managed memory is attached to the device side, and migration occurs when the host touches it. Even though the same physical memory is shared, the driver's unit of management is separate.
+**`integrated` alone is not enough to decide.** The Jetson Orin is an integrated GPU, yet its `concurrentManagedAccess` is 0, while the Jetson AGX Thor, integrated as well and from the same product line, reports 1 like the DGX Spark. The split is not integrated against discrete, and it is not Jetson against the rest either. In that case managed memory is attached to the device side, and migration occurs when the host touches it. Even though the same physical memory is shared, the driver's unit of management is separate.
 
 On the DGX Spark GB10, `pageableMemoryAccess` is 1, so the device can access ordinary host memory directly.
 
 ## Measurements
 
-These are the times for a kernel to write 1.46 MB and for the host to **finish reading every byte**. Median over 170 runs after 30 warmup runs.
+These are the times for a kernel to write 1.46 MB and for the host to **finish reading every byte**. Median over 170 runs after 30 warmup runs. Taken on the three machines below, before the Jetson AGX Thor joined the evaluation; no committed tool reproduces this experiment, so it has not been re-run.
 
 | Machine | A. Copy | B. Managed | C. Mapped |
 | --- | --- | --- | --- |
