@@ -228,6 +228,19 @@ iterations, pinned to CPU 0, MAXN. All 28 corpus images hash identically to the
 ones measured in August, so the inputs are the same bytes and not merely the same
 generator settings.
 
+The environment the sweep ran in is recorded separately, in
+[2026-08-31-jetson-orin-environment.json](../measurements/2026-08-31-jetson-orin-environment.json),
+captured from the same image (`sha256:99e3b92dba23e8050859ac55c49c7588d809e4438fe62aeff9fe3b79045655b5`).
+It carries the CUDA provenance, so the repository and all eight package versions
+are on record with the numbers. The sweep file itself cannot show that: the
+benchmark harness records `cuda_toolkit` only to the minor version, and the
+`l4t-cuda` image it replaced reports the same `11.4` on the same Ubuntu 20.04, so
+the two are indistinguishable from the sweep file alone.
+
+The two records are complementary rather than redundant. The sweep file has the
+GPU identity, which the environment record leaves empty on Jetson because
+`record-environment.sh` reads it from `nvidia-smi` and L4T has none.
+
 Ratios are new median-of-three p50 over old median-of-three p50.
 
 | Route | Scenes | Minimum | Median | Maximum |
