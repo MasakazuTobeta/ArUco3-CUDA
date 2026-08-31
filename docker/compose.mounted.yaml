@@ -12,9 +12,26 @@
 #   from the host, so the container is not reproducible and the version can
 #   differ from the one the pinned image installs; on the GeForce RTX 5070 Ti it
 #   does, 13.2 against 13.0. Measurements are taken in pinned mode, and the
-#   verification the three machines run covers pinned mode. What is checked here
+#   verification the four machines run covers pinned mode. What is checked here
 #   is that each profile builds and that the test suite passes; nothing more is
 #   promised.
+#
+#   There is no jetson-thor service, and it is the one profile that cannot have
+#   one. Its machine carries the driver alone - nvidia-l4t-cuda, which supplies
+#   libcuda.so - and no CUDA Toolkit at all: no nvcc anywhere on disk and no
+#   /usr/local/cuda. There is nothing on that host to mount, so a service here
+#   could not be held to what the paragraph above promises. The reason mounted
+#   mode exists, that a user who already has the Toolkit should not carry a
+#   second copy in the image, does not arise there. Should a Toolkit be
+#   installed on such a host, adding the service is the same four lines as the
+#   others, plus a build and a test run to back it.
+#
+#   Overlaying this file on jetson-thor is not an error and not silent either:
+#   compose finds no override, so the pinned image runs, and the first line
+#   verify-environment.sh prints is "1. CUDA Toolkit (mode=pinned)", with the
+#   provenance line agreeing. The mode a container is actually in is always
+#   readable from the image rather than inferred from the command that started
+#   it.
 #
 # Usage:
 #   docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml build dgx-spark

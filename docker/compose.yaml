@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Purpose:
-#   Start the three profiles - DGX Spark, Jetson Orin, and RTX Blackwell - with
-#   the same configuration.
+#   Start the four profiles - DGX Spark, Jetson Orin, Jetson Thor, and RTX
+#   Blackwell - with the same configuration.
 #
 # How the CUDA Toolkit is supplied:
 #   This file defaults to pinned mode. The required CUDA packages are pinned into
