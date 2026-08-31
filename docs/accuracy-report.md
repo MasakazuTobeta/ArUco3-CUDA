@@ -27,6 +27,9 @@ These are the results with the ArUco3 detection strategy enabled. All three rout
 | Jetson AGX Orin | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
 | Jetson AGX Orin | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
 | Jetson AGX Orin | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
+| Jetson AGX Thor | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| Jetson AGX Thor | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| Jetson AGX Thor | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
 | GeForce RTX 5070 Ti | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
 | GeForce RTX 5070 Ti | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
 | GeForce RTX 5070 Ti | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4653 px | 1.0936 px |
@@ -109,6 +112,7 @@ These are the results of comparing 91 scenes on the same machine.
 | --- | --- | --- |
 | DGX Spark GB10 | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 | Jetson AGX Orin | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
+| Jetson AGX Thor | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 | GeForce RTX 5070 Ti | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 
 The Hybrid route matches the CPU reference results exactly on all four machines. Because Hybrid performs everything from contour extraction onward on the host, this result is predictable from the structure of the route.
@@ -123,6 +127,7 @@ The CUDA-Resident route disagrees with the CPU reference results in only one det
 | --- | --- | --- |
 | DGX Spark GB10 | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 | Jetson AGX Orin | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
+| Jetson AGX Thor | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 | GeForce RTX 5070 Ti | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 
 Every difference is exactly 1.414 px, that is, sqrt(2). This is the distance of a diagonal one-pixel shift of integer-coordinate corners, and it is the difference in the corner estimation method appearing directly. This implementation uses extreme point search, while OpenCV uses polygon approximation of the contour (see [detection pipeline design](design/detector-pipeline.md) for details). Of the 18 cases, 16 are blur scenes.
@@ -137,6 +142,7 @@ The "3 extra detections" are markers that the CPU missed and CUDA-Resident detec
 | --- | --- | --- |
 | DGX Spark GB10 | 436 / 90.83% | 439 / 91.46% |
 | Jetson AGX Orin | 436 / 90.83% | 439 / 91.46% |
+| Jetson AGX Thor | 436 / 90.83% | 439 / 91.46% |
 | GeForce RTX 5070 Ti | 435 / 90.62% | 438 / 91.25% |
 
 Without refinement, the corner error against the ground truth is also smaller for CUDA-Resident.
@@ -145,6 +151,7 @@ Without refinement, the corner error against the ground truth is also smaller fo
 | --- | --- | --- |
 | DGX Spark GB10 | 0.8779 px | 0.8337 px |
 | Jetson AGX Orin | 0.8779 px | 0.8337 px |
+| Jetson AGX Thor | 0.8779 px | 0.8337 px |
 | GeForce RTX 5070 Ti | 0.8653 px | 0.8204 px |
 
 The difference is large when limited to blur scenes: 1.6282 px for CPU against 0.8068 px for CUDA-Resident. On blurred edges, extreme point search returns corners closer to the ground truth than polygon approximation does. However, **the denominator for this comparison is only 16 markers**. We treat it as a tendency, not a conclusion.

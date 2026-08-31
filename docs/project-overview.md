@@ -130,9 +130,9 @@ Startup cost remains larger on the GPU routes. For 1280x720 with 4 markers, the 
 | Jetson AGX Thor | 5.2 / 93.2 / 92.8 ms | 1.420 / 0.561 / 0.837 ms |
 | GeForce RTX 5070 Ti | 2.2 / 66.1 / 70.0 ms | 0.614 / 0.295 / 0.421 ms |
 
-Run-to-run variance also differs by route. The spread of the p50 across 3 independent processes is CPU 0.6% / Hybrid 17.7% / Resident 14.1% on the DGX Spark, 0.4% / 3.5% / 0.5% on the Jetson AGX Orin, and 0.5% / 0.4% / 0.0% on the GeForce RTX 5070 Ti. **Variance on the GPU routes is an order of magnitude larger than on the CPU route only on the DGX Spark.** On the Jetson AGX Orin only Hybrid is larger, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route.
+Run-to-run variance also differs by route. The relative range of the p50 across 3 independent processes is CPU 0.6% / Hybrid 17.7% / Resident 14.1% on the DGX Spark, 0.4% / 3.5% / 0.5% on the Jetson AGX Orin, 0.4% / 3.0% / 0.2% on the Jetson AGX Thor, and 0.5% / 0.4% / 0.0% on the GeForce RTX 5070 Ti. **Variance on the GPU routes is an order of magnitude larger than on the CPU route only on the DGX Spark.** On the two Jetsons only Hybrid is larger, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route. Where the spread does appear it comes from the GPU clock, which is not pinned: pinning it on the Jetson AGX Thor cuts the single-image spread of CUDA-Resident from 16.5% to 5.5% without moving the median ([Benchmark Report](benchmark-report.md)).
 
-As for the memory kind of the input, managed memory is 6.4-30 times slower than pageable on the discrete GPU, while on integrated GPUs it stays within 1.01-1.22 times. Even on an integrated GPU, skipping the explicit copy does not necessarily make it faster. For details, see the [Benchmark Report](benchmark-report.md) and [Memory Transfer Between Host and Device](design/memory-transfer.md).
+As for the memory kind of the input, managed memory is 6.4-30 times slower than pageable on the discrete GPU, while on integrated GPUs it stays within 1.01-1.27 times. Even on an integrated GPU, skipping the explicit copy does not necessarily make it faster. For details, see the [Benchmark Report](benchmark-report.md) and [Memory Transfer Between Host and Device](design/memory-transfer.md).
 
 ### Device memory
 

@@ -108,7 +108,7 @@ The Jetson AGX Thor was measured on 2026-08-31; the other three on 2026-08-29. I
 5. **The contour point coefficient of Hybrid is nearly the same as the CPU's.** That is because everything from contour extraction onward runs on the host, and this is the essential difference between Hybrid and CUDA-Resident.
 6. **The value of CUDA-Resident is that it has no slow scenes.** The spread across scenes is 3.4 to 4.1 times, which stays small compared with 11.6 to 20.8 times for the CPU and 10.0 to 43.7 times for Hybrid.
 7. **For a single detection the CPU remains faster by an order of magnitude.** Time until the first image's result is 2.2 to 6.1 ms for the CPU and 57.6 to 174.0 ms for the GPU routes. Breaking even takes roughly 100 to 420 frames with Hybrid and roughly 110 to 350 frames with CUDA-Resident.
-8. **Do not choose managed memory for input.** On a discrete GPU it is 6.4 to 30 times slower. On integrated GPUs it stays at 1.01 to 1.22 times, but it is never faster.
+8. **Do not choose managed memory for input.** On a discrete GPU it is 6.4 to 30 times slower. On integrated GPUs it stays at 1.01 to 1.27 times, but it is never faster.
 9. **The run-to-run variance of the GPU routes is an order of magnitude larger than that of the CPU route only on the DGX Spark** (0.6% against 17.7% and 14.1%). On the Jetson AGX Orin only Hybrid is larger (3.5% against 0.4%); CUDA-Resident is 0.5%, the same order as the CPU. On the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%). A single measurement is not enough to judge on the DGX Spark, or in the worst scenes on the Jetson AGX Orin.
 
 ### Which route is faster when
@@ -477,7 +477,7 @@ Even on a discrete GPU the difference between `M-Device` and `M-Pageable` is sma
 | Condition | Route to choose | Rationale |
 | --- | --- | --- |
 | A single detection (one image only) | **CPU** | Time to the first result: CPU 2.2 to 6.1 ms, GPU routes 57.6 to 174.0 ms |
-| Any scene on the Jetson AGX Thor | **CUDA-Resident** | It beats the CPU in all 28 scenes, the only machine of the four where that holds |
+| Continuous processing on the Jetson AGX Thor | **CUDA-Resident** | It beats the CPU in all 28 scenes, the only machine of the four where that holds. The row above still governs a single image: time to the first result is 5.2 ms for the CPU against 92.8 ms |
 | A clean scene at 640x480 with detections, on the DGX Spark or the GeForce RTX 5070 Ti | **CPU** | CUDA-Resident / CPU is 1.18 to 1.72 |
 | A clean scene at 640x480 with detections, on the Jetson AGX Orin | **CUDA-Resident**, except with a single marker | CUDA-Resident / CPU is 0.79 to 0.89 for `clean_640x480_n4_s128`, `clean_640x480_n16_s64`, and `blur_640x480`. Only `clean_640x480_n1_s128` favors the CPU, and by 3% (1.03) |
 | Continuous processing on the Jetson AGX Orin | **CUDA-Resident** | Faster than Hybrid in all 28 scenes |
@@ -490,7 +490,9 @@ The figure shows the decision flow. It assumes continuous processing, and the co
 ```mermaid
 flowchart TD
     S{"Processing only one image?"} -->|Yes| CPU1["CPU"]
-    S -->|No| M{"Jetson AGX Orin?"}
+    S -->|No| T{"Jetson AGX Thor?"}
+    T -->|Yes| R0["CUDA-Resident (wins all 28 scenes)"]
+    T -->|No| M{"Jetson AGX Orin?"}
     M -->|Yes| J{"A clean 640x480 scene with a single marker?"}
     J -->|Yes| CPU3["CPU (ahead by only 3%)"]
     J -->|No| R1["CUDA-Resident"]

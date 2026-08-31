@@ -209,7 +209,7 @@ The CLI layer in `main.cpp` is included in the measurement by launching the exec
 
 **On integrated GPUs, the page cache affects memory decisions.** Because device memory and host memory are the same, the free amount returned by `cudaMemGetInfo` corresponds to the free host memory. As the page cache grows, allocation fails and measured values fluctuate. Drop the page cache before measuring.
 
-**Separate the input's memory type as a measurement axis.** Managed memory is 6.4 to 30 times slower on discrete GPUs, and even on integrated GPUs it stays at 1.01 to 1.22 times, never faster than pageable.
+**Separate the input's memory type as a measurement axis.** Managed memory is 6.4 to 30 times slower on discrete GPUs, and even on integrated GPUs it stays at 1.01 to 1.27 times, never faster than pageable.
 
 **Preserve the entire distribution without removing outliers.** Measurement conditions are recorded alongside the results in a machine-readable format so that only favorable results do not survive. The CUDA Toolkit is pinned to the development container image, and the version is recorded in the environment information. If the compiler were separated from the image, the measurement results could not be reproduced later.
 
