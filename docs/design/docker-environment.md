@@ -263,7 +263,15 @@ Setting `ARUCO3_VERIFY_ON_START=1` runs the verification automatically at contai
 
 ### Recording environment information
 
-`record-environment.sh` emits the environment information required by the [Evaluation plan](../evaluation-plan.md) as JSON. It includes the GPU name, Compute Capability, driver version, maximum SM clock, the Jetson power mode, and the versions and commits of the CUDA Toolkit, gcc, CMake, and OpenCV. Benchmark results are stored paired with this JSON.
+`record-environment.sh` emits the environment information required by the [Evaluation plan](../evaluation-plan.md) as JSON. It includes the GPU name, Compute Capability, maximum SM clock, the Jetson power mode, the L4T release and board name, and the versions and commits of the CUDA Toolkit, gcc, CMake, and OpenCV. Benchmark results are stored paired with this JSON.
+
+The GPU name and Compute Capability come from `nvidia-smi` where it exists, and from `query-device-info.sh` where it does not. L4T on the Jetson AGX Orin has no `nvidia-smi`, and until 2026-08-31 those two fields were written out empty there. `query-device-info.sh` compiles a small probe against the CUDA runtime and reports the device count, the name and the Compute Capability as `key=value` lines, following `query-platform-info.sh`'s convention that an item which cannot be obtained is omitted rather than padded with an empty string.
+
+The answer from `nvidia-smi` is checked before it is trusted: a field it does not support is reported as an English sentence on standard output rather than as an error, so a Compute Capability that does not read as one sends the pair to the probe instead. When neither source answers, the fields stay empty and `gpu.probe_error` records why - `no CUDA device was found`, `nvcc is not present, so the device probe cannot be built`, and so on. An empty field with nothing to explain it is what let this gap sit unnoticed through a full round of measurements.
+
+The probe launches no kernel, which is the one place it differs from the probe `verify-environment.sh` compiles. Deciding whether the environment works is that script's job and a launch is the point of it; reporting what the device is does not need one, and making the identity depend on a launch would put the empty fields back on a machine that can enumerate its device but not run code built for it. With no kernel there is also no cubin to match, so the compile takes no `-arch` flag - CUDA 11.4 on the Jetson AGX Orin has neither `-arch=native` nor `-arch=all`, and `ARUCO3_CUDA_ARCH` is the profile's architecture, not the device's.
+
+The driver version is deliberately not filled in this way. Where `nvidia-smi` exists it is the display driver version, such as `580.95.05`; the CUDA runtime can only offer `cudaDriverGetVersion`, which is a different quantity, and on Jetson the equivalent of "which driver" is the L4T release, already recorded as `gpu.platform_release`. Guessing a value into that field would be worse than leaving it empty.
 
 ## Design decisions
 

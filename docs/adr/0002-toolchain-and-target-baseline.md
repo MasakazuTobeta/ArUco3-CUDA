@@ -237,9 +237,19 @@ benchmark harness records `cuda_toolkit` only to the minor version, and the
 `l4t-cuda` image it replaced reports the same `11.4` on the same Ubuntu 20.04, so
 the two are indistinguishable from the sweep file alone.
 
-The two records are complementary rather than redundant. The sweep file has the
-GPU identity, which the environment record leaves empty on Jetson because
-`record-environment.sh` reads it from `nvidia-smi` and L4T has none.
+The two records are complementary rather than redundant. The environment record
+alone carries the CUDA and OpenCV provenance, the CPU model and the total memory;
+the sweep line alone carries the CPU topology, the CPU affinity, the address
+randomization setting, the OpenCV thread count, the CUDA context cost and whether
+the GPU is integrated.
+
+The GPU identity used to belong on that list too: the environment record above
+has `gpu.name` and `gpu.compute_capability` empty, because `record-environment.sh`
+read them from `nvidia-smi` and L4T has none. **This was fixed on 2026-08-31**;
+the script now falls back to a CUDA runtime probe, so records captured after that
+carry `Orin` and `8.7` like the sweep files always did, and an identity that
+still cannot be obtained comes with a `gpu.probe_error` saying why. The record
+linked above is left as it was captured, alongside the sweep it belongs to.
 
 Ratios are new median-of-three p50 over old median-of-three p50.
 
