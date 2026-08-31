@@ -53,12 +53,14 @@ The `jetson-orin` profile has also been built and verified on the machine itself
 | Item | Result |
 | --- | --- |
 | Machine | Jetson AGX Orin Developer Kit, L4T R35.4.1 (JetPack 5.1.2), CUDA 11.4 |
-| Image size | 5.0 GB |
+| Image size | 726 MB |
 | `verify-environment.sh` | All 5 checks pass |
 | `smoke-test.sh` | Pass |
 | `ctest` | Pass. The suite registers 455 tests in the `portability` preset; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
 
-The image is larger than DGX Spark's 1.64 GB because the base image is `l4t-cuda:11.4.19-devel`, which contains the full CUDA installation. On Jetson there is no way to select only the required packages from NVIDIA's apt repository, so this difference is accepted.
+This image is smaller than DGX Spark's 1.64 GB because `INSTALL_DEV_TOOLS=0` leaves out the development tools and because CUDA 11.4 packages are smaller than the 13.0 ones: the eight selected packages and their dependencies install 176 MB, against about 300 MB on DGX Spark.
+
+It was 5.0 GB until 2026-08-31, when the base image changed from `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` to `ubuntu:20.04` with the packages installed from the L4T apt repository. The old base carried the whole 3.7 GB Toolkit, of which cuBLAS, cuFFT, cuSOLVER, cuSPARSE, cuRAND, and cuDLA are never called from this project. `nvcc` is `V11.4.315` build `cuda_11.4.r11.4/compiler.31964100_0` either way, so this changed the packaging and not the compiler. See [the 2026-08-31 update to ADR-0002](../adr/0002-toolchain-and-target-baseline.md#2026-08-31-update-building-the-jetson-image-from-ubuntu-and-the-l4t-apt-repository).
 
 ## Goals
 
@@ -132,10 +134,16 @@ After the transfer, the script confirms that the checksums of every git-tracked 
 | Profile | Base image | Target | `ARUCO3_CUDA_ARCH` | Development tools |
 | --- | --- | --- | --- | --- |
 | `dgx-spark` | `ubuntu:24.04` | DGX Spark GB10 | 121 | Included |
-| `jetson-orin` | `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` (default, overridable) | Jetson AGX Orin | 87 | Not included |
+| `jetson-orin` | `ubuntu:20.04` (default, overridable) | Jetson AGX Orin | 87 | Not included |
 | `rtx-blackwell` | `ubuntu:24.04` | GeForce RTX 5070 Ti (GB203) | 120 | Included |
 
-Even in `pinned` mode, Jetson does not use NVIDIA's CUDA apt repository; it uses `l4t-cuda`, which contains CUDA, as the base image. `install-cuda-toolkit.sh` skips the installation when CUDA is already present in the base image. The tag of the base image is set in `docker/.env` to match the JetPack version on the machine.
+All three profiles start from a plain `ubuntu` image and install the CUDA packages from an NVIDIA apt repository. Jetson uses a different repository from the other two: the CUDA build for Tegra is published at `repo.download.nvidia.com/jetson`, not at `developer.download.nvidia.com`. `ARUCO3_CUDA_REPO_FLAVOR` selects between them, because they differ in more than a URL. The CUDA repository ships a `cuda-keyring` package; the L4T repository publishes an armored key that has to be dearmored into its own keyring and bound to the source with `signed-by`.
+
+Only the `common` component of the L4T repository is added. The CUDA packages are there, while `t234` holds the board support package and the L4T driver, and the driver is injected at run time by the NVIDIA Container Toolkit. Adding `t234` would put packages within apt's reach that must not end up in this image.
+
+`ARUCO3_JETSON_L4T_SUITE` must match the L4T release on the device and defaults to `r35.4`, which is JetPack 5.1.2. Set it in `docker/.env` when the machine is on a different release; JetPack 6.x is the `r36` series and also needs `ubuntu:22.04` as the base image.
+
+`install-cuda-toolkit.sh` still skips the installation when the base image already contains CUDA. No profile takes that path now, but `BASE_IMAGE` is overridable, so an image such as `l4t-jetpack` still works.
 
 ### Jetson-specific settings
 
@@ -150,7 +158,7 @@ These settings turned out to be necessary during verification on the machine. Al
 
 Without the supplementary groups, `cudaGetDeviceCount` fails with `operation not supported` after `NvRmMemInitNvmap failed with Permission denied`. Since `libcuda.so.1` is injected, the failure looks confusingly like a driver problem.
 
-In `mounted` mode the host's CUDA Toolkit binaries run inside the container, so the container's glibc must be at least the version the host CUDA Toolkit requires. The base image in this case is `ubuntu:20.04` for JetPack 5.x and `ubuntu:22.04` for JetPack 6.x.
+In `mounted` mode the host's CUDA Toolkit binaries run inside the container, so the container's glibc must be at least the version the host CUDA Toolkit requires. The base image is the same `ubuntu:20.04` that `pinned` mode uses for JetPack 5.x, and `ubuntu:22.04` for JetPack 6.x.
 
 ### Image structure
 
@@ -228,15 +236,15 @@ Setting `ARUCO3_VERIFY_ON_START=1` runs the verification automatically at contai
 
 ## Design decisions
 
-- `pinned`, which fixes the CUDA Toolkit into the image, is the default. The deliverable of this project is comparative measurement, and unless the compiler used for a measurement travels with the image, the results cannot be reproduced later. Narrowed down to only the required packages, the addition is 360 MB, which does not outweigh reproducibility.
+- `pinned`, which fixes the CUDA Toolkit into the image, is the default. The deliverable of this project is comparative measurement, and unless the compiler used for a measurement travels with the image, the results cannot be reproduced later. Narrowed down to only the required packages, the addition is 360 MB on DGX Spark and 176 MB on Jetson Orin, which does not outweigh reproducibility. `mounted` would make the Jetson image 540 MB instead of 726 MB; 186 MB is not worth giving up a self-contained image for.
 - `mounted` is kept as an option because there is a use for swapping the host's Toolkit and trying something quickly. In this mode the image is not independent of the host environment, so `verify-environment.sh` displays the mode and warns against using it for measurement.
 - In `mounted` mode, `/usr/local/cuda` is a multi-level symlink, so the mount source is set to the real directory. A mounted symlink cannot be resolved inside the container.
-- The base image is chosen per profile and is not an `nvidia/cuda` image. With `ubuntu` as the base, the mount becomes the only source of the CUDA Toolkit, which avoids a state where a Toolkit in the image and a mounted Toolkit coexist.
+- The base image is chosen per profile and is a plain `ubuntu` image rather than an `nvidia/cuda` or `l4t-cuda` one. This keeps the apt repository as the single source of the CUDA Toolkit, so there is never a Toolkit in the base image and a second one installed on top of it, and in `mounted` mode the mount is the only source.
 - OpenCV is included in the image because it is the authoritative source of the CPU reference results and its version must not change between measurements.
 
 ## Open questions
 
-- The base image tag and CUDA version if Jetson is updated to JetPack 6.x.
+- The base image, the L4T suite, and the CUDA package versions if Jetson is updated to JetPack 6.x. The suite is pinned to `r35.4`, so this is a deliberate change rather than something that follows automatically.
 - Whether to pin the package versions in `pinned` mode down to the patch level. Currently the package names fix things to the CUDA 13.0 line, and the actual versions are recorded in the provenance.
 - Whether to include the profilers (Nsight Systems, Nsight Compute) in the image or run them on the host. This is the same open question as in [ADR-0002](../adr/0002-toolchain-and-target-baseline.md).
 - The kind of runner to use when running CI inside a container.

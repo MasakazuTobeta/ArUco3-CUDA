@@ -1,0 +1,86 @@
+{
+  "recorded_at": "2026-08-31T01:48:21Z",
+  "host": {
+    "hostname": "ee3b0339c486",
+    "os": "Ubuntu 20.04.6 LTS",
+    "kernel": "5.10.120-tegra",
+    "arch": "aarch64"
+  },
+  "container": {
+    "profile": "jetson-orin",
+    "target_cuda_arch": "87"
+  },
+  "gpu": {
+    "name": "",
+    "compute_capability": "",
+    "driver_version": "",
+    "max_sm_clock_mhz": "1300",
+    "current_sm_clock_mhz": "306",
+    "power_mode": "MAXN (0)",
+    "platform_release": "# R35 (release), REVISION: 4.1, GCID: 33958178, BOARD: t186ref, EABI: aarch64, DATE: Tue Aug  1 19:57:35 UTC 2023",
+    "platform_model": "Jetson AGX Orin Developer Kit"
+  },
+  "cpu": {
+    "model": "ARMv8 Processor rev 1 (v8l)",
+    "online_cores": 12
+  },
+  "memory": {
+    "total_kb": 64307816
+  },
+  "toolchain": {
+    "cuda_toolkit": "11.4",
+    "cuda_provenance": {
+      "component": "cuda-toolkit",
+      "mode": "pinned",
+      "repository": "https://repo.download.nvidia.com/jetson/common r35.4 main",
+      "nvcc_version": "11.4",
+      "packages": [
+        {
+          "name": "cuda-nvcc-11-4",
+          "version": "11.4.315-1"
+        },
+        {
+          "name": "cuda-cudart-dev-11-4",
+          "version": "11.4.298-1"
+        },
+        {
+          "name": "cuda-cccl-11-4",
+          "version": "11.4.298-1"
+        },
+        {
+          "name": "cuda-sanitizer-11-4",
+          "version": "11.4.298-1"
+        },
+        {
+          "name": "cuda-nvtx-11-4",
+          "version": "11.4.300-1"
+        },
+        {
+          "name": "cuda-cuobjdump-11-4",
+          "version": "11.4.315-1"
+        },
+        {
+          "name": "cuda-nvdisasm-11-4",
+          "version": "11.4.298-1"
+        },
+        {
+          "name": "cuda-profiler-api-11-4",
+          "version": "11.4.298-1"
+        }
+      ]
+    },
+    "gcc": "gcc (Ubuntu 9.4.0-1ubuntu1~20.04.2) 9.4.0",
+    "cmake": "4.4.2"
+  },
+  "opencv": {
+    "component": "opencv",
+    "version": "4.14.0",
+    "commit": "0654a42e19215ef25b1d367d822f3c630447e7c7",
+    "repository": "https://github.com/opencv/opencv.git",
+    "license": "Apache-2.0",
+    "with_cuda": "OFF",
+    "cuda_arch_bin": "",
+    "build_list": "core,imgproc,imgcodecs,calib3d,objdetect",
+    "modified": false
+  }
+}

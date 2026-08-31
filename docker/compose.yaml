@@ -64,19 +64,33 @@ services:
 
   # Jetson Orin (Ampere, sm_87). The environment for latency and power
   # evaluation under conditions close to deployment.
-  # In pinned mode the base image is l4t-jetpack, which already contains CUDA.
-  # install-cuda-toolkit.sh skips the installation when the base image has CUDA.
-  # Override the base image in .env to match the JetPack on the actual device.
+  #
+  # Like the other two profiles, this starts from a plain Ubuntu image and
+  # installs CUDA from an NVIDIA apt repository. The repository is a different
+  # one: the CUDA build for Tegra is published under repo.download.nvidia.com,
+  # not under the ordinary developer.download.nvidia.com. Selecting the packages
+  # this project actually uses brings the image from the 5.0 GB the l4t-cuda base
+  # image cost down to 726 MB, with the same nvcc build.
+  #
+  # ARUCO3_JETSON_L4T_SUITE must match the L4T release on the device. r35.4 is
+  # JetPack 5.1.2; JetPack 6.x is the r36 series and also needs ubuntu:22.04 as
+  # the base image.
   jetson-orin:
     <<: *common
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        BASE_IMAGE: ${ARUCO3_JETSON_BASE_IMAGE:-nvcr.io/nvidia/l4t-cuda:11.4.19-devel}
+        BASE_IMAGE: ${ARUCO3_JETSON_BASE_IMAGE:-ubuntu:20.04}
         ARUCO3_PROFILE: jetson-orin
         ARUCO3_CUDA_ARCH: "87"
         ARUCO3_CUDA_MODE: "${ARUCO3_CUDA_MODE:-pinned}"
+        ARUCO3_CUDA_REPO_FLAVOR: jetson
+        ARUCO3_CUDA_REPO_SUITE: "${ARUCO3_JETSON_L4T_SUITE:-r35.4}"
+        # The same set as the other profiles, at the version L4T ships.
+        # cuda-cudart-dev is listed explicitly rather than left to nvcc's
+        # dependencies, so that the recorded provenance names it.
+        ARUCO3_CUDA_PACKAGES: "cuda-nvcc-11-4 cuda-cudart-dev-11-4 cuda-cccl-11-4 cuda-sanitizer-11-4 cuda-nvtx-11-4 cuda-cuobjdump-11-4 cuda-nvdisasm-11-4 cuda-profiler-api-11-4"
         INSTALL_DEV_TOOLS: "0"
     image: aruco3-cuda:jetson-orin
     # On Jetson the Tegra device nodes are root:video (some are root:debug) with

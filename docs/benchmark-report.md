@@ -489,6 +489,9 @@ For applications where the contour point count cannot be known in advance, makin
 
 ## Reproducing the measurements
 
+The Jetson image changed on 2026-08-31, from `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` to `ubuntu:20.04` with the CUDA packages installed from the L4T apt repository. `nvcc` is the same build either way, and the sweep was run again on the new image to confirm that: the median ratio against the numbers below is 1.000 over 84 route and scene pairs, on inputs that hash identically. The comparison and the one scene that moved are in [the 2026-08-31 update to ADR-0002](adr/0002-toolchain-and-target-baseline.md#re-measurement), and the data is in [docs/measurements](measurements/2026-08-31-jetson-orin-sweep-after-image-change.jsonl). The figures in this report are unchanged and still come from the 2026-08-29 runs.
+
+
 ```
 # Run inside the container. <preset> is one of dgx-spark / jetson-orin / rtx-blackwell.
 # <cpu> is the number of a performance core.
