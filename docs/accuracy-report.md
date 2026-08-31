@@ -7,7 +7,7 @@ This document measures the three routes, CPU reference, Hybrid, and CUDA-Residen
 ## Scope
 
 - The target is the 91 scenes of corpus preset `full`, with 480 ground truth markers.
-- Measurements are taken on three machines: DGX Spark GB10, Jetson AGX Orin, and GeForce RTX 5070 Ti. The configuration is two integrated-GPU machines and one discrete-GPU machine.
+- Measurements are taken on four machines: DGX Spark GB10, Jetson AGX Orin, Jetson AGX Thor, and GeForce RTX 5070 Ti. The configuration is three integrated-GPU machines and one discrete-GPU machine.
 - The dictionary is fixed to `DICT_ARUCO_MIP_36h12`.
 - Real images are out of scope. The evaluation is limited to the synthetic corpus.
 
@@ -27,11 +27,14 @@ These are the results with the ArUco3 detection strategy enabled. All three rout
 | Jetson AGX Orin | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
 | Jetson AGX Orin | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
 | Jetson AGX Orin | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
+| Jetson AGX Thor | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| Jetson AGX Thor | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
+| Jetson AGX Thor | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
 | GeForce RTX 5070 Ti | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
 | GeForce RTX 5070 Ti | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
 | GeForce RTX 5070 Ti | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4653 px | 1.0936 px |
 
-Precision is 100.00% across all 9 combinations of 3 routes x 3 machines. There is not a single false positive anywhere in 91 scenes x 3 routes x 3 machines, and there are zero detections with an incorrect ID. The evaluator counts a misread ID as a false positive as well as a false negative, so precision at 100.00% is what rules ID errors out. Rotation matches the ground truth for all 88 detections, and 85 of those 88 are at or above the ArUco3 bound. The 9 combinations cover only the ArUco3-enabled measurements. The ArUco3-disabled runs of the same 3 routes x 3 machines are a separate set of 9, reported under "Differences with the ArUco3 strategy and subpixel refinement turned off" below.
+Precision is 100.00% across all 12 combinations of 3 routes x 4 machines. There is not a single false positive anywhere in 91 scenes x 3 routes x 4 machines, and there are zero detections with an incorrect ID. The evaluator counts a misread ID as a false positive as well as a false negative, so precision at 100.00% is what rules ID errors out. Rotation matches the ground truth for all 88 detections, and 85 of those 88 are at or above the ArUco3 bound. The 12 combinations cover only the ArUco3-enabled measurements. The ArUco3-disabled runs of the same 3 routes x 4 machines are a separate set of 12, reported under "Differences with the ArUco3 strategy and subpixel refinement turned off" below.
 
 The RMSE values differ between the two aarch64 machines and the x86_64 machine **because the corpus images themselves do not match across architectures**. See "Corpus reproducibility" below. As long as routes are compared within the same machine, this difference does not enter.
 
@@ -109,9 +112,10 @@ These are the results of comparing 91 scenes on the same machine.
 | --- | --- | --- |
 | DGX Spark GB10 | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 | Jetson AGX Orin | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
+| Jetson AGX Thor | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 | GeForce RTX 5070 Ti | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
 
-The Hybrid route matches the CPU reference results exactly on all three machines. Because Hybrid performs everything from contour extraction onward on the host, this result is predictable from the structure of the route.
+The Hybrid route matches the CPU reference results exactly on all four machines. Because Hybrid performs everything from contour extraction onward on the host, this result is predictable from the structure of the route.
 
 The CUDA-Resident route disagrees with the CPU reference results in only one detection in one scene. It is ID 140 in `occlusion_640x480`, where the corners differ by 3.804 px. The error against the ground truth is 3.6351 px for CPU and 1.0936 px for CUDA-Resident, so **in this one case CUDA-Resident is closer to the ground truth**. For a candidate whose contour was broken by occlusion, the two implementations converged to different local solutions. However, the denominator is a single case, and this is not a sample from which superiority in accuracy can be claimed.
 
@@ -123,6 +127,7 @@ The CUDA-Resident route disagrees with the CPU reference results in only one det
 | --- | --- | --- |
 | DGX Spark GB10 | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 | Jetson AGX Orin | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
+| Jetson AGX Thor | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 | GeForce RTX 5070 Ti | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
 
 Every difference is exactly 1.414 px, that is, sqrt(2). This is the distance of a diagonal one-pixel shift of integer-coordinate corners, and it is the difference in the corner estimation method appearing directly. This implementation uses extreme point search, while OpenCV uses polygon approximation of the contour (see [detection pipeline design](design/detector-pipeline.md) for details). Of the 18 cases, 16 are blur scenes.
@@ -137,6 +142,7 @@ The "3 extra detections" are markers that the CPU missed and CUDA-Resident detec
 | --- | --- | --- |
 | DGX Spark GB10 | 436 / 90.83% | 439 / 91.46% |
 | Jetson AGX Orin | 436 / 90.83% | 439 / 91.46% |
+| Jetson AGX Thor | 436 / 90.83% | 439 / 91.46% |
 | GeForce RTX 5070 Ti | 435 / 90.62% | 438 / 91.25% |
 
 Without refinement, the corner error against the ground truth is also smaller for CUDA-Resident.
@@ -145,13 +151,14 @@ Without refinement, the corner error against the ground truth is also smaller fo
 | --- | --- | --- |
 | DGX Spark GB10 | 0.8779 px | 0.8337 px |
 | Jetson AGX Orin | 0.8779 px | 0.8337 px |
+| Jetson AGX Thor | 0.8779 px | 0.8337 px |
 | GeForce RTX 5070 Ti | 0.8653 px | 0.8204 px |
 
 The difference is large when limited to blur scenes: 1.6282 px for CPU against 0.8068 px for CUDA-Resident. On blurred edges, extreme point search returns corners closer to the ground truth than polygon approximation does. However, **the denominator for this comparison is only 16 markers**. We treat it as a tendency, not a conclusion.
 
 ### Device memory
 
-This is the workspace of the CUDA-Resident route. The values are the same on all three machines. The evaluator records bytes; **MB below is 10^6 bytes, not 2^20**, and the MiB (2^20) equivalent is given alongside.
+This is the workspace of the CUDA-Resident route. The values are the same on all four machines. The evaluator records bytes; **MB below is 10^6 bytes, not 2^20**, and the MiB (2^20) equivalent is given alongside.
 
 | Configuration | Peak workspace usage | Allocated capacity | Increase in allocation count over 91 detections |
 | --- | --- | --- | --- |
@@ -236,7 +243,7 @@ The results are in `docs/measurements/2026-08-29-<machine>-accuracy{,-noaruco3}.
 
 ## Across the bundled dictionaries
 
-Every bundled dictionary was evaluated on all three machines with the same procedure as above: `aruco3cuda_evaluate --dictionary <name>`, the `full` preset, 91 scenes, seed 20260827. Seventeen runs per machine, about two minutes each machine. The data is in [docs/measurements](measurements/), one file per machine.
+Every bundled dictionary was evaluated on all four machines with the same procedure as above: `aruco3cuda_evaluate --dictionary <name>`, the `full` preset, 91 scenes, seed 20260827. Seventeen runs per machine, about two minutes each machine. The data is in [docs/measurements](measurements/), one file per machine.
 
 The corpus is regenerated with the dictionary under test, because the markers themselves differ. That is the limit of this comparison: a difference in recall between two dictionaries mixes the dictionary with the images it produced, and cannot be attributed to either.
 
@@ -264,17 +271,17 @@ The corpus is regenerated with the dictionary under test, because the markers th
 
 ### What holds everywhere
 
-**Precision is 1.000 for all seventeen, on all three machines.** Not one false positive in 51 runs.
+**Precision is 1.000 for all seventeen, on all four machines.** Not one false positive in 68 runs.
 
 **Rotation agreement is 100%** in every run.
 
-**Recall is identical on all three machines**, dictionary by dictionary, to the last digit. The implementation produces the same detections on Blackwell, Ampere, and a discrete GPU.
+**Recall is identical on all four machines**, dictionary by dictionary, to the last digit. The implementation produces the same detections on GB10, Orin, Thor, and a discrete GPU.
 
 ### What differs, and why
 
 **Workspace peak scales with the marker size and with nothing else**: 14.51 MB at 4x4, 15.53 MB at 5x5, 16.70 MB at 6x6, 18.03 MB at 7x7, the same value for every dictionary of a given size regardless of its code count. That follows from the canonical patch being `(bits + 2 * border) * perspective_remove_pixel_per_cell` pixels on a side. It is the one structural difference between dictionaries that the measurements show cleanly.
 
-**Corner RMSE differs by architecture, not by dictionary.** The two aarch64 machines agree exactly; the GeForce RTX 5070 Ti is lower by about 0.015 px for every dictionary. That is the corpus difference already recorded in the README: the same seed produces slightly different images on x86_64, so the ground truth the corners are measured against is not the same image.
+**Corner RMSE differs by architecture, not by dictionary.** The three aarch64 machines agree exactly; the GeForce RTX 5070 Ti is lower by about 0.015 px for every dictionary. That is the corpus difference already recorded in the README: the same seed produces slightly different images on x86_64, so the ground truth the corners are measured against is not the same image.
 
 **Recall varies from 0.911 to 0.967, and this should not be read as a ranking.** The same marker size spans 0.911 to 0.922 at 4x4 and 5x5, and 0.933 to 0.956 at 6x6, so the spread within one size is as large as the spread between sizes. With a corpus that changes along with the dictionary, this measurement cannot separate the two.
 

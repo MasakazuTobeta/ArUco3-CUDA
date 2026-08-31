@@ -17,17 +17,18 @@ The scope covers the stage structure of detection, the main design decisions, th
 - No device memory is allocated during detection. Peak workspace usage is 17.51 MB with the ArUco3 detection strategy enabled and 414.51 MB with it disabled. Detecting all 91 scenes of the synthetic corpus does not increase the allocation count.
 - Two sample programs live under `examples/`. `generate_marker` renders a marker from the built-in dictionary and `detect_image` runs the full pipeline on it, so the public API has a runnable path that needs neither a camera nor an image library. Both are covered by the CLI tests, including the generate-then-detect round trip and the boundary where a marker below the ArUco3 lower bound is missed. `examples/CMakeLists.txt` also configures standalone against an installed package, which is the only form that exercises `find_package`.
 - The detector is reachable from outside C++. `libaruco3cuda_c.so` exposes 16 C functions, and the `python/aruco3cuda` package drives them with `ctypes`, so the Python side compiles nothing and needs no dependency outside the standard library. `examples/python/` mirrors the C++ samples option for option, and the tests compare their output. See [C ABI and Python binding](design/c-abi-and-python.md).
-- All 455 automated tests pass on all three machines below. Compute Sanitizer applies its four tools (memcheck / racecheck / initcheck / synccheck) to two executables, and all 8 combinations pass on all three machines.
+- All 518 automated tests pass on all four machines below. Compute Sanitizer applies its four tools (memcheck / racecheck / initcheck / synccheck) to two executables, and all 8 combinations pass on all four machines.
 
 | Machine | Architecture | GPU | Compute Capability | CUDA | CPU |
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | aarch64 | NVIDIA GB10 (integrated) | 12.1 | 13.0 | Cortex-X925 x10 + Cortex-A725 x10 |
 | Jetson AGX Orin | aarch64 | Orin (integrated) | 8.7 | 11.4 | Cortex-A78AE x12 (MAXN) |
+| Jetson AGX Thor | aarch64 | Thor (integrated) | 11.0 | 13.0 | Neoverse-V3AE x14 (MAXN) |
 | GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti (discrete) | 12.0 | 13.0 | Core Ultra 7 265 |
 
-The configuration of two integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
+The configuration of three integrated-GPU machines and one discrete-GPU machine is there to separate results specific to integrated GPUs from results that hold in general.
 
-For accuracy, precision is 100% across all 9 combinations of 3 routes x 3 machines, with zero false positives and zero ID errors. Because the ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below the lower bound, recall is 18.33% over the whole corpus and 94.44% when limited to markers at or above that bound. For speed, end-to-end times measuring detection only are compared across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not part of the measured interval. On the synthetic corpus, the CPU beats CUDA-Resident in 5 of the 28 scenes on the DGX Spark, 4 on the GeForce RTX 5070 Ti, and 1 on the Jetson AGX Orin. What governs this is the contour point count after thresholding rather than the resolution: the 5 scenes on the DGX Spark include one at 1280x720, while `noise_640x480` and `combined_640x480` go to the GPU. On real images the contour point count may increase and move the boundary, but we have not verified this.
+For accuracy, precision is 100% across all 12 combinations of 3 routes x 4 machines, with zero false positives and zero ID errors. Because the ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below the lower bound, recall is 18.33% over the whole corpus and 94.44% when limited to markers at or above that bound. For speed, end-to-end times measuring detection only are compared across 28 scenes x 3 routes x 4 machines. Image loading and checksums are not part of the measured interval. On the synthetic corpus, the CPU beats CUDA-Resident in 5 of the 28 scenes on the DGX Spark, 4 on the GeForce RTX 5070 Ti, 1 on the Jetson AGX Orin, and none on the Jetson AGX Thor. What governs this is the contour point count after thresholding rather than the resolution: the 5 scenes on the DGX Spark include one at 1280x720, while `noise_640x480` and `combined_640x480` go to the GPU. On real images the contour point count may increase and move the boundary, but we have not verified this.
 
 ### Detection stage structure
 
@@ -62,7 +63,7 @@ What each stage guarantees is as follows. "Bit-identical" means that tests pin t
 | S8 first half | Otsu and border verification | Decisions match the CPU reference at the boundaries of `minOtsuStdDev` and the border error rate. No machine-to-machine differences appear |
 | S8 second half | Dictionary matching | ID, rotation, and distance match both the CPU reference and OpenCV for all 4 rotations of every ID |
 | S9 | Containment tree and identification suppression | Containment decisions match `cv::pointPolygonTest`, and the suppression results match the CPU reference |
-| S10 | Subpixel corner refinement and restoration to full scale | Bit-identical to the verbatim oracle on all three machines. Compared against actual `cv::cornerSubPix` with a tolerance |
+| S10 | Subpixel corner refinement and restoration to full scale | Bit-identical to the verbatim oracle on all four machines. Compared against actual `cv::cornerSubPix` with a tolerance |
 | S11 | Result output | Results on the device can be referenced without host synchronization |
 
 Per-stage details and the observed behavior of OpenCV 4.x, the compatibility baseline, are in [detection pipeline design](design/detector-pipeline.md).
@@ -148,7 +149,7 @@ Even so, at 640x480 with 4 markers the CPU remains faster on the DGX Spark and t
 
 #### Machine-dependent values are derived from device attributes rather than configuration
 
-In measurements sweeping block sizes of 8 / 16 / 32, 16 was the best on all three machines. Since there is no reason to change it even if it were exposed as a setting, `cuda_block_dim_` is left at its default. Instead, the number of blocks launched for the S10 refinement is determined as the smaller of twice the SM count and the upper bound on the amount of work. The effect is modest, but doing away with a fixed value has value in itself. When the corner upper bound was used directly as the block count, the Jetson AGX Orin, with its smaller SM count, degraded significantly. In kernels that use shared memory, the number of blocks that fit on one SM is limited, so launches split into waves. Adding a machine with an SM count of a different order of magnitude will no longer cause the same accident structurally.
+In measurements sweeping block sizes of 8 / 16 / 32, 16 was the best on the three machines measured at the time. Since there is no reason to change it even if it were exposed as a setting, `cuda_block_dim_` is left at its default. Instead, the number of blocks launched for the S10 refinement is determined as the smaller of twice the SM count and the upper bound on the amount of work. The effect is modest, but doing away with a fixed value has value in itself. When the corner upper bound was used directly as the block count, the Jetson AGX Orin, with its smaller SM count, degraded significantly. In kernels that use shared memory, the number of blocks that fit on one SM is limited, so launches split into waves. Adding a machine with an SM count of a different order of magnitude will no longer cause the same accident structurally.
 
 ### Verification strategy
 
@@ -208,7 +209,7 @@ The CLI layer in `main.cpp` is included in the measurement by launching the exec
 
 **On integrated GPUs, the page cache affects memory decisions.** Because device memory and host memory are the same, the free amount returned by `cudaMemGetInfo` corresponds to the free host memory. As the page cache grows, allocation fails and measured values fluctuate. Drop the page cache before measuring.
 
-**Separate the input's memory type as a measurement axis.** Managed memory is 6.4 to 30 times slower on discrete GPUs, and even on integrated GPUs it stays at 1.01 to 1.22 times, never faster than pageable.
+**Separate the input's memory type as a measurement axis.** Managed memory is 6.4 to 30 times slower on discrete GPUs, and even on integrated GPUs it stays at 1.01 to 1.27 times, never faster than pageable.
 
 **Preserve the entire distribution without removing outliers.** Measurement conditions are recorded alongside the results in a machine-readable format so that only favorable results do not survive. The CUDA Toolkit is pinned to the development container image, and the version is recorded in the environment information. If the compiler were separated from the image, the measurement results could not be reproduced later.
 

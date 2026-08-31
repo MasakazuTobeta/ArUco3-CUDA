@@ -1,0 +1,399 @@
+{
+ "schema_version": 1,
+ "scenes": [
+  {
+   "path": "clean_640x480_n0_s16.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 0,
+   "per_window": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "path": "clean_640x480_n1_s128.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 2612,
+   "per_window": [
+    1250,
+    729,
+    633
+   ]
+  },
+  {
+   "path": "clean_640x480_n4_s128.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 10178,
+   "per_window": [
+    4843,
+    2861,
+    2474
+   ]
+  },
+  {
+   "path": "clean_640x480_n16_s64.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 18330,
+   "per_window": [
+    9235,
+    4610,
+    4485
+   ]
+  },
+  {
+   "path": "blur_640x480.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 6840,
+   "per_window": [
+    3373,
+    1779,
+    1688
+   ]
+  },
+  {
+   "path": "noise_640x480.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 35440,
+   "per_window": [
+    12331,
+    12041,
+    11068
+   ]
+  },
+  {
+   "path": "combined_640x480.png",
+   "width_px": 640,
+   "height_px": 480,
+   "fxfy": 0.5,
+   "segmentation_width_px": 320,
+   "segmentation_height_px": 240,
+   "contour_points": 9832,
+   "per_window": [
+    4252,
+    2950,
+    2630
+   ]
+  },
+  {
+   "path": "clean_1280x720_n0_s16.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 0,
+   "per_window": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "path": "clean_1280x720_n1_s128.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 1587,
+   "per_window": [
+    790,
+    399,
+    398
+   ]
+  },
+  {
+   "path": "clean_1280x720_n4_s128.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 6391,
+   "per_window": [
+    3168,
+    1637,
+    1586
+   ]
+  },
+  {
+   "path": "clean_1280x720_n16_s64.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 10894,
+   "per_window": [
+    4999,
+    2950,
+    2945
+   ]
+  },
+  {
+   "path": "blur_1280x720.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 3901,
+   "per_window": [
+    1750,
+    1096,
+    1055
+   ]
+  },
+  {
+   "path": "noise_1280x720.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 99031,
+   "per_window": [
+    32394,
+    33873,
+    32764
+   ]
+  },
+  {
+   "path": "combined_1280x720.png",
+   "width_px": 1280,
+   "height_px": 720,
+   "fxfy": 0.333594,
+   "segmentation_width_px": 427,
+   "segmentation_height_px": 240,
+   "contour_points": 31182,
+   "per_window": [
+    10323,
+    10640,
+    10219
+   ]
+  },
+  {
+   "path": "clean_1920x1080_n0_s16.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 0,
+   "per_window": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "path": "clean_1920x1080_n1_s128.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 1146,
+   "per_window": [
+    573,
+    290,
+    283
+   ]
+  },
+  {
+   "path": "clean_1920x1080_n4_s128.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 4632,
+   "per_window": [
+    2308,
+    1172,
+    1152
+   ]
+  },
+  {
+   "path": "clean_1920x1080_n16_s64.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 7162,
+   "per_window": [
+    2943,
+    2103,
+    2116
+   ]
+  },
+  {
+   "path": "blur_1920x1080.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 2704,
+   "per_window": [
+    1073,
+    819,
+    812
+   ]
+  },
+  {
+   "path": "noise_1920x1080.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 59951,
+   "per_window": [
+    18218,
+    21172,
+    20561
+   ]
+  },
+  {
+   "path": "combined_1920x1080.png",
+   "width_px": 1920,
+   "height_px": 1080,
+   "fxfy": 0.25,
+   "segmentation_width_px": 480,
+   "segmentation_height_px": 270,
+   "contour_points": 8164,
+   "per_window": [
+    2673,
+    2779,
+    2712
+   ]
+  },
+  {
+   "path": "clean_3840x2160_n0_s16.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 0,
+   "per_window": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "path": "clean_3840x2160_n1_s128.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 583,
+   "per_window": [
+    259,
+    162,
+    162
+   ]
+  },
+  {
+   "path": "clean_3840x2160_n4_s128.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 2189,
+   "per_window": [
+    911,
+    639,
+    639
+   ]
+  },
+  {
+   "path": "clean_3840x2160_n16_s64.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 3667,
+   "per_window": [
+    1276,
+    1201,
+    1190
+   ]
+  },
+  {
+   "path": "blur_3840x2160.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 1458,
+   "per_window": [
+    559,
+    450,
+    449
+   ]
+  },
+  {
+   "path": "noise_3840x2160.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 127055,
+   "per_window": [
+    38290,
+    44381,
+    44384
+   ]
+  },
+  {
+   "path": "combined_3840x2160.png",
+   "width_px": 3840,
+   "height_px": 2160,
+   "fxfy": 0.142969,
+   "segmentation_width_px": 549,
+   "segmentation_height_px": 309,
+   "contour_points": 26973,
+   "per_window": [
+    7890,
+    9585,
+    9498
+   ]
+  }
+ ],
+ "architecture": "x86_64",
+ "note": "Regression input for the contour point analysis in docs/benchmark-report.md. Produced by tools/contourcount from the full corpus at seed 20260827."
+}

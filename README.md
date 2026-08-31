@@ -13,7 +13,7 @@ ArUco3-CUDA is a library that independently implements, in CUDA, the ArUco3 dete
 - The kernel launch sequence for one frame is folded into a CUDA Graph. If you pass an explicit stream, every detection after the first takes a single launch.
 - The workspace is allocated at its worst-case size in `initialize()` and is not reallocated per frame. Peak usage is 17.51 MB with ArUco3 enabled and 414.51 MB with it disabled. Repeating detection 91 times does not increase the allocation count.
 - Detection results are cross-checked against the OpenCV CPU implementation. On the same corpus, precision is 100%, and on the Hybrid route the corners match the CPU baseline on 91 of 91 images ([Accuracy evaluation results](docs/accuracy-report.md)).
-- On three machines — DGX Spark GB10, Jetson AGX Orin, and GeForce RTX 5070 Ti — the automated tests and all four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass.
+- On four machines — DGX Spark GB10, Jetson AGX Orin, Jetson AGX Thor, and GeForce RTX 5070 Ti — the automated tests and all four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass.
 
 ## Detection flow
 
@@ -35,7 +35,7 @@ Pose estimation is out of scope. The output corners are in the full-scale coordi
 
 ## Speed
 
-These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 3 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
+These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 4 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
 
 `CUDA-Resident` is the route that takes device-resident input and processes every stage on the GPU; this is the route the library provides.
 
@@ -46,24 +46,25 @@ These are end-to-end times measuring detection only. Image loading and checksums
 | DGX Spark GB10 | 0.699 ms | 0.301 ms | 0.696 ms | 0.99 | 0.31 |
 | Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.64 | 0.25 |
 | GeForce RTX 5070 Ti | 0.614 ms | 0.295 ms | 0.421 ms | 0.69 | 0.15 |
+| Jetson AGX Thor | 1.420 ms | 0.561 ms | 0.837 ms | 0.59 | 0.22 |
 
-The left three columns are the steady-state p50 for a scene with 4 markers placed in a 1280x720 image, taken as the median over three independent processes of the one-process, one-image measurement (200 iterations) used to measure startup cost (`docs/measurements/2026-08-29-*-startup.jsonl`). The 1280x720 ratio column is those same three columns divided out. That measurement covers only the one 1280x720 scene, so the 3840x2160 column is taken from the 28-scene sweep instead (`docs/measurements/2026-08-29-*-sweep.jsonl`, scene `clean_3840x2160_n4_s128`); at 3840x2160 every marker in the corpus falls below the ArUco3 detection lower bound, so all three routes return 0 detections there, and that column compares the cost of processing the frame rather than of decoding markers. Measuring the 1280x720 scene in the 28-scene sweep instead gives somewhat different values (for example, CUDA-Resident on DGX Spark comes out at 0.626 ms, a ratio of 0.89 rather than 0.99). **The GPU routes have large run-to-run variance, and differences of this magnitude arise between measurements.** Details are in the [Benchmark report](docs/benchmark-report.md). A ratio below 1 means the GPU is faster.
+The left three columns are the steady-state p50 for a scene with 4 markers placed in a 1280x720 image, taken as the median over three independent processes of the one-process, one-image measurement (200 iterations) used to measure startup cost (`docs/measurements/2026-08-29-*-startup.jsonl`, and `2026-08-31-jetson-thor-startup.jsonl`). The 1280x720 ratio column is those same three columns divided out. That measurement covers only the one 1280x720 scene, so the 3840x2160 column is taken from the 28-scene sweep instead (`docs/measurements/*-sweep.jsonl`, scene `clean_3840x2160_n4_s128`); at 3840x2160 every marker in the corpus falls below the ArUco3 detection lower bound, so all three routes return 0 detections there, and that column compares the cost of processing the frame rather than of decoding markers. Measuring the 1280x720 scene in the 28-scene sweep instead gives somewhat different values (for example, CUDA-Resident on DGX Spark comes out at 0.626 ms, a ratio of 0.89 rather than 0.99). **The GPU routes have large run-to-run variance, and differences of this magnitude arise between measurements.** Details are in the [Benchmark report](docs/benchmark-report.md). A ratio below 1 means the GPU is faster.
 
-**There are conditions under which the CPU wins.** **The CPU beats CUDA-Resident on small scenes with a low contour point count.** That is 5 of the 28 scenes on DGX Spark, 4 on GeForce RTX 5070 Ti, and 1 on Jetson AGX Orin. **Resolution alone does not decide it.** At the same 640x480, `noise_640x480` has many contour points, and on DGX Spark the GPU is 2.3x faster — 0.612 ms for CUDA-Resident against 1.406 ms for the CPU. Conversely, the 5 scenes on DGX Spark include one 1280x720 scene.
+**There are conditions under which the CPU wins.** **The CPU beats CUDA-Resident on small scenes with a low contour point count.** That is 5 of the 28 scenes on DGX Spark, 4 on GeForce RTX 5070 Ti, 1 on Jetson AGX Orin, and **none at all on Jetson AGX Thor**, where CUDA-Resident wins every scene. **Resolution alone does not decide it.** At the same 640x480, `noise_640x480` has many contour points, and on DGX Spark the GPU is 2.3x faster — 0.612 ms for CUDA-Resident against 1.406 ms for the CPU. Conversely, the 5 scenes on DGX Spark include one 1280x720 scene.
 
-That said, this applies when the route is fixed to `CUDA-Resident`. **On DGX Spark and GeForce RTX 5070 Ti, there is not a single scene out of 28 where the CPU beats `Hybrid`.** If the faster of the two can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on Jetson AGX Orin is there one scene where the CPU beats both routes at once. On real images the contour point count may be higher than in the synthetic corpus, which would move this boundary. This has not been confirmed yet.
+That said, this applies when the route is fixed to `CUDA-Resident`. **On DGX Spark and GeForce RTX 5070 Ti, there is not a single scene out of 28 where the CPU beats `Hybrid`.** If the faster of the two can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on Jetson AGX Orin is there one scene where the CPU beats both routes at once. Jetson AGX Thor needs no such choice: CUDA-Resident already wins all 28. On real images the contour point count may be higher than in the synthetic corpus, which would move this boundary. This has not been confirmed yet.
 
-What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. The coefficient per 1e5 contour points is 2.48-5.35 ms for CPU, 2.54-5.48 ms for Hybrid, and 0.041-0.278 ms for CUDA-Resident — **Hybrid is nearly the same as CPU**, because everything from contour extraction onward runs on the host. Above about 20,000 contour points CUDA-Resident wins on all three machines, but that figure is a rough guide rather than a boundary: below it, native resolution decides instead, and CUDA-Resident already wins at 3840x2160 on DGX Spark and at 1920x1080 and above on GeForce RTX 5070 Ti even with almost no contour points. On Jetson AGX Orin, CUDA-Resident wins on all 28 scenes.
+What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. The coefficient per 1e5 contour points is 2.48-5.35 ms for CPU, 2.54-5.48 ms for Hybrid, and 0.041-0.278 ms for CUDA-Resident — **Hybrid is nearly the same as CPU**, because everything from contour extraction onward runs on the host. Above about 20,000 contour points CUDA-Resident wins on all four machines, but that figure is a rough guide rather than a boundary: below it, native resolution decides instead, and CUDA-Resident already wins at 3840x2160 on DGX Spark and at 1920x1080 and above on GeForce RTX 5070 Ti even with almost no contour points. On Jetson AGX Thor it wins on all 28 scenes; on Jetson AGX Orin, on 27 of them.
 
-For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, and GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms. On DGX Spark the GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident). That does not carry to the other two machines: on Jetson AGX Orin only Hybrid is larger (3.5% against 0.4% for CPU, with CUDA-Resident at 0.5%), and on GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%).
+For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms, and Jetson AGX Thor is 5.2 / 93.2 / 92.8 ms. On DGX Spark the GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident). That does not carry to the others in the same way: on Jetson AGX Orin only Hybrid is larger (3.5% against 0.4% for CPU, with CUDA-Resident at 0.5%), on GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%), and on Jetson AGX Thor CUDA-Resident is the noisy one (16.5% against 1.5% for CPU, with Hybrid at 5.3%).
 
 ## Accuracy
 
-Measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 9 combinations of 3 routes x 3 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
+Measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 12 combinations of 3 routes x 4 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
 
 | Metric | Result |
 | --- | --- |
-| precision | 100% across all 9 combinations. 0 false positives, 0 ID errors |
+| precision | 100% across all 12 combinations. 0 false positives, 0 ID errors |
 | recall (whole corpus) | 18.33% (88 of 480 ground truth items) |
 | recall (at or above the detection lower bound) | 94.44% (85 of 90 ground truth items) |
 | rotation | Matches ground truth for all 88 detections (85 of them at or above the bound) |
@@ -86,7 +87,7 @@ On the two machines with integrated GPUs, the host and device share the same phy
 
 ## Building and running
 
-Because the same procedure is used on all three machines, builds and measurements are performed in a container. Choose one of the profile names `dgx-spark`, `jetson-orin`, or `rtx-blackwell`.
+Because the same procedure is used on all four machines, builds and measurements are performed in a container. Choose one of the profile names `dgx-spark`, `jetson-orin`, `jetson-thor`, or `rtx-blackwell`.
 
 | Machine | docker profile | CMake preset | GPU architecture |
 | --- | --- | --- | --- |
@@ -104,7 +105,7 @@ docker compose -f docker/compose.yaml run --rm "$PROFILE" bash -c '
   cmake --preset native && cmake --build --preset native && ctest --preset native'
 ```
 
-The `native` preset detects the architecture of the machine it runs on automatically. To cover all four machines with a single binary, use the `portability` preset, which generates all four of `sm_87`, `sm_110`, `sm_120`, and `sm_121`. That binary runs on all three, but it can only be built where the CUDA Toolkit supports every listed architecture: the Jetson AGX Orin is on CUDA 11.4, which stops at `sm_87` and rejects the preset at configure time, so use `native` or `jetson-orin` there. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
+The `native` preset detects the architecture of the machine it runs on automatically. To cover all four machines with a single binary, use the `portability` preset, which generates all four of `sm_87`, `sm_110`, `sm_120`, and `sm_121`. That binary runs on all four, but it can only be built where the CUDA Toolkit supports every listed architecture: the Jetson AGX Orin is on CUDA 11.4, which stops at `sm_87` and rejects the preset at configure time, so use `native` or `jetson-orin` there. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
 
 ## Usage
 

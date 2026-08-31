@@ -42,7 +42,7 @@ We target the detection of the ID, rotation, and corner coordinates of ArUco mar
 - Asynchronous execution with CUDA streams, and a device-resident result representation
 - Accuracy comparison against the OpenCV CPU implementation, and comparison of end-to-end time
 - Comparison of the GPU-resident input, host input, and CPU/GPU hybrid routes
-- A development container environment used in common across the two integrated-GPU machines and the one discrete-GPU machine
+- A development container environment used in common across the three integrated-GPU machines and the one discrete-GPU machine
 
 ### Out of scope
 
@@ -80,15 +80,16 @@ We do not perform pose estimation. When downstream processing is on the same dev
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | aarch64 (Cortex-X925 x10 + A725 x10) | NVIDIA GB10 | Integrated | 12.1 | 13.0 |
 | Jetson AGX Orin | aarch64 (Cortex-A78AE x12, MAXN) | Orin | Integrated | 8.7 | 11.4 |
+| Jetson AGX Thor | aarch64 (Neoverse-V3AE x14, MAXN) | Thor | Integrated | 11.0 | 13.0 |
 | GeForce RTX 5070 Ti | x86_64 (Core Ultra 7 265) | RTX 5070 Ti | Discrete | 12.0 | 13.0 |
 
-The automated tests and Compute Sanitizer (memcheck / racecheck / initcheck / synccheck) pass on all three machines. Compute Sanitizer amounts to 8 runs: 2 executables x 4 tools. The procedure for setting up the environment is in the [Docker Environment Design](design/docker-environment.md).
+The automated tests and Compute Sanitizer (memcheck / racecheck / initcheck / synccheck) pass on all four machines. Compute Sanitizer amounts to 8 runs: 2 executables x 4 tools. The procedure for setting up the environment is in the [Docker Environment Design](design/docker-environment.md).
 
 ### Accuracy
 
-We measure over a synthetic corpus of 91 scenes and 480 ground truth markers, across 3 routes (CPU reference, Hybrid, CUDA-Resident) x 3 machines.
+We measure over a synthetic corpus of 91 scenes and 480 ground truth markers, across 3 routes (CPU reference, Hybrid, CUDA-Resident) x 4 machines.
 
-- Precision is 100% in all 9 combinations. There are 0 false positives and 0 ID errors.
+- Precision is 100% in all 12 combinations. There are 0 false positives and 0 ID errors.
 - The ArUco3 detection strategy inherently cannot detect markers whose side, after downscaling, falls below a lower limit. **Recall over the whole corpus is 18.33%, and 94.44% (85 of 90 ground truth markers) when restricted to markers at or above the limit.** The overall value is a consequence of including many markers below the limit in the corpus, and is dominated by the lower limit of the strategy.
 - Rotation matches ground truth in all 88 detections, of which 85 are at or above the limit.
 - The 5 misses break down as 3 combined degradation, 1 occlusion, and 1 border clipping. Rotation, projective distortion, blur, noise, and illumination difference each produce 0 misses on their own.
@@ -106,9 +107,9 @@ Note that corpus images generated with the same seed differ across build environ
 
 ### Speed
 
-We compare end-to-end time measuring detection only, across 28 scenes x 3 routes x 3 machines. Image loading and checksums are not included in the measured interval.
+We compare end-to-end time measuring detection only, across 28 scenes x 3 routes x 4 machines. Image loading and checksums are not included in the measured interval.
 
-**The CPU beats CUDA-Resident on small scenes with few contour points.** Out of 28 scenes, this happens in 5 scenes on the DGX Spark, 4 scenes on the GeForce RTX 5070 Ti, and 1 scene on the Jetson AGX Orin. **Resolution alone does not decide it.** Even at the same 640x480, `noise_640x480` has many contour points, and on the DGX Spark the GPU is 2.3 times faster: CUDA-Resident 0.612 ms against CPU 1.406 ms. Conversely, the 5 scenes on the DGX Spark include one 1280x720 scene. That said, on the DGX Spark and the GeForce RTX 5070 Ti **there is not a single scene where the CPU beats Hybrid**, so if the faster GPU route can be chosen per scene, there are no scenes left where the CPU wins on these two machines. The only case where the CPU beats both routes at once is 1 scene on the Jetson AGX Orin. This is the boundary on the synthetic corpus, and on real images the contour point count may increase and move the boundary.
+**The CPU beats CUDA-Resident on small scenes with few contour points.** Out of 28 scenes, this happens in 5 scenes on the DGX Spark, 4 scenes on the GeForce RTX 5070 Ti, 1 scene on the Jetson AGX Orin, and none on the Jetson AGX Thor. **Resolution alone does not decide it.** Even at the same 640x480, `noise_640x480` has many contour points, and on the DGX Spark the GPU is 2.3 times faster: CUDA-Resident 0.612 ms against CPU 1.406 ms. Conversely, the 5 scenes on the DGX Spark include one 1280x720 scene. That said, on the DGX Spark and the GeForce RTX 5070 Ti **there is not a single scene where the CPU beats Hybrid**, so if the faster GPU route can be chosen per scene, there are no scenes left where the CPU wins on these two machines. The only case where the CPU beats both routes at once is 1 scene on the Jetson AGX Orin. This is the boundary on the synthetic corpus, and on real images the contour point count may increase and move the boundary.
 
 What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. With ArUco3 downscaling, a 27-fold change in the full-size area changes the segmentation area by only 2.2 times.
 
@@ -118,7 +119,7 @@ What determines the boundary is neither resolution nor candidate count, but the 
 | Hybrid | 2.54-5.48 ms | 0.965-0.980 | 10.0-43.7 times |
 | CUDA-Resident | 0.041-0.278 ms | 0.894-0.973 | 3.4-4.1 times |
 
-The coefficient for Hybrid is almost the same as for the CPU. This is because everything from contour extraction onward runs on the host, so it grows with the contour point count just as the CPU reference does. Above about 20,000 contour points, CUDA-Resident wins on all three machines. That figure is a rough guide and not a switchover point: below it the winner follows native resolution instead, and CUDA-Resident already wins at 3840x2160 on the DGX Spark and at 1920x1080 and above on the GeForce RTX 5070 Ti even in scenes with almost no contour points. On the Jetson AGX Orin, CUDA-Resident wins in all 28 scenes.
+The coefficient for Hybrid is almost the same as for the CPU. This is because everything from contour extraction onward runs on the host, so it grows with the contour point count just as the CPU reference does. Above about 20,000 contour points, CUDA-Resident wins on all four machines. That figure is a rough guide and not a switchover point: below it the winner follows native resolution instead, and CUDA-Resident already wins at 3840x2160 on the DGX Spark and at 1920x1080 and above on the GeForce RTX 5070 Ti even in scenes with almost no contour points. On the Jetson AGX Thor, CUDA-Resident wins in all 28 scenes; on the Jetson AGX Orin, in 27 of them.
 
 Startup cost remains larger on the GPU routes. For 1280x720 with 4 markers, the end-to-end time when a single process handles just one image, and in the steady state, is as follows.
 
@@ -126,11 +127,12 @@ Startup cost remains larger on the GPU routes. For 1280x720 with 4 markers, the 
 | --- | --- | --- |
 | DGX Spark GB10 | 3.3 / 171.0 / 174.0 ms | 0.699 / 0.301 / 0.696 ms |
 | Jetson AGX Orin | 6.1 / 57.6 / 69.8 ms | 1.676 / 1.144 / 1.077 ms |
+| Jetson AGX Thor | 5.2 / 93.2 / 92.8 ms | 1.420 / 0.561 / 0.837 ms |
 | GeForce RTX 5070 Ti | 2.2 / 66.1 / 70.0 ms | 0.614 / 0.295 / 0.421 ms |
 
-Run-to-run variance also differs by route. The spread of the p50 across 3 independent processes is CPU 0.6% / Hybrid 17.7% / Resident 14.1% on the DGX Spark, 0.4% / 3.5% / 0.5% on the Jetson AGX Orin, and 0.5% / 0.4% / 0.0% on the GeForce RTX 5070 Ti. **Variance on the GPU routes is an order of magnitude larger than on the CPU route only on the DGX Spark.** On the Jetson AGX Orin only Hybrid is larger, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route.
+Run-to-run variance also differs by route. The relative range of the p50 across 3 independent processes is CPU 0.6% / Hybrid 17.7% / Resident 14.1% on the DGX Spark, 0.4% / 3.5% / 0.5% on the Jetson AGX Orin, 0.4% / 3.0% / 0.2% on the Jetson AGX Thor, and 0.5% / 0.4% / 0.0% on the GeForce RTX 5070 Ti. **Variance on the GPU routes is an order of magnitude larger than on the CPU route only on the DGX Spark.** On the two Jetsons only Hybrid is larger, and on the GeForce RTX 5070 Ti both GPU routes are at or below the CPU route. Where the spread does appear it comes from the GPU clock, which is not pinned: pinning it on the Jetson AGX Thor cuts the single-image spread of CUDA-Resident from 16.5% to 5.5% without moving the median ([Benchmark Report](benchmark-report.md)).
 
-As for the memory kind of the input, managed memory is 6.4-30 times slower than pageable on the discrete GPU, while on integrated GPUs it stays within 1.01-1.22 times. Even on an integrated GPU, skipping the explicit copy does not necessarily make it faster. For details, see the [Benchmark Report](benchmark-report.md) and [Memory Transfer Between Host and Device](design/memory-transfer.md).
+As for the memory kind of the input, managed memory is 6.4-30 times slower than pageable on the discrete GPU, while on integrated GPUs it stays within 1.01-1.27 times. Even on an integrated GPU, skipping the explicit copy does not necessarily make it faster. For details, see the [Benchmark Report](benchmark-report.md) and [Memory Transfer Between Host and Device](design/memory-transfer.md).
 
 ### Device memory
 
