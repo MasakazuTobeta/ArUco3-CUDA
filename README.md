@@ -79,6 +79,7 @@ The differences from the OpenCV CPU implementation are as follows. The Hybrid ro
 | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | aarch64 | Integrated | 12.1 | 13.0 |
 | Jetson AGX Orin | aarch64 | Integrated | 8.7 | 11.4 |
+| Jetson AGX Thor | aarch64 | Integrated | 11.0 | 13.0 |
 | GeForce RTX 5070 Ti | x86_64 | Discrete | 12.0 | 13.0 |
 
 On the two machines with integrated GPUs, the host and device share the same physical memory, so transfer costs differ from those of a discrete GPU. Adding one machine with a discrete GPU separates results specific to integrated GPUs from results that hold generally. Jetson support targets the Orin family. Support for Nano, Xavier, and Thor is undetermined.
@@ -91,10 +92,11 @@ Because the same procedure is used on all three machines, builds and measurement
 | --- | --- | --- | --- |
 | DGX Spark GB10 | `dgx-spark` | `dgx-spark` | `sm_121` |
 | Jetson AGX Orin | `jetson-orin` | `jetson-orin` | `sm_87` |
+| Jetson AGX Thor | `jetson-thor` | `jetson-thor` | `sm_110` |
 | GeForce RTX 5070 Ti | `rtx-blackwell` | `rtx-blackwell` | `sm_120` |
 
 ```bash
-PROFILE=dgx-spark   # or jetson-orin, rtx-blackwell
+PROFILE=dgx-spark   # or jetson-orin, jetson-thor, rtx-blackwell
 cp docker/.env.example docker/.env
 docker compose -f docker/compose.yaml build "$PROFILE"
 docker compose -f docker/compose.yaml run --rm "$PROFILE" verify-environment.sh
@@ -102,7 +104,7 @@ docker compose -f docker/compose.yaml run --rm "$PROFILE" bash -c '
   cmake --preset native && cmake --build --preset native && ctest --preset native'
 ```
 
-The `native` preset detects the architecture of the machine it runs on automatically. To cover all three machines with a single binary, use the `portability` preset, which generates all three of `sm_87`, `sm_120`, and `sm_121`. That binary runs on all three, but it can only be built where the CUDA Toolkit supports every listed architecture: the Jetson AGX Orin is on CUDA 11.4, which stops at `sm_87` and rejects the preset at configure time, so use `native` or `jetson-orin` there. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
+The `native` preset detects the architecture of the machine it runs on automatically. To cover all four machines with a single binary, use the `portability` preset, which generates all four of `sm_87`, `sm_110`, `sm_120`, and `sm_121`. That binary runs on all three, but it can only be built where the CUDA Toolkit supports every listed architecture: the Jetson AGX Orin is on CUDA 11.4, which stops at `sm_87` and rejects the preset at configure time, so use `native` or `jetson-orin` there. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
 
 ## Usage
 

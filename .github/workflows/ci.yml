@@ -95,9 +95,9 @@ jobs:
           cmake -S . -B build/ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DARUCO3CUDA_BUILD_REFERENCE=OFF \
-            -DCMAKE_CUDA_ARCHITECTURES="87;120;121"
+            -DCMAKE_CUDA_ARCHITECTURES="87;110;120;121"
 
-      # Generate for the three architectures at once, to catch compile errors
+      # Generate for the four architectures at once, to catch compile errors
       # that are specific to one of them.
       - name: Build
         run: cmake --build build/ci -j "$(nproc)"

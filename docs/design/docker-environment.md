@@ -153,13 +153,16 @@ After the transfer, the script confirms that the checksums of every git-tracked 
 | --- | --- | --- | --- | --- |
 | `dgx-spark` | `ubuntu:24.04` | DGX Spark GB10 | 121 | Included |
 | `jetson-orin` | `ubuntu:20.04` (default, overridable) | Jetson AGX Orin | 87 | Not included |
+| `jetson-thor` | `ubuntu:24.04` (default, overridable) | Jetson AGX Thor | 110 | Not included |
 | `rtx-blackwell` | `ubuntu:24.04` | GeForce RTX 5070 Ti (GB203) | 120 | Included |
 
 All three profiles start from a plain `ubuntu` image and install the CUDA packages from an NVIDIA apt repository. Jetson uses a different repository from the other two: the CUDA build for Tegra is published at `repo.download.nvidia.com/jetson`, not at `developer.download.nvidia.com`. `ARUCO3_CUDA_REPO_FLAVOR` selects between them, because they differ in more than a URL. The CUDA repository ships a `cuda-keyring` package; the L4T repository publishes an armored key that has to be dearmored into its own keyring and bound to the source with `signed-by`.
 
 Only the `common` component of the L4T repository is added. The CUDA packages are there, while `t234` holds the board support package and the L4T driver, and the driver is injected at run time by the NVIDIA Container Toolkit. Adding `t234` would put packages within apt's reach that must not end up in this image.
 
-`ARUCO3_JETSON_L4T_SUITE` must match the L4T release on the device and defaults to `r35.4`, which is JetPack 5.1.2. Set it in `docker/.env` when the machine is on a different release; JetPack 6.x is the `r36` series and also needs `ubuntu:22.04` as the base image.
+The two Tegra profiles differ in every respect that reaches the build: `jetson-orin` is L4T r35.4 on Ubuntu 20.04 with CUDA 11.4 and `sm_87`, `jetson-thor` is L4T r38.4 on Ubuntu 24.04 with CUDA 13.0 and `sm_110`. Only the repository flavour is shared, and the Thor uses the same `13-0` package names as the DGX Spark and RTX Blackwell profiles. The Thor host carries no CUDA Toolkit, so `mounted` mode is not available there.
+
+`ARUCO3_JETSON_L4T_SUITE` and `ARUCO3_THOR_L4T_SUITE` must match the L4T release on their device, and default to `r35.4` and `r38.4`. `r35.4` is JetPack 5.1.2. Set it in `docker/.env` when the machine is on a different release; JetPack 6.x is the `r36` series and also needs `ubuntu:22.04` as the base image.
 
 `install-cuda-toolkit.sh` still skips the installation when the base image already contains CUDA. No profile takes that path now, but `BASE_IMAGE` is overridable, so an image such as `l4t-jetpack` still works.
 
@@ -226,6 +229,14 @@ docker compose -f docker/compose.yaml -f docker/compose.mounted.yaml run --rm dg
 The repository is bind-mounted at `/workspace`. Build output goes to `build/` and is excluded by `.gitignore`. A named volume is not used, so that `compile_commands.json` can be read by the editor and language server on the host.
 
 The container runs with the uid and gid given by `ARUCO3_UID` and `ARUCO3_GID` in `docker/.env`. Under the default root execution, root-owned files would be created in the bind-mounted repository and the host could neither delete nor edit them.
+
+**Set them whenever the host user is not uid 1000**, which is the compose default. The Jetson AGX Thor is such a host: its login user is uid 2002. With the wrong uid the container cannot write into the bind-mounted `build/`, and CMake reports it as
+
+```
+CMake Error: Unable to (re)create the private pkgRedirects directory
+```
+
+which names neither permissions nor the user. The other three machines all run uid 1000 and never showed this.
 
 Write permission on the named volume is needed only when installing the CUDA-enabled OpenCV into `/opt/opencv-cuda`. That operation is run with an explicit `--user root`.
 

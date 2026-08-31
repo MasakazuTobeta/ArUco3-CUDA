@@ -69,7 +69,7 @@ For OpenCV, the latest in the 4.x line is 4.14.0, and 5.0.0 has been released as
 
 ## Decision
 
-1. Target the CUDA architectures `sm_87`, `sm_120`, and `sm_121`. Specify `87;120;121` as the default for `CMAKE_CUDA_ARCHITECTURES`, overridable as needed. `sm_120` was added on 2026-08-28. See [the 2026-08-28 update](#2026-08-28-update-adding-sm_120-to-the-target-architectures) for the background.
+1. Target the CUDA architectures `sm_87`, `sm_120`, and `sm_121`. Specify `87;120;121` as the default for `CMAKE_CUDA_ARCHITECTURES`, overridable as needed. `sm_120` was added on 2026-08-28. See [the 2026-08-28 update](#2026-08-28-update-adding-sm_120-to-the-target-architectures) for the background. **`sm_110` was added on 2026-08-31**; see [the 2026-08-31 update](#2026-08-31-update-adding-sm_110-and-the-jetson-agx-thor).
 2. Target only the Compute Capabilities that the target machines report. Do not rely on JIT.
 3. Use C++17 as the C++ standard, and C++17 for the CUDA language standard as well.
 4. Set the minimum CMake version to 3.24. It is the first version in which the handling of `CUDA_ARCHITECTURES` is stable, and both the development machine and the JetPack 6 line satisfy it.
@@ -286,6 +286,57 @@ same instability the benchmark report already records for the Jetson GPU stage.
   because the image then stops being self-contained: reproducing a measurement
   later, or on a machine whose host toolkit has moved, needs the toolkit to
   travel with the image.
+
+## 2026-08-31 update: adding sm_110 and the Jetson AGX Thor
+
+### Background
+
+A fourth machine joins the evaluation targets: a Jetson AGX Thor Developer Kit. It is
+the second Tegra machine and shares nothing with the first beyond that: L4T r38.4
+rather than r35.4, so Ubuntu 24.04 rather than 20.04, CUDA 13.0 rather than 11.4, and
+Compute Capability 11.0 rather than 8.7.
+
+| Item | Value |
+| --- | --- |
+| GPU | NVIDIA Thor (integrated) |
+| Compute Capability | 11.0 (confirmed on the machine) |
+| CPU / system memory | 14 cores / 122.8 GB |
+| OS / arch | Ubuntu 24.04.3 LTS / aarch64, kernel 6.8.12-tegra |
+| L4T | R38.4.0 |
+| NVIDIA driver | 580.00 |
+| CUDA Toolkit on the host | none installed |
+
+There is no CUDA Toolkit on this host, so `mounted` mode is unavailable here and the
+profile has to install the packages. The apt path added on 2026-08-31 for the Orin
+covers it unchanged: the same `flavour=jetson` repository serves r38.4, and the
+package names are the `13-0` set the DGX Spark and RTX Blackwell profiles already use.
+
+### Change to the decision
+
+The target CUDA architectures widen from three to four: `sm_87`, `sm_110`, `sm_120`,
+`sm_121`. The `portability` preset default becomes `87;110;120;121`, a `jetson-thor`
+preset is added, and CI compiles for all four.
+
+`compute_110` is supported by both toolkits in play. Checked on the machines: the
+L4T r38.4 nvcc 13.0.48 lists it and emits an `sm_110` cubin, and the nvcc 13.0.88 the
+other machines use lists it too, so widening the preset does not break them. The
+`portability` build on the DGX Spark produces cubins for all four architectures.
+
+### Consequences
+
+- 518 tests pass on the Thor, with no build warnings, and the four Compute Sanitizer
+  tools pass.
+- `portability` still cannot be built on the Jetson AGX Orin, and this does not change
+  that. CUDA 11.4 stops at `sm_87` and rejects `compute_120` at configure time, as
+  recorded in the [Docker environment design](../design/docker-environment.md). Adding
+  `sm_110` neither helps nor worsens it.
+- The container user matters on this host. Its login user is uid 2002, while the
+  compose default is 1000, so `docker/.env` has to set `ARUCO3_UID` and `ARUCO3_GID`.
+  Without it CMake fails with `Unable to (re)create the private pkgRedirects
+  directory`, which names neither permissions nor the user. The first three machines
+  all run uid 1000 and never exercised this.
+- No measurements were taken on the Thor. It is a build and test target for now; the
+  benchmark and accuracy figures still come from the other three.
 
 ## See also
 

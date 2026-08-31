@@ -115,6 +115,45 @@ services:
       # /sys/firmware. Mount just the board name separately.
       - ${ARUCO3_JETSON_MODEL_FILE:-/sys/firmware/devicetree/base/model}:/etc/aruco3cuda-platform-model:ro
 
+  # Jetson AGX Thor (sm_110). The second Tegra machine, and the only one on the
+  # r38 series.
+  #
+  # It differs from jetson-orin in every respect that matters to the build: L4T
+  # r38.4 rather than r35.4, so Ubuntu 24.04 rather than 20.04, CUDA 13.0 rather
+  # than 11.4, and Compute Capability 11.0 rather than 8.7. Only the repository
+  # flavour is shared. The CUDA package names are the same 13-0 set the DGX Spark
+  # and RTX Blackwell profiles use; they come from the L4T repository instead.
+  #
+  # There is no CUDA Toolkit on this host, so mounted mode is not available here.
+  # That is why the profile installs the packages rather than mounting them.
+  jetson-thor:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${ARUCO3_THOR_BASE_IMAGE:-ubuntu:24.04}
+        ARUCO3_PROFILE: jetson-thor
+        ARUCO3_CUDA_ARCH: "110"
+        ARUCO3_CUDA_MODE: "${ARUCO3_CUDA_MODE:-pinned}"
+        ARUCO3_CUDA_REPO_FLAVOR: jetson
+        ARUCO3_CUDA_REPO_SUITE: "${ARUCO3_THOR_L4T_SUITE:-r38.4}"
+        ARUCO3_CUDA_PACKAGES: "cuda-nvcc-13-0 cuda-cudart-dev-13-0 cuda-cccl-13-0 cuda-sanitizer-13-0 cuda-nvtx-13-0 cuda-cuobjdump-13-0 cuda-nvdisasm-13-0 cuda-profiler-api-13-0"
+        INSTALL_DEV_TOOLS: "0"
+    image: aruco3-cuda:jetson-thor
+    # Same reason as jetson-orin, but the debug GID differs per host, so it has
+    # its own variable rather than sharing the Orin one.
+    group_add:
+      - "${ARUCO3_THOR_VIDEO_GID:-44}"
+      - "${ARUCO3_THOR_DEBUG_GID:-982}"
+    volumes:
+      - ..:/workspace
+      - thor-opencv-cuda:/opt/opencv-cuda
+      - ${ARUCO3_THOR_L4T_RELEASE:-/etc/nv_tegra_release}:/etc/nv_tegra_release:ro
+      - ${ARUCO3_THOR_NVPMODEL_STATE:-/var/lib/nvpmodel}:/var/lib/nvpmodel:ro
+      - ${ARUCO3_THOR_NVPMODEL_CONF:-/etc/nvpmodel.conf}:/etc/nvpmodel.conf:ro
+      - ${ARUCO3_THOR_MODEL_FILE:-/sys/firmware/devicetree/base/model}:/etc/aruco3cuda-platform-model:ro
+
   # RTX Blackwell (GB203, sm_120). A discrete GPU environment on x86_64.
   #
   # Both existing profiles use integrated GPUs, where host and device share the
@@ -150,4 +189,5 @@ volumes:
   # volume, must be run with --user root.
   dgx-opencv-cuda:
   jetson-opencv-cuda:
+  thor-opencv-cuda:
   rtx-opencv-cuda:
