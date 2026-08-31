@@ -27,7 +27,7 @@ The `dgx-spark` profile has been built and verified.
 
 | Item | Result |
 | --- | --- |
-| Image size | 1.64 GB (`pinned`) / 1.27 GB (`mounted`) |
+| Image size | 1.65 GB (`pinned`) / 1.28 GB (`mounted`) |
 | `verify-environment.sh` | All 5 checks pass |
 | `smoke-test.sh` | Pass. An executable compiled for `sm_121` runs on the GPU, and the OpenCV ArUco3 detection strategy behaves as expected |
 | OpenCV | 4.14.0 (`0654a42e1921`), `WITH_CUDA=OFF` |
@@ -98,7 +98,7 @@ flowchart TD
 | Mode | Source | Image size | Role |
 | --- | --- | --- | --- |
 | `pinned` (default) | Install only the required packages into the image | 1.64 GB | Use this for any run that involves measurement |
-| `mounted` | Bind-mounted read-only from the host | 1.27 GB | Quick local experiments |
+| `mounted` | Bind-mounted read-only from the host | 1.28 GB | Quick local experiments. Behaviour and performance are not guaranteed |
 
 `pinned` is the default because the compiler used for a measurement then travels with the image, so a CUDA update on the host cannot destroy the comparability of benchmark results. Success criterion 3 in the [Project overview](../project-overview.md) calls for a reproducible build and measurement procedure, and a configuration where the image depends on the host environment weakens it.
 
@@ -116,6 +116,16 @@ The full CUDA Toolkit is 4.7 GB, but measuring the breakdown shows that 3.2 GB o
 The exact versions of the installed packages are recorded in `/opt/aruco3cuda/cuda-provenance.json` inside the image and embedded into the environment information JSON that `record-environment.sh` emits.
 
 In `mounted` mode the image is not independent of the host environment. So that this dependency does not stay implicit, `verify-environment.sh` displays the mode and, in `mounted`, warns against using it for measurement.
+
+**Behaviour and performance in `mounted` mode are not guaranteed.** The Toolkit comes from the host, so the container is not reproducible, and the version can differ from the one `pinned` installs: on the GeForce RTX 5070 Ti it does, 13.2 against 13.0. All three profiles are available in this mode because a user who already has the Toolkit installed should not have to carry a second copy in the image, but the guarantees the three machines verify apply to `pinned`. What is checked for `mounted` is that each profile builds and that the test suite passes, which was done on 2026-08-31:
+
+| Profile | Image size | Host Toolkit in use | Same as `pinned`? | Tests |
+| --- | --- | --- | --- | --- |
+| `dgx-spark` | 1.28 GB | 13.0 (V13.0.88) | Yes | 455/455 |
+| `jetson-orin` | 540 MB | 11.4 (V11.4.315) | Yes | 455/455 |
+| `rtx-blackwell` | 2.16 GB | 13.2 (V13.2.86) | **No**, `pinned` installs 13.0 | 455/455 |
+
+The GeForce RTX 5070 Ti is where the difference bites. Its host runs a newer Toolkit than the one this project pins, so a measurement taken in `mounted` mode there would not be comparable with the recorded results, and the mode carries no warning that says so beyond the one `verify-environment.sh` prints.
 
 ### Syncing to the machines
 
@@ -159,6 +169,8 @@ These settings turned out to be necessary during verification on the machine. Al
 Without the supplementary groups, `cudaGetDeviceCount` fails with `operation not supported` after `NvRmMemInitNvmap failed with Permission denied`. Since `libcuda.so.1` is injected, the failure looks confusingly like a driver problem.
 
 In `mounted` mode the host's CUDA Toolkit binaries run inside the container, so the container's glibc must be at least the version the host CUDA Toolkit requires. The base image is the same `ubuntu:20.04` that `pinned` mode uses for JetPack 5.x, and `ubuntu:22.04` for JetPack 6.x.
+
+The GeForce RTX 5070 Ti is the one profile whose base image differs between the two modes: `ubuntu:24.04` when pinned, `ubuntu:22.04` when mounted, because that host runs Ubuntu 22.04. A newer container would satisfy the glibc requirement as well, but matching the host keeps the mounted binaries on the userspace they were built for.
 
 ### Image structure
 
@@ -237,7 +249,7 @@ Setting `ARUCO3_VERIFY_ON_START=1` runs the verification automatically at contai
 ## Design decisions
 
 - `pinned`, which fixes the CUDA Toolkit into the image, is the default. The deliverable of this project is comparative measurement, and unless the compiler used for a measurement travels with the image, the results cannot be reproduced later. Narrowed down to only the required packages, the addition is 360 MB on DGX Spark and 176 MB on Jetson Orin, which does not outweigh reproducibility. `mounted` would make the Jetson image 540 MB instead of 726 MB; 186 MB is not worth giving up a self-contained image for.
-- `mounted` is kept as an option because there is a use for swapping the host's Toolkit and trying something quickly. In this mode the image is not independent of the host environment, so `verify-environment.sh` displays the mode and warns against using it for measurement.
+- `mounted` is kept as an option because there is a use for swapping the host's Toolkit and trying something quickly, and because a user who already has it installed should not have to carry a second copy in the image. All three profiles are offered in this mode. In this mode the image is not independent of the host environment, so `verify-environment.sh` displays the mode and warns against using it for measurement, and neither behaviour nor performance is guaranteed.
 - In `mounted` mode, `/usr/local/cuda` is a multi-level symlink, so the mount source is set to the real directory. A mounted symlink cannot be resolved inside the container.
 - The base image is chosen per profile and is a plain `ubuntu` image rather than an `nvidia/cuda` or `l4t-cuda` one. This keeps the apt repository as the single source of the CUDA Toolkit, so there is never a Toolkit in the base image and a second one installed on top of it, and in `mounted` mode the mount is the only source.
 - OpenCV is included in the image because it is the authoritative source of the CPU reference results and its version must not change between measurements.
