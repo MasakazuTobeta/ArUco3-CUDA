@@ -9,6 +9,7 @@ add_executable(aruco3cuda_unit_tests
   unit/test_dictionary.cpp
   unit/test_statistics.cpp
   unit/test_cuda_check.cpp
+  unit/test_cuda_check_launch.cu
   unit/test_types.cpp
   unit/test_config.cpp
   unit/test_workspace.cpp)
@@ -18,7 +19,9 @@ target_link_libraries(aruco3cuda_unit_tests
 
 # test_cuda_check.cpp uses core's internal headers. CUDA error context only
 # appears on failure paths, and those cannot be triggered deliberately through
-# the public API.
+# the public API. test_cuda_check_launch.cu is CUDA rather than C++ because the
+# failure it provokes has to come from a real kernel launch; it inherits
+# CMAKE_CUDA_ARCHITECTURES like every other translation unit here.
 target_include_directories(aruco3cuda_unit_tests
   PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src/core)
 target_link_libraries(aruco3cuda_unit_tests PRIVATE CUDA::cudart)

@@ -100,7 +100,7 @@ GitHub Actions runs on runners without a GPU. Therefore **a green CI does not me
 | Python tests that need no device | CI (`test/python/test_binding.py`) |
 | The C++ and Python renderers agree byte for byte | CI |
 | 54 tests that need no device | CI |
-| **520 automated tests** | **4 physical machines** |
+| **523 automated tests** | **4 physical machines** |
 | **4 Compute Sanitizer tools** | **4 physical machines** |
 | **Cross-check against the CPU baseline** | **4 physical machines** (requires OpenCV) |
 
