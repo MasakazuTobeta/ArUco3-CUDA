@@ -56,7 +56,7 @@ The `jetson-orin` profile has also been built and verified on the machine itself
 | Image size | 726 MB |
 | `verify-environment.sh` | All 5 checks pass |
 | `smoke-test.sh` | Pass |
-| `ctest` | Pass, with the `native` preset. The suite registers 520 tests; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
+| `ctest` | Pass, with the `native` preset. The suite registers 523 tests; the `sanitizer` preset additionally registers the 4 Compute Sanitizer tools against 2 executables, that is 8 entries |
 
 The `portability` preset cannot be used on this machine. CUDA 11.4 supports up to `sm_87`, so the preset fails while CMake is still testing the compiler:
 
@@ -125,7 +125,7 @@ The exact versions of the installed packages are recorded in `/opt/aruco3cuda/cu
 
 In `mounted` mode the image is not independent of the host environment. So that this dependency does not stay implicit, `verify-environment.sh` displays the mode and, in `mounted`, warns against using it for measurement.
 
-**Behaviour and performance in `mounted` mode are not guaranteed.** The Toolkit comes from the host, so the container is not reproducible, and the version can differ from the one `pinned` installs: on the GeForce RTX 5070 Ti it does, 13.2 against 13.0. Three of the four profiles are available in this mode, because a user who already has the Toolkit installed should not have to carry a second copy in the image, but the guarantees the four machines verify apply to `pinned`. The Jetson AGX Thor is the exception, and not by omission: that machine carries the driver alone - `nvidia-l4t-cuda`, which supplies `libcuda.so` - and no CUDA Toolkit at all, with no `nvcc` anywhere on disk and no `/usr/local/cuda`. There is nothing there to mount, and the reason the mode exists does not arise. What is checked for `mounted` is that each profile builds and that the test suite passes, which was done on 2026-08-31. The suite registered 455 tests then; it registers 520 now, and the mounted profiles have not been re-run against the larger suite:
+**Behaviour and performance in `mounted` mode are not guaranteed.** The Toolkit comes from the host, so the container is not reproducible, and the version can differ from the one `pinned` installs: on the GeForce RTX 5070 Ti it does, 13.2 against 13.0. Three of the four profiles are available in this mode, because a user who already has the Toolkit installed should not have to carry a second copy in the image, but the guarantees the four machines verify apply to `pinned`. The Jetson AGX Thor is the exception, and not by omission: that machine carries the driver alone - `nvidia-l4t-cuda`, which supplies `libcuda.so` - and no CUDA Toolkit at all, with no `nvcc` anywhere on disk and no `/usr/local/cuda`. There is nothing there to mount, and the reason the mode exists does not arise. What is checked for `mounted` is that each profile builds and that the test suite passes, which was done on 2026-08-31. The suite registered 455 tests then; it registers 523 now, and the mounted profiles have not been re-run against the larger suite:
 
 | Profile | Image size | Host Toolkit in use | Same as `pinned`? | Tests |
 | --- | --- | --- | --- | --- |
