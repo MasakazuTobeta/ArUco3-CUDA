@@ -78,7 +78,7 @@ flowchart LR
 - Where the crossover point moves on real images.
 - In what order to widen dictionary support.
 - Whether to lock the GPU clock frequency during measurement or measure at the default.
-- The scope of Jetson support. For now we target the Orin family; Nano, Xavier, and Thor are out of scope.
+- The scope of Jetson support. The Orin and Thor families are targets and are measured; Nano and Xavier are out of scope.
 - The acceptable corner coordinate error, and numeric criteria for the performance improvement rate.
 
 ## See also
