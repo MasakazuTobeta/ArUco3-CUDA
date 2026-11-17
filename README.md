@@ -5,15 +5,15 @@
 ArUco3-CUDA is a library that independently implements, in CUDA, the ArUco3 detection strategy found in OpenCV's `cv::aruco::ArucoDetector`. It processes an input image on the GPU all the way to marker IDs and corners, and returns the results while they remain on the device. No GPLv3 code from the official ArUco is copied or adapted ([Intellectual property and licensing policy](docs/ip-and-licensing.md)).
 
 > [!IMPORTANT]
-> GPU accuracy and speed were evaluated on a synthetic corpus. The experimental CPU implementation was also compared with official OpenCV on 16 real industrial photographs across six hosts. Those photographs return no markers under the tested settings; this measures background latency and output compatibility, not detection recall on real images.
+> The expanded GPU evaluation includes annotated synthetic scenes, external compatibility inputs and 16 real industrial photographs. The photographs return no markers under the tested settings; this measures background latency and output compatibility, not detection recall on real images. The [steady-state report](docs/gpu-steady-state-report.md) distinguishes the new contour route from historical GPU results. The optimized CPU implementation was also evaluated across six hosts.
 
 ## What it does
 
-- Detection runs entirely on the GPU, from preprocessing through subpixel corner refinement. `Detector` leaves the results on the device. In steady state `detect_async()` only issues kernels, so the synchronizing calls are `initialize()`, `download()`, and the first frame after the input dimensions or pitch change, where the stream is synchronized once to rebuild the buffer layout.
-- The kernel launch sequence for one frame is folded into a CUDA Graph. If you pass an explicit stream, every detection after the first takes a single launch.
-- The workspace is allocated at its worst-case size in `initialize()` and is not reallocated per frame. Peak usage is 17.51 MB with ArUco3 enabled and 414.51 MB with it disabled. Repeating detection 91 times does not increase the allocation count.
-- Detection results are cross-checked against the OpenCV CPU implementation. On the same corpus, precision is 100%, and on the Hybrid route the corners match the CPU baseline on 91 of 91 images ([Accuracy evaluation results](docs/accuracy-report.md)).
-- On four machines — DGX Spark GB10, Jetson AGX Orin, Jetson AGX Thor, and GeForce RTX 5070 Ti — the automated tests and all four Compute Sanitizer tools (memcheck, racecheck, initcheck, synccheck) pass.
+- Detection runs entirely on the GPU, from preprocessing through subpixel corner refinement. `Detector` leaves the results on the device. Steady-state `detect_async()` remains asynchronous on the host; an owned completion event orders reuse across streams. Initialization, readback and layout changes synchronize as described in the [lifetime contract](src/core/detector.md).
+- The kernel launch sequence for one frame is folded into a CUDA Graph. An explicit-stream steady submission launches the captured graph and records completion; changing the stream or layout rebuilds the graph.
+- The workspace is allocated for the configured limits in `initialize()` and is not reallocated per frame. Memory depends on the selected candidate extractor, image size and resource limits; the historical component route measured 17.51 MB with ArUco3 enabled and 414.51 MB with it disabled. These figures do not describe the new contour route.
+- Detection results are cross-checked against OpenCV and synthetic ground truth. The new contour route recovers CPU-detectable markers missed by the historical component extractor; see the [expanded quality evaluation](docs/gpu-steady-state-report.md).
+- The historical component route passed automated tests and all four Compute Sanitizer tools on Spark, Orin, Thor and RTX 5070 Ti. The new steady route's separately recorded validation covers Spark, Orin and RTX 4090; earlier runs on other GPUs do not validate the new implementation.
 
 ## Detection flow
 
@@ -35,7 +35,43 @@ Pose estimation is out of scope. The output corners are in the full-scale coordi
 
 ## Speed
 
-### GPU routes on synthetic images
+### Steady GPU presets with expanded CPU-quality coverage
+
+The new contour route preserves CPU-detectable markers missed by the original
+GPU extractor. It combines exact threshold, pyramid, histogram, candidate-grid
+and contour optimizations, with explicit `dgx-spark-steady` and
+`jetson-orin-steady` presets. **Quality improvement costs latency and memory;
+the new GPU does not beat the old GPU or optimized CPU in every condition.**
+The [full report](docs/gpu-steady-state-report.md) includes both losses and gains.
+
+For the same 16 industrial photographs, ArUco3 enabled, the following values are
+median per-image p50 times over three processes (20 warm-ups, 200 samples each).
+All routes return zero detections. CPU times include host results; resident GPU
+times exclude result download, while GPU E2E includes pageable input and results.
+
+| Machine | OpenCV CPU 1t | Optimized CPU 1t | OpenCV CPU 4t | Optimized CPU 4t | New GPU resident | New GPU E2E |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| DGX Spark GB10 | 2.984 ms | 1.882 ms | 1.395 ms | 0.817 ms | 3.405 ms | 3.464 ms |
+| Jetson AGX Orin | 6.892 ms | 4.518 ms | 2.928 ms | 2.080 ms | 3.037 ms | 3.723 ms |
+
+On Orin, resident GPU beats both one-thread CPU routes on all 16 images, with
+median per-image speedups of **2.328x over OpenCV** and **1.524x over optimized
+CPU**. Four-thread optimized CPU wins 15 images. On Spark, which retained
+substantial unrelated GPU work, optimized CPU wins all 16. Old-default GPU
+resident medians are 2.794 ms and 1.542 ms respectively, faster than the new
+route on these negative images but insufficient in the expanded positive-marker
+quality gate. Speedups are medians of per-image ratios, not ratios of table medians.
+
+The full report separates equal-budget and old-default comparisons, disabled
+ArUco3, detected-marker/empty controls, kernel times, p95/p99, memory and
+reproduction conditions. It does not claim a universal hardware limit.
+
+### Historical GPU routes on synthetic images
+
+These results describe the original component/extrema candidate extractor.
+The expanded [quality audit](tools/gpu_quality/audit.md) subsequently found
+CPU-detectable markers it misses. They are retained as historical measurements;
+they do not establish the quality or speed of the explicit `*-steady` presets.
 
 These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 4 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
 
@@ -91,7 +127,7 @@ The evaluation also includes ArUco3 disabled. Across both modes, both thread bud
 
 ## Accuracy
 
-The official OpenCV (CPU), Hybrid and CUDA-Resident routes were measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 12 combinations of 3 routes x 4 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
+The following historical comparison measured official OpenCV (CPU), Hybrid and the original CUDA-Resident route on 91 synthetic scenes with 480 ground truth items, across 12 combinations of 3 routes x 4 machines ([Accuracy evaluation results](docs/accuracy-report.md)). The expanded [GPU quality audit](tools/gpu_quality/audit.md) explains why this corpus alone is insufficient to establish CPU-equivalent quality.
 
 | Metric | Result |
 | --- | --- |
@@ -118,9 +154,32 @@ On the two machines with integrated GPUs, the host and device share the same phy
 
 ## Building and running
 
+### Steady GPU implementation
+
+With the pinned OpenCV development environment, select the evaluated preset:
+
+```bash
+cmake --preset dgx-spark-steady -DOpenCV_DIR=/opt/opencv/lib/cmake/opencv4
+cmake --build --preset dgx-spark-steady
+ctest --preset dgx-spark-steady --output-on-failure
+```
+
+Use `jetson-orin-steady` on Orin. These presets share the algorithm and select
+different explicit OpenCV resize descriptors. Revalidate the descriptor when
+changing OpenCV's HAL/compiler build. Ordinary presets retain the historical
+component extractor. For a core-only build without OpenCV, override both
+`ARUCO3CUDA_BUILD_REFERENCE=OFF` and `ARUCO3CUDA_BUILD_CPU_EXPERIMENT=OFF`.
+
+The expanded audit and benchmark set `DetectorConfig::max_candidates_ = 16384`
+and `max_markers_ = 1024` before initialization; the CLI equivalents are
+`--max-candidates 16384 --max-markers 1024`. These explicit limits do not change
+the default candidate budget. Overflow is reported and must not be accepted as
+a valid partial detection result. See the [evaluation report](docs/gpu-steady-state-report.md)
+and [benchmark runner](tools/gpu_quality/steady_benchmark.md) for reproduction.
+
 ### Experimental CPU implementation
 
-The `experiment/cpu-optimization` branch includes a host-only detector under
+The repository includes a host-only detector under
 [`cpu/`](cpu/cpu_detector.md). Its default route retains OpenCV's contour-based
 detection rules, while reusing workspaces, sharing threshold calculations,
 packing dictionary comparisons, precomputing exact-word matches, filtering

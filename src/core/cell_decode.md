@@ -80,8 +80,9 @@ validation is recorded separately. Local records are `build/gpu-study/otsu-orin/
 
 - Does the occupied-bin selector avoid material regressions on both targets
   across different histogram layouts and candidate counts?
-- Complete detector validation and paired timing of the final option remain
-  pending.
+- Complete detector validation and paired timing are recorded in the
+  [steady-state report](../../docs/gpu-steady-state-report.md); dense-workload
+  stage gains do not imply universal whole-detector gains.
 
 ## Provenance
 

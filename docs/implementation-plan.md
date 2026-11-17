@@ -6,7 +6,7 @@ This document collects in one place, for the CUDA implementation in this reposit
 
 ## Scope
 
-The scope covers the stage structure of detection, the main design decisions, the verification strategy, coverage, and cautions regarding measurement. The [benchmark summary](benchmark-report.md) and the [accuracy evaluation results](accuracy-report.md) are authoritative for the performance and accuracy numbers; this document quotes only what is needed to support its conclusions. Pose estimation is out of scope. The evaluation is limited to the synthetic corpus.
+The scope covers detection stages, design decisions, verification, coverage and measurement cautions. The [steady-state report](gpu-steady-state-report.md) records the new contour route; the [benchmark summary](benchmark-report.md) and [accuracy results](accuracy-report.md) retain historical component-route measurements. Pose estimation is out of scope. The expanded evaluation includes synthetic ground truth and unannotated photographic compatibility cases.
 
 ## Current state
 
@@ -53,14 +53,30 @@ historical result (local `measurements/2026-11-17-cpu-validation/validation.json
 CUDA path coverage is unchanged. Hardware and real-image limitations are
 recorded separately in the CPU reports.
 
-### What works
+### Steady GPU route
 
-- Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and subpixel refinement of the corners (S1 through S10) completes on the GPU. The results can be referenced while still in device buffers (S11), and `Detector::detect_async` returns without host synchronization. To use them on the host, retrieve them with `download()`.
+The explicit `dgx-spark-steady` and `jetson-orin-steady` presets combine ordered
+device contours, fused thresholding, demand-driven pyramid prefixes, exact
+density-selected Otsu, bounded candidate grids and immutable resize coefficients.
+The same algorithm runs on both targets; pinned OpenCV resize backend/FMA
+descriptors are explicit hardware options. Fresh ordinary presets retain the
+historical component route. See [ADR-0004](adr/0004-device-contours-for-cpu-quality.md)
+and the [current pipeline](design/detector-pipeline.md).
+
+Both ARM hosts completed the full 628-case Release suite: the sole inherited
+CPU-affinity fixture failure was corrected and separately verified. The final
+quality matrix also passes on RTX 4090. Detailed sanitizer, corpus, memory and
+performance scopes are in the [report](gpu-steady-state-report.md); these runs
+do not extend old Thor/RTX 5070 Ti validation to the new implementation.
+
+### Historical component route and shared API
+
+- Everything from downscaling and thresholding through candidate extraction, matching and subpixel refinement completes on the GPU. Steady unchanged-layout `detect_async` is host-asynchronous; first/layout-changing submission and resource transitions may synchronize. An owned event orders shared storage across streams. See the [lifetime contract](../src/core/detector.md). Host results are retrieved with `download()`.
 - When the caller passes an explicit stream, the kernel launch sequence for one frame is folded into a CUDA Graph. CUDA does not allow capture on the legacy default stream, so passing `nullptr` issues the kernels one stage at a time.
-- No device memory is allocated during detection. Peak workspace usage is 17.51 MB with the ArUco3 detection strategy enabled and 414.51 MB with it disabled. Detecting all 91 scenes of the synthetic corpus does not increase the allocation count.
+- No device memory is allocated during detection. Historical component-route peak workspace usage is 17.51 MB with ArUco3 enabled and 414.51 MB disabled. The new contour route's corresponding values are 27.78 MB and 902.64 MB at the same 4096-candidate budget. Neither route allocates during the 91-scene evaluation.
 - Two sample programs live under `examples/`. `generate_marker` renders a marker from the built-in dictionary and `detect_image` runs the full pipeline on it, so the public API has a runnable path that needs neither a camera nor an image library. Both are covered by the CLI tests, including the generate-then-detect round trip and the boundary where a marker below the ArUco3 lower bound is missed. `examples/CMakeLists.txt` also configures standalone against an installed package, which is the only form that exercises `find_package`.
-- The detector is reachable from outside C++. `libaruco3cuda_c.so` exposes 16 C functions, and the `python/aruco3cuda` package drives them with `ctypes`, so the Python side compiles nothing and needs no dependency outside the standard library. `examples/python/` mirrors the C++ samples option for option, and the tests compare their output. See [C ABI and Python binding](design/c-abi-and-python.md).
-- All 523 automated tests pass on all four machines below. Compute Sanitizer applies its four tools (memcheck / racecheck / initcheck / synccheck) to two executables, and all 8 combinations pass on all four machines.
+- The detector is reachable from outside C++. `libaruco3cuda_c.so` exposes 17 C functions, including the additive borrowed failure-word getter. Python uses `ctypes` with no compiled extension. The C++ and Python samples have matching CLI behavior. See [C ABI and Python binding](design/c-abi-and-python.md).
+- The historical component implementation passed 523 automated tests on the four machines below, and four sanitizer tools on two executables. Current steady-route validation is recorded separately above.
 
 | Machine | Architecture | GPU | Compute Capability | CUDA | CPU |
 | --- | --- | --- | --- | --- | --- |
@@ -224,18 +240,50 @@ For implementations that transcribe a rule, we also confirm that breaking the ru
 
 ### Coverage
 
+The new steady GPU implementation's host coverage was measured on RTX 4090
+with CUDA 12.6, GCC 13.3, the GENERIC resize profile, native CPU tuning, Debug
+and `ARUCO3CUDA_ENABLE_COVERAGE=ON`. The isolated final source export includes
+only the allowed-affinity test correction. All 628 configured cases completed:
+624 passed and four ARM/Kleidi-specific cases were explicitly not applicable.
+There were no failures or timeout overrides. Atomic counters were used and
+build-time test-discovery counters were cleared before the run.
+
+| Host coverage scope | Lines (C0) | Branch edges (C1) |
+| --- | ---: | ---: |
+| All included project C++ units | 5850/8579 (68.2%) | 5336/14007 (38.1%) |
+| `src/core/detector.cpp` | 417/505 (82.6%) | 331/636 (52.0%) |
+| C ABI implementation | 226/277 (81.6%) | 83/216 (38.4%) |
+
+Function coverage is 81.7%; gcovr decision coverage is 1612/2378 (67.8%), a
+different metric from branch-edge coverage. The 100% goals are not met. Of the
+2729 uncovered lines, 2065 belong to seven standalone tool/benchmark entry
+points not invoked by CTest. They remain in the denominator. Other gaps include
+graph/event failure combinations beyond the bounded injected sites, C ABI
+null/exception paths and ARM topology branches on x86. Gcov reports 4488 throw
+edges; exceptions and unreachable branches were not filtered out to improve
+the percentages. The earlier CPU-only figures above have a narrower scope and
+must not be compared directly with these totals.
+
+Local `build/gpu-study/rtx4090-coverage-v2/` retains exact commands, source and
+fixture hashes, full logs, gcovr 7.0 HTML/JSON and per-file reasons. These are
+ignored outputs, not files in a fresh checkout. Configuration uses the same
+steady options as the release build with Debug/coverage enabled, followed by
+the maintained `coverage-report` target. CUDA translation units, including
+their host helpers, remain outside this host-only metric; their input partitions
+and four-tool sanitizer evidence are recorded in the [steady report](gpu-steady-state-report.md).
+
 C0 and C1 are measured with the `coverage` preset. `cmake --build build/coverage --target coverage-report` runs `ctest` and then aggregates with `gcovr`. C0 and C1 target 100% but have not reached it. Only C++ translation units are covered; `.cu` files are compiled by nvcc and therefore fall outside gcov's measurement. Not only the kernels in `src/core` but also the host-side `reserve_*` and `*_workspace_bytes` in the same files are outside the measurement. These are called from each test in `test/reference` in both normal and abnormal cases, and the invalid-argument and insufficient-capacity paths are pinned by tests, but they are not counted as lines.
 
 The breakdown of unreached lines is as follows.
 
 | Category | Content | Handling |
 | --- | --- | --- |
-| Failure to acquire external resources | `popen` failure, `ofstream` write failure, `cudaMalloc` failure | Out of scope. Cannot be reproduced without a fault injection mechanism |
+| Failure to acquire external resources | `popen` failure, `ofstream` write failure, `cudaMalloc` failure | General OS failures remain outside the current fixtures. Detector allocation failure during reinitialization now has a GNU linker-wrap fixture; do not classify that path as untested |
 | Failures inside OpenCV | `cv::imwrite` failure, abnormal input to `getPerspectiveTransform` | Out of scope. Depends on OpenCV's internal state and cannot be induced from outside |
-| CUDA API failure paths | Failure of `cudaGetDeviceProperties` or `cudaMemcpy` | Out of scope. The `check_cuda` recording path itself is verified by separate tests |
+| CUDA API failure paths | Device discovery, transfers, event recording and partial dispatch | The `check_cuda` recording path and selected detector lifetime failures have separate tests. The new deliberate-error executable injects bounded allocation/event/launch-check/copy failures; this does not cover every CUDA context failure |
 | Unreachable defensive branches | Lower bound on rank, default handling for values not in the enumeration | Out of scope. Unreachable by specification, but kept as a defense against future changes |
 | CUDA device code | Kernels for self-diagnosis | gcov cannot measure device code. Paths are confirmed through input partitioning and boundary values |
-| Alternate route for candidate grouping | Re-identification using `close_contours_` | Out of scope. We have not been able to synthesize a scene where identification of the representative candidate fails and separated candidates remain in the same group |
+| Alternate route for candidate grouping | Re-identification using close contours | Now exercised by the external compatibility matrix, including `failmask9` and `regression_2492`; device paths remain outside gcov. See the [retry design](../src/core/candidate_retry.md) |
 | Reordering of identical IDs | The comparison for equal IDs when sorting detection results | Out of scope. The synthetic corpus never places the same ID twice in one scene |
 
 The CLI layer in `main.cpp` is included in the measurement by launching the executable from the ctest cases in `test/cli/`.
@@ -250,7 +298,7 @@ The CLI layer in `main.cpp` is included in the measurement by launching the exec
 
 **When the difference is small, the break-even frames for the startup cost carry no meaning.** The GPU routes take time before the first frame's result is produced (on the DGX Spark, 171.0 ms for Hybrid, 174.0 ms for CUDA-Resident, and 3.3 ms for CPU). The number of frames needed to break even is the difference in startup cost divided by the difference in steady-state time, but for 1280x720 with 4 markers on the DGX Spark, the steady-state time differs by only 0.696 ms for CUDA-Resident against 0.699 ms for CPU, and the denominator is buried in measurement variance. Break-even frames carry meaning only in scenes where the steady-state difference is large enough.
 
-**On integrated GPUs, the page cache affects memory decisions.** Because device memory and host memory are the same, the free amount returned by `cudaMemGetInfo` corresponds to the free host memory. As the page cache grows, allocation fails and measured values fluctuate. Drop the page cache before measuring.
+**On integrated GPUs, record available device memory as well as host memory.** During the steady-state study, `cudaMemGetInfo` tracked free host memory much more closely than Linux `MemAvailable`, and allocations failed while substantial reclaimable cache remained. The precise allocation-failure cause was not established. Preserve failed/skipped records and verify actual device execution before accepting a rerun. On shared hosts, do not flush the system-wide page cache or change other workloads to obtain favorable results; retain memory/load snapshots and state that the measurements are not isolated. Cache control belongs only to a separately declared isolated-host experiment.
 
 **Separate the input's memory type as a measurement axis.** Managed memory is 6.4 to 30 times slower on discrete GPUs, and even on integrated GPUs it stays at 1.01 to 1.27 times, never faster than pageable.
 
@@ -265,7 +313,7 @@ The CLI layer in `main.cpp` is included in the measurement by launching the exec
 
 ## Open questions
 
-- Whether the alternate route for candidate grouping (`close_contours_`) becomes necessary on real images. We have not been able to create a matching scene in the synthetic corpus.
+- Ordered CPU grouping and GPU transitive proximity groups can differ on sufficiently long candidate chains. Targeted chain tests and external retry cases cover demonstrated failures, not every possible scene.
 - Why `M-Pinned` is slower than `M-Pageable` on the DGX Spark. That DMA offers no advantage on an integrated GPU can be explained, but the amount of the slowdown has not been accounted for.
 - In what order to expand the supported dictionaries. The policy is in [dictionary policy](dictionaries.md).
 - The acquisition and distribution conditions if real images are included in the corpus.

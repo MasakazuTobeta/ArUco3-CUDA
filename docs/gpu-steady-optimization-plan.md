@@ -21,14 +21,17 @@ storage, following the [measurement policy](measurements/README.md).
 
 ## Current state
 
-This is an active experiment, not a claim of achieved GPU speedup. A frozen
+Implementation and evaluation are complete in the
+[steady-state report](gpu-steady-state-report.md), which records quality gains,
+conditional speed gains and regressions. This is not a universal speedup claim. A frozen
 baseline source export and Release build are retained locally under
 `build/gpu-study/` and `build/gpu-baseline/`. The baseline export precedes every
 optimization edit.
 
-The GPU already reuses workspaces, packs dictionary words, parallelizes corner
-refinement and captures the launch sequence in a CUDA Graph. CPU gains from
-those mechanisms cannot be counted again. Remaining opportunities include:
+At the start of the experiment, the GPU already reused workspaces, packed
+dictionary words, parallelized corner refinement and captured the launch
+sequence in a CUDA Graph. CPU gains from those mechanisms cannot be counted
+again. The initial hypotheses were:
 
 | Experiment | Work to remove | Required guard |
 | --- | --- | --- |
@@ -61,6 +64,49 @@ quality. Faster execution of the unchanged extractor does not satisfy the goal.
 All 16 industrial photographs return zero detections on all three routes in
 both modes. These are negative compatibility checks, not positive recall
 evidence. Local baseline audit records are `build/gpu-study/quality-baseline-*.jsonl`.
+
+The device-contour prototype and corrected Euclidean-perimeter grouping now
+recover all CPU-detected truths in the 96-scene corpus. Unique-scene true-positive
+counts are CPU 113 / GPU 118 with ArUco3 on, and CPU 124 / GPU 127 with it off,
+with zero false positives and no per-truth corner-error degradation on shared
+detections. The default 118-call sequence also passes on Orin. The larger
+external matrix exposed missing close-contour retries; a device-only retry
+prototype passes the identified critical cases and the complete external matrix.
+See [ADR-0004](adr/0004-device-contours-for-cpu-quality.md).
+
+The final combined steady preset passes the Spark, Orin and RTX 4090 quality
+gates, each with 2,398 audit
+calls (38 matrix cases, 11 configuration variants and targeted close-marker
+chains) plus 182 historical-image evaluations across both ArUco3 modes.
+Spark GPU observations and ground-truth metrics match the preceding validated
+control exactly. External compatibility recovers all 278 CPU detections across
+17 Dictionaries and both modes; all 16 industrial photographs remain empty.
+The worst positive common-truth corner delta in configuration probes is about
+3.1e-6 pixels, below the explicitly recorded 0.001-pixel numerical classification
+threshold on ARM (the x86 maximum is 6.1e-5 pixels). These results use 16,384
+candidates and 1,024 markers. See the [final evaluation record](gpu-steady-state-report.md).
+
+The selected candidate combines exact fused thresholding, requested pyramid
+levels, density-selected Otsu, bounded 512-block candidate stages, parallel
+contour counting, warp approximation/materialization with eligible-edge jump
+preparation, and immutable Kleidi-only resize coefficients. Explicit ARM HAL
+profiles preserve pinned OpenCV rounding: SVE128/SEPARATE on Spark and NEON/FUSED
+on Orin. GENERIC was separately checked on RTX 4090. Named CMake strategies and
+compiled metadata retain comparison controls and do not silently identify
+hardware-specific tuning as a common algorithm.
+
+Adversarial review then found two inherited lifecycle defects: stream changes
+did not order pending work, and failed reinitialization after dictionary arena
+growth could retain stale state. An owned completion event and explicit
+resource-transition invalidation address these defects. Six isolated fault
+fixtures pass on all three GPUs. The final combined validation and timings use
+the subsequent source freeze, including all completion-event API overhead.
+
+
+Resource limits are part of the measured configuration. A full-resolution
+checkerboard generates 5,460 raw quad candidates, exceeding the 4,096 default.
+The broader audit uses an explicit 16,384 budget and retains the original
+overflow as a resource-limit result. Silent truncation is never quality success.
 
 ### Work and validation order
 
@@ -110,7 +156,8 @@ before a changed-output algorithm is accepted.
 
 ## Open questions
 
-- Does the existing component/extrema extractor meet the expanded quality gate?
+- The existing component/extrema extractor fails the expanded quality gate;
+  it remains an explicit historical performance control.
 - Which CPU-inspired optimizations survive GPU scheduling and memory costs?
 - Several available GPUs currently run substantial unrelated workloads. Final
   claims must state the measured load conditions and repeatability limits.

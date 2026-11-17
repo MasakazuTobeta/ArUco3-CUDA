@@ -26,14 +26,16 @@ and rounding, and writes its own pixel in each output plane. All threads,
 including those outside a partial image tile, reach all three barriers before
 any early return. Duplicate rounded window sizes remain separate outputs.
 
-The prototype is selected at compile time with
-`ARUCO3CUDA_ENABLE_FUSED_THRESHOLD=1`; its default is zero pending correctness and
-performance validation. `ARUCO3CUDA_FUSED_THRESHOLD_MAX_WINDOW_PX` defaults to 63
+The steady presets select `ARUCO3CUDA_THRESHOLD_STRATEGY=FUSED_AUTO`; ordinary
+builds retain the separable control. The earlier
+`ARUCO3CUDA_ENABLE_FUSED_THRESHOLD=1` spelling is a compatibility option.
+`ARUCO3CUDA_FUSED_THRESHOLD_MAX_WINDOW_PX` defaults to 63
 and controls the experimental crossover limit. The block side retains
 `DetectorConfig::cuda_block_dim_`. The fused launch additionally requires at most
 48 KiB of dynamic shared memory; the bounded tile sum then fits in 32 bits.
-Larger windows use the separable route. These switches are experimental build
-controls, not a final public strategy API or measured selection rule.
+Larger windows use the separable route. These are explicit build controls;
+the [strategy record](../../cmake/ArUco3CudaStrategies.md) and
+[whole-detector evaluation](../../docs/gpu-steady-state-report.md) retain their scope.
 
 Both routes retain the existing workspace allocation layout so the experiment
 does not combine kernel changes with allocation changes. The fused path does
@@ -140,15 +142,15 @@ binary hashes, and host telemetry remain local under
 - Preserve exact threshold pixels and asynchronous stream behavior.
 - Reduce redundant memory traffic and launches where measured beneficial.
 - Keep the previous route available for accuracy and performance ablation.
-- Expose a final strategy/crossover control if the prototype is retained.
+- Retain explicit strategy and crossover controls in evaluated presets.
 
 ## Open questions
 
 - Shared-memory prefix construction has serial row/column work and may cost more
   than it saves, especially for large halos or small output blocks.
 - Shared-memory occupancy and the best crossover can differ between devices.
-- Detector end-to-end performance and final strategy selection remain pending;
-  these two-device primitive diagnostics do not demonstrate a whole-pipeline gain.
+- The final combined detector is evaluated separately in the steady-state
+  report; isolated primitive gains must not be presented as whole-pipeline gains.
 
 ## Provenance
 

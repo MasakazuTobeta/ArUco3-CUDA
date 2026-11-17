@@ -97,7 +97,9 @@ oracle grids require this distinction. The pinned Orin GCC 9.4 build uses
 select this arithmetic. Scalar vertical and fast-path coordinates use FMA in
 both builds. Benchmark builds explicitly set and record the value. `AUTO` is currently accepted only with `GENERIC`; ARM HAL requires an explicit
 choice. The OpenCV binary can have been built by a different compiler from this
-library, so exact public-API tests remain mandatory. The default remains `GENERIC` pending cross-hardware validation.
+library, so exact public-API tests remain mandatory. The ordinary default remains
+`GENERIC`; evaluated ARM steady presets select their validated descriptors
+explicitly rather than guessing an arbitrary linked OpenCV build.
 
 The matching-profile test requires byte equality with public `cv::resize` using
 `INTER_LINEAR`, including random strided ROIs, vector tails, block recalibration,

@@ -73,8 +73,8 @@ demand pyramid, density-selected Otsu with cutoff 96, persistent candidate grid
 with 512 blocks, edge aggregation, warp approximation/materialization,
 eligible-edge compaction, and Kleidi-only precomputed coefficients.
 `ARUCO3CPU_NATIVE=ON` makes the paired optimized CPU build match the intended
-performance baseline. These are explicit candidate presets; the combined quality
-and performance acceptance record is still pending. Fresh build defaults remain
+performance baseline. The [combined quality and performance record](../docs/gpu-steady-state-report.md)
+retains both gains and losses. Fresh build defaults remain
 legacy, and `CAPACITY` remains available as a dense-workload control.
 
 The 512-block choice balances sparse and dense work; a stress case with 16384

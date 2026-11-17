@@ -179,9 +179,11 @@ overflow. GPU execution, Compute Sanitizer, full detector quality, and timings
 must be recorded separately for each revision; host topology agreement does not
 establish these. The initial integrated contour route recovered CPU detections
 in the 118-call quality sequence, while separate grouping/corner-quality work
-remained necessary. That full detector result does not yet validate the later
-compact-root and cooperative-RDP integration. A separate parallel-count snapshot
-is being evaluated against that frozen integration.
+remained necessary. That initial result alone did not validate the later
+compact-root, cooperative-RDP and parallel-count integrations. Their subsequent
+module and full-pipeline gates are recorded below; the final combined
+[steady-state report](../../docs/gpu-steady-state-report.md) covers quality,
+sanitizers, memory and both favorable and unfavorable timing results.
 
 The compact-root/cooperative-RDP module passes ten maintained contour tests plus
 `ContourApproxTest.cooperative_and_serial_vertices_match_public_oracle`. The

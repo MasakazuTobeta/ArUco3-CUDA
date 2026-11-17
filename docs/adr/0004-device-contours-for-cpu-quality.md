@@ -1,6 +1,6 @@
 # ADR-0004: Use device contours to recover CPU-equivalent candidate coverage
 
-- Status: Implemented in explicit steady presets; fresh-default promotion pending
+- Status: Accepted for explicit steady presets; historical fresh defaults retained
 - Date: 2026-11-17
 - Revisits: [ADR-0003](0003-candidate-extraction-approach.md)
 
@@ -168,14 +168,16 @@ a performance frontier. See [strategy controls](../../cmake/ArUco3CudaStrategies
 
 ## Open questions
 
-- Does the final combined route, including lifecycle error handling, meet quality,
-  practical latency and memory targets on both architectures?
+- The final combined route passes the expanded quality gate on Spark, Orin and
+  RTX 4090. Measured latency and memory costs, including unfavorable cases, are
+  recorded in the [steady-state report](../gpu-steady-state-report.md). Which
+  application workloads justify the new quality/memory/latency tradeoff?
 - What application-specific candidate/marker budgets are appropriate for textured
   full-resolution images? The audited 16,384 candidate limit is not a new default.
 - Are additional CPU HAL descriptors or grouping compatibility changes needed
   for OpenCV builds and contour arrangements outside the maintained corpus?
-- Should any explicit steady strategy become a fresh-build default after the
-  complete acceptance record, including unfavorable dense/empty cases?
+- Fresh defaults remain historical controls: the final measurements do not
+  justify a universal speed claim or automatic promotion of every strategy.
 
 ## Related records
 

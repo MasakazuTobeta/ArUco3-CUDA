@@ -36,8 +36,9 @@ The Python package reaches the C++ core only through the C ABI. It also loads
 the CUDA runtime directly, for the one thing the detector deliberately does not
 do for its caller: allocating the device image and creating the stream.
 
-- 17 functions are exported, and nothing else. The internal C++ symbols of the
-  static libraries linked in are hidden with `--exclude-libs,ALL`; without it
+- 17 project C functions are exported. The internal project C++ symbols of the
+  static libraries linked in are hidden with `--exclude-libs,ALL`; toolchains may
+  still emit weak standard-library helper symbols. Without the exclusion option
   they were all re-exported, because `CXX_VISIBILITY_PRESET` covers only the
   shared library's own translation unit.
 - The C enumerators are pinned to the C++ ones with `static_assert`, so
@@ -57,6 +58,17 @@ do for its caller: allocating the device image and creating the stream.
 - Python tests run from `ctest`, split between tests that need no device and
   tests that exercise detection and device diagnostics. The samples add 22 more, including three that compare the
   Python and C++ renderers byte for byte.
+
+### Installed CUDA runtime dependency
+
+The installed C ABI depends on the CUDA runtime but not on OpenCV. Unlike the
+build tree, installation does not retain a build-machine CUDA RPATH. Configure
+the system loader for the deployed CUDA runtime, or set `LD_LIBRARY_PATH` to its
+library directory before linking or loading an installed C consumer. For example,
+`LD_LIBRARY_PATH=/usr/local/cuda/lib64` is suitable when that directory contains
+the required runtime. A missing runtime can cause both downstream linker errors
+and loader errors even when `find_package(aruco3cuda)` succeeds. The standalone
+C++ core target also propagates its CMake CUDA runtime dependency.
 
 ### Submission lifetime and reinitialization
 
