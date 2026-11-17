@@ -6,6 +6,22 @@ This document defines how we evaluate the correctness, performance, device memor
 
 This document defines how we measure. The results themselves are in the [Benchmark Report](benchmark-report.md) and the [Accuracy Evaluation Results](accuracy-report.md).
 
+The separate [CPU optimization experiment](design/cpu-optimization.md) compares
+an optional host-only detector to that same pinned OpenCV baseline. Its
+[measurement report](cpu-benchmark-report.md) specifies its extended corpus,
+one/four-thread budgets, paired measurements, latency/throughput separation and
+host-memory scope. It does not alter the route definitions or historical CUDA
+results below.
+The [steady-state follow-up](cpu-steady-state-report.md) adds exact-output
+regional computation, immutable dictionary precomputation, degraded inputs and
+independent-frame workers. Startup is not an acceptance gate; no tracking is
+allowed. Worker service latency excludes queue wait and is distinct from
+saturated multi-frame throughput.
+The [real-background evaluation](cpu-real-background-report.md) separately tests
+unchanged CPU code on public industrial photographs, including configured
+zero-detection cases. Its source selection and measurement conditions are
+recorded before execution.
+
 ## Scope
 
 The comparison baseline is the OpenCV ArUco3 detection strategy (CPU), and the subject of comparison is the CUDA implementation in this repository. We measure on the following four machines.
@@ -19,7 +35,9 @@ The comparison baseline is the OpenCV ArUco3 detection strategy (CPU), and the s
 
 The configuration of three integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally. On an integrated GPU, the host and the device share the same physical memory, so transfer costs differ from a discrete GPU. In our measurements, however, transfer cost is small even on the discrete GPU, and it comes out larger on the integrated-GPU DGX Spark GB10. We have not identified the reason. Input memory kind does divide integrated and discrete clearly: managed memory is 6.4 to 30 times slower on the discrete GPU, while on integrated GPUs it stays within 1.01 to 1.27 times.
 
-The input is a synthetic corpus. We do not handle real-image datasets. Pose estimation is also out of scope.
+The CUDA evaluation below uses a synthetic corpus; its historical results do not
+include real-image datasets. The separate CPU photographic follow-up is linked
+above. Pose estimation is also out of scope.
 
 ## Current state
 
@@ -154,7 +172,7 @@ For the synthetic corpus, the above are satisfied. Reproducibility on real image
 - Reproduction commands
 - The benchmark report and the accuracy evaluation results
 
-Large images and videos are not committed directly to the Git repository; we record their storage location and checksum in a manifest.
+Large images and videos are not committed directly to the Git repository; we record their storage location and checksum in a manifest. The new CPU experiments keep generated measurement rows, logs, environment captures and machine-readable result summaries in local storage, while evaluation conditions, conclusions and reproduction sources remain in Git. Previously tracked GPU measurement records remain unchanged; their removal is a separate follow-up under [issue #23](https://github.com/MasakazuTobeta/ArUco3-CUDA/issues/23).
 
 ## Goals
 

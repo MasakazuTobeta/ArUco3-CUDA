@@ -15,6 +15,19 @@ docker/.env
 *.mp4
 *.avi
 
+# New CPU experiment output stays local; keep reports and reproduction sources.
+# Removing previously tracked GPU measurement logs is a separate PR (issue #23).
+/docs/measurements/*-cpu-*/**
+!/docs/measurements/*-cpu-*/**/
+!/docs/measurements/*-cpu-*/**/*.md
+!/docs/measurements/*-cpu-*/**/*.py
+!/docs/measurements/*-cpu-*/**/*.sh
+!/docs/measurements/*-cpu-*/**/*.cpp
+!/docs/measurements/*-cpu-*/**/*.hpp
+!/docs/measurements/*-cpu-*/**/*.patch
+!/docs/measurements/*-cpu-*/**/Dockerfile
+!/docs/measurements/*-cpu-*/**/qa-source-hashes.json
+
 # Downloaded packages. clang_format-*.whl was committed by accident in
 # e55bf2f; the toolchain uses clang-format-18 from the container, never a
 # wheel from here.

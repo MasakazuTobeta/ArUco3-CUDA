@@ -78,7 +78,7 @@ if(ARUCO3CUDA_ENABLE_COVERAGE)
   # Without disabling optimization, branches disappear and C1 no longer matches
   # reality.
   target_compile_options(aruco3cuda_coverage INTERFACE
-    "$<$<COMPILE_LANGUAGE:CXX>:--coverage;-O0;-g;-fno-inline>")
+    "$<$<COMPILE_LANGUAGE:CXX>:--coverage;-O0;-g;-fno-inline;-fprofile-update=atomic>")
   target_link_options(aruco3cuda_coverage INTERFACE --coverage)
 else()
   # Keep the target name resolvable even when the option is off, so that the
@@ -115,6 +115,7 @@ function(aruco3cuda_add_coverage_target)
             --filter "${PROJECT_SOURCE_DIR}/tools/"
             --filter "${PROJECT_SOURCE_DIR}/bench/"
             --filter "${PROJECT_SOURCE_DIR}/hybrid/"
+            --filter "${PROJECT_SOURCE_DIR}/cpu/"
             --exclude ".*/generated/.*"
             --exclude ".*/test/.*"
             --decisions

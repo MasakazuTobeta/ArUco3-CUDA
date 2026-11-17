@@ -37,6 +37,9 @@ aruco3cuda_add_sanitizer_tests(aruco3cuda_unit_tests)
 if(ARUCO3CUDA_BUILD_REFERENCE)
   add_subdirectory(reference)
   add_subdirectory(cli)
+  if(ARUCO3CUDA_BUILD_CPU_EXPERIMENT)
+    add_subdirectory(cpu)
+  endif()
 endif()
 
 # The Python tests need neither OpenCV nor the reference implementation, so they

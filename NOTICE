@@ -8,10 +8,14 @@ This product includes software developed as part of the OpenCV project
 OpenCV, version 4.14.0, commit 0654a42e19215ef25b1d367d822f3c630447e7c7
 --------------------------------------------------------------------------------
 
-This repository contains no copy of OpenCV source code. It does contain code
-whose arithmetic, evaluation order and rounding were reproduced from OpenCV so
-that the CUDA implementation can be checked for bit-exact agreement against a
-host reference. The files concerned are recorded in docs/code-provenance.md.
+This repository includes independent reimplementations of OpenCV behavior and
+adapted portions of permissively licensed OpenCV source. The monitored CPU
+refinement arithmetic in cpu/cpu_sparse_pyramid.cpp is adapted from the BSD
+cornersubpix.cpp implementation. The CPU contour scanner is adapted from the
+Apache-2.0 contours_truco.cpp implementation. Other reproduced arithmetic,
+evaluation order and rounding support compatibility checks against the CPU
+baseline. The files and nature of each reuse are recorded in module sidecars
+and docs/code-provenance.md.
 
 OpenCV 4.x is distributed under the Apache License 2.0, but a number of its
 files retain their original 3-clause BSD headers. The files this project
@@ -82,6 +86,7 @@ The 3-clause BSD license text carried by those files is reproduced below.
 Files carrying only a pointer to the OpenCV top-level LICENSE, which is the
 Apache License 2.0 for the 4.x branch:
 
+  modules/imgproc/src/contours_truco.cpp
   modules/objdetect/src/aruco/aruco_detector.cpp
   modules/objdetect/src/aruco/aruco_dictionary.cpp
   modules/objdetect/include/opencv2/objdetect/aruco_detector.hpp
