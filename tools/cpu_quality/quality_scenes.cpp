@@ -217,8 +217,7 @@ cv::Mat render_frame(const FrameSpec& spec, const cv::aruco::Dictionary& diction
                             cv::Scalar(0));
         warped.copyTo(image, mask);
         if (spec.occlusion_fraction_ > 0.0) {
-            const cv::Rect bounds = cv::boundingRect(
-                    std::vector<cv::Point2f>(marker.corners_.begin(), marker.corners_.end()));
+            const cv::Rect bounds = cv::boundingRect(marker.corners_);
             const int covered_width =
                     std::max(1, static_cast<int>(bounds.width * spec.occlusion_fraction_));
             const cv::Rect covered(bounds.x + bounds.width / 3, bounds.y, covered_width,

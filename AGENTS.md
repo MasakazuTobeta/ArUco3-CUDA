@@ -49,6 +49,10 @@ When rules conflict, apply them in this order.
 
 When a failure that could recur or an environment-specific caveat comes to light during work, add the cause and the correct procedure to this section.
 
+### GCC 9 quality-renderer bounding box
+
+- GCC 9.4 at `-O3` diagnosed potential null dereferences when `boundingRect` received a temporary vector copied from four stored corners. Passing the existing `std::array` directly removes the allocation and diagnostics while retaining identical pixels across 288 rendered frames. Keep warnings as errors; do not globally suppress null-pointer diagnostics to build the quality audit.
+
 ### Initializing an empty repository through a GitHub App
 
 - In a completely empty repository, blob creation through the Git Data API fails with `409 Git Repository is empty`.
