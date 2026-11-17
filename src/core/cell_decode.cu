@@ -64,7 +64,9 @@ struct OtsuCandidate {
 /// below 1.07e9 and even multiplied by 255 it reaches only 2.7e11, which fits within 2^53.
 /// **Every partial sum is therefore exactly representable in double precision, no rounding ever
 /// occurs, and changing the order of the additions leaves the result bit-identical.**
-__device__ double otsu_center(const int* histogram, double scale, double* warp_partial) {
+template <bool CountOccupied>
+__device__ double otsu_center(const int* histogram, double scale, double* warp_partial,
+                              int* occupied_warps) {
     double partial = 0.0;
     for (int i = static_cast<int>(threadIdx.x); i < kHistogramBins;
          i += static_cast<int>(blockDim.x)) {
@@ -78,6 +80,13 @@ __device__ double otsu_center(const int* histogram, double scale, double* warp_p
     const int warp = static_cast<int>(threadIdx.x) / kWarpSize;
     if (lane == 0) {
         warp_partial[warp] = partial;
+    }
+    if constexpr (CountOccupied) {
+        static_assert(kDecodeThreads == kHistogramBins);
+        const int occupied = __popc(__ballot_sync(0xffffffffU, histogram[threadIdx.x] != 0));
+        if (lane == 0) {
+            occupied_warps[warp] = occupied;
+        }
     }
     __syncthreads();
     double total = 0.0;
@@ -95,10 +104,27 @@ __device__ double otsu_center(const int* histogram, double scale, double* warp_p
 /// multiplies it by yet another q1. mu1 is thus a path-dependent quantity that depends on how
 /// many iterations in a row were skipped, and any scheme that builds q1 with a parallel scan and
 /// then reconstructs mu1 is guaranteed to break.
+template <bool EnableFixedPoint>
 __device__ void otsu_recurrence(const int* histogram, double scale, OtsuState* state) {
     double mu1 = 0.0;
     double q1 = 0.0;
+    [[maybe_unused]] bool zero_fixed_point = false;
+    [[maybe_unused]] bool valid = false;
     for (int i = 0; i < kHistogramBins; ++i) {
+        [[maybe_unused]] const bool zero = histogram[i] == 0;
+        if constexpr (EnableFixedPoint) {
+            // Identical inputs to an empty-bin fixed point yield the same state.
+            // Guarded states are reused only after their multiplication settles.
+            if (zero && zero_fixed_point) {
+                state->q1_[i] = q1;
+                state->candidate_[i] = valid;
+                if (valid) {
+                    state->mu1_[i] = mu1;
+                }
+                continue;
+            }
+        }
+        [[maybe_unused]] const double previous_mu1 = mu1;
         const double p_i = static_cast<double>(histogram[i]) * scale;
         mu1 *= q1;
         q1 += p_i;
@@ -106,11 +132,19 @@ __device__ void otsu_recurrence(const int* histogram, double scale, OtsuState* s
         state->q1_[i] = q1;
         if (fmin(q1, q2) < kOtsuGuard || fmax(q1, q2) > 1.0 - kOtsuGuard) {
             state->candidate_[i] = false;
+            if constexpr (EnableFixedPoint) {
+                valid = false;
+                zero_fixed_point = zero && mu1 == previous_mu1;
+            }
             continue;
         }
         mu1 = (mu1 + (static_cast<double>(i) * p_i)) / q1;
         state->mu1_[i] = mu1;
         state->candidate_[i] = true;
+        if constexpr (EnableFixedPoint) {
+            valid = true;
+            zero_fixed_point = zero && mu1 == previous_mu1;
+        }
     }
 }
 
@@ -189,6 +223,9 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     }
 
     __shared__ int histogram[kHistogramBins];
+#if defined(ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT) && ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT == 2
+    __shared__ int occupied_warps[kDecodeWarps];
+#endif
     // Shared memory for the three Otsu phases: the state left by the recurrence and the scratch
     // space of the reductions.
     __shared__ OtsuState otsu_state;
@@ -258,9 +295,32 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     // recurrence runs sequentially on thread 0.
     if (!uniform) {
         const double pixel_scale = 1.0 / static_cast<double>(pixels);
-        const double center = otsu_center(histogram, pixel_scale, reduction);
+#if defined(ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT) && ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT == 2
+        const double center = otsu_center<true>(histogram, pixel_scale, reduction, occupied_warps);
+#else
+        const double center = otsu_center<false>(histogram, pixel_scale, reduction, nullptr);
+#endif
         if (threadIdx.x == 0U) {
-            otsu_recurrence(histogram, pixel_scale, &otsu_state);
+#if defined(ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT) && ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT
+#if ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT == 2
+#ifndef ARUCO3CUDA_OTSU_FIXED_POINT_MAX_OCCUPIED_BINS
+#define ARUCO3CUDA_OTSU_FIXED_POINT_MAX_OCCUPIED_BINS 96
+#endif
+            int occupied = 0;
+            for (int warp = 0; warp < kDecodeWarps; ++warp) {
+                occupied += occupied_warps[warp];
+            }
+            if (occupied <= ARUCO3CUDA_OTSU_FIXED_POINT_MAX_OCCUPIED_BINS) {
+                otsu_recurrence<true>(histogram, pixel_scale, &otsu_state);
+            } else {
+                otsu_recurrence<false>(histogram, pixel_scale, &otsu_state);
+            }
+#else
+            otsu_recurrence<true>(histogram, pixel_scale, &otsu_state);
+#endif
+#else
+            otsu_recurrence<false>(histogram, pixel_scale, &otsu_state);
+#endif
         }
         __syncthreads();
         const int found = otsu_argmax(otsu_state, center, best);
