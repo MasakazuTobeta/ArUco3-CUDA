@@ -988,4 +988,77 @@ TEST(DetectorTest, completion_survives_destroyed_producer_stream) {
     EXPECT_EQ(actual.ids_, std::vector<int>({kMarkerId}));
 }
 
+// Replays changing frames at one device pointer on direct and captured routes.
+// The configured border margin applies to segmentation pixels, before refinement.
+TEST(DetectorTest, border_margin_matches_cpu_during_changing_frame_replay) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP();
+    }
+    const auto dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
+    for (const bool aruco3 : {false, true}) {
+        DetectorConfig config;
+        config.max_width_px_ = 640;
+        config.max_height_px_ = 480;
+        config.min_distance_to_border_px_ = 32;
+        config.use_aruco3_detection_ = aruco3;
+        config.corner_refine_method_ = aruco3 ? aruco3cuda::CornerRefineMethod::kSubpix
+                                              : aruco3cuda::CornerRefineMethod::kNone;
+        cv::aruco::DetectorParameters parameters;
+        parameters.useAruco3Detection = aruco3;
+        parameters.minDistanceToBorder = config.min_distance_to_border_px_;
+        parameters.minSideLengthCanonicalImg = config.min_side_length_canonical_img_px_;
+        parameters.minMarkerLengthRatioOriginalImg = config.min_marker_length_ratio_original_img_;
+        parameters.cornerRefinementMethod =
+                aruco3 ? cv::aruco::CORNER_REFINE_SUBPIX : cv::aruco::CORNER_REFINE_NONE;
+        const cv::aruco::ArucoDetector reference(dictionary, parameters);
+        for (const bool graph : {false, true}) {
+            Detector detector;
+            OwnedStream owned;
+            ASSERT_NE(owned.get(), nullptr);
+            const cudaStream_t stream = graph ? owned.get() : nullptr;
+            std::string message;
+            ASSERT_EQ(detector.initialize(table(), config, &message), Status::kOk) << message;
+            SceneImage image;
+            const std::uint8_t* previous_pointer = nullptr;
+            for (int repetition = 0; repetition < 2; ++repetition) {
+                for (const bool accepted : {true, false}) {
+                    // The default 640x480 ArUco3 scale is 1/2: a source gap of 40
+                    // must fail the 32-pixel segmentation margin, though it would
+                    // pass an incorrect check against original-image coordinates.
+                    const int gap = (accepted ? 40 : 20) * (aruco3 ? 2 : 1);
+                    const std::vector<cv::Point> origins = {{gap, 160},
+                                                            {640 - kMarkerSidePx - gap, 160},
+                                                            {240, gap},
+                                                            {240, 480 - kMarkerSidePx - gap}};
+                    for (const cv::Point& origin : origins) {
+                        SCOPED_TRACE(::testing::Message()
+                                     << aruco3 << "/" << graph << "/" << accepted << "/" << origin);
+                        const cv::Mat scene = make_scene(640, 480, origin);
+                        ASSERT_TRUE(image.upload(scene));
+                        if (previous_pointer != nullptr) {
+                            ASSERT_EQ(image.view().data_, previous_pointer);
+                        }
+                        previous_pointer = image.view().data_;
+                        std::vector<int> expected_ids;
+                        std::vector<std::vector<cv::Point2f>> expected_corners;
+                        reference.detectMarkers(scene, expected_corners, expected_ids);
+                        ASSERT_EQ(expected_ids.size(), accepted ? 1U : 0U);
+                        ASSERT_EQ(detector.detect_async(image.view(), stream, &message),
+                                  Status::kOk)
+                                << message;
+                        HostDetections actual;
+                        ASSERT_EQ(detector.download(&actual, stream, &message), Status::kOk)
+                                << message;
+                        EXPECT_EQ(actual.ids_, expected_ids);
+                        if (accepted && actual.ids_.size() == 1U) {
+                            EXPECT_LT(quad_distance(corners_of(actual, 0), expected_corners[0]),
+                                      1.0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 }  // namespace

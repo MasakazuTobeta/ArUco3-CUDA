@@ -65,16 +65,22 @@ All 16 industrial photographs return zero detections on all three routes in
 both modes. These are negative compatibility checks, not positive recall
 evidence. Local baseline audit records are `build/gpu-study/quality-baseline-*.jsonl`.
 
-The device-contour prototype and corrected Euclidean-perimeter grouping now
-recover all CPU-detected truths in the 96-scene corpus. Unique-scene true-positive
-counts are CPU 113 / GPU 118 with ArUco3 on, and CPU 124 / GPU 127 with it off,
+The device-contour prototype and corrected Euclidean-perimeter grouping
+recovered all CPU-detected truths in the 96-scene corpus. Its initial true-positive
+counts were CPU 113 / GPU 118 with ArUco3 on, and CPU 124 / GPU 127 with it off,
 with zero false positives and no per-truth corner-error degradation on shared
 detections. The default 118-call sequence also passes on Orin. The larger
 external matrix exposed missing close-contour retries; a device-only retry
 prototype passes the identified critical cases and the complete external matrix.
 See [ADR-0004](adr/0004-device-contours-for-cpu-quality.md).
 
-The final combined steady preset passes the Spark, Orin and RTX 4090 quality
+Review subsequently found that these extra border detections violated the
+configured image-border margin, which the contour route had omitted. The
+correction checks the selected representative in segmentation coordinates;
+corrected CPU/GPU counts are 113/113 on and 124/124 off. The prototype counts
+are not evidence of higher recall under matching settings.
+
+Before this border correction, the combined steady preset passed the Spark, Orin and RTX 4090 quality
 gates, each with 2,398 audit
 calls (38 matrix cases, 11 configuration variants and targeted close-marker
 chains) plus 182 historical-image evaluations across both ArUco3 modes.

@@ -542,8 +542,17 @@ Status Detector::Impl::dispatch(const ImageViewU8& image, cudaStream_t stream) {
 #endif
     }
 
+    // The historical component route already filters borders before grouping.
+    // Ordered contours must check the selected representative in segmentation coordinates.
+    int group_width_px = 0;
+    int group_height_px = 0;
+#if ARUCO3CUDA_EXPERIMENT_CONTOUR_CANDIDATES
+    group_width_px = segmentation.width_px_;
+    group_height_px = segmentation.height_px_;
+#endif
     status = detail::build_candidate_groups_async(this->candidates_, this->config_, &this->groups_,
-                                                  &this->grouped_, stream);
+                                                  &this->grouped_, stream, group_width_px,
+                                                  group_height_px);
     if (status != Status::kOk) {
         return status;
     }

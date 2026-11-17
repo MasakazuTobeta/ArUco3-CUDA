@@ -62,7 +62,7 @@ public:
     /// Uploads the candidates to the device and merges them.
     bool run(const std::vector<InputQuad>& quads, const DetectorConfig& config,
              const std::vector<int>* primary_ids = nullptr,
-             const std::vector<int>* retry_ids = nullptr) {
+             const std::vector<int>* retry_ids = nullptr, int width_px = 0, int height_px = 0) {
         const std::size_t bytes =
                 aruco3cuda::detail::candidate_workspace_bytes(config, 64, 64) +
                 aruco3cuda::detail::candidate_group_workspace_bytes(config) +
@@ -89,7 +89,8 @@ public:
             return false;
         }
         if (aruco3cuda::detail::build_candidate_groups_async(input, config, &groups, &grouped,
-                                                             nullptr) != Status::kOk) {
+                                                             nullptr, width_px,
+                                                             height_px) != Status::kOk) {
             return false;
         }
         int count = 0;
@@ -652,3 +653,62 @@ TEST(CandidateGroupTest, rejects_invalid_arguments) {
 }
 
 }  // namespace
+
+TEST(CandidateGroupTest, border_margin_checks_all_edges_and_exact_boundary) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    DetectorConfig config = small_config();
+    config.min_distance_to_border_px_ = 32;
+    GroupRun run;
+    for (const InputQuad& quad : std::vector<InputQuad>{
+                 {32, 70, 40, 1}, {183, 70, 40, 2}, {70, 32, 40, 3}, {70, 119, 40, 4}}) {
+        ASSERT_TRUE(run.run({quad}, config, nullptr, nullptr, 256, 192));
+        ASSERT_EQ(run.count(), 1);
+        InputQuad outside = quad;
+        if (quad.label_ == 1)
+            --outside.x_;
+        if (quad.label_ == 2)
+            ++outside.x_;
+        if (quad.label_ == 3)
+            --outside.y_;
+        if (quad.label_ == 4)
+            ++outside.y_;
+        ASSERT_TRUE(run.run({outside}, config, nullptr, nullptr, 256, 192));
+        EXPECT_EQ(run.count(), 0) << quad.label_;
+    }
+    config.min_distance_to_border_px_ = 0;
+    ASSERT_TRUE(run.run({{0, 0, 40, 7}, {215, 151, 40, 8}}, config, nullptr, nullptr, 256, 192));
+    EXPECT_EQ(run.count(), 2);
+    config.min_distance_to_border_px_ = 128;
+    ASSERT_TRUE(run.run({{100, 70, 40, 7}}, config, nullptr, nullptr, 256, 192));
+    EXPECT_EQ(run.count(), 0);
+}
+
+TEST(CandidateGroupTest, border_margin_rejects_group_without_promoting_alternative) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    DetectorConfig config = small_config();
+    config.min_distance_to_border_px_ = 32;
+    GroupRun run;
+    const std::vector<InputQuad> quads{{30, 70, 60, 1}, {33, 73, 54, 2}};
+    ASSERT_TRUE(run.run(quads, config, nullptr, nullptr, 256, 192));
+    EXPECT_EQ(run.count(), 0);
+    ASSERT_TRUE(run.run({quads[1]}, config, nullptr, nullptr, 256, 192));
+    EXPECT_EQ(run.count(), 1);
+    ASSERT_TRUE(run.run(quads, config));
+    ASSERT_EQ(run.count(), 1);
+    EXPECT_EQ(run.results()[0].label_, 1);
+    // Border rejection concerns the representative, not every alternative.
+    ASSERT_TRUE(run.run({{32, 40, 60, 3}, {29, 43, 54, 4}}, config, nullptr, nullptr, 256, 192));
+    ASSERT_EQ(run.count(), 1);
+    EXPECT_EQ(run.results()[0].label_, 3);
+}
+
+TEST(CandidateGroupTest, border_margin_rejects_invalid_dimensions) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    GroupRun run;
+    EXPECT_FALSE(run.run({}, small_config(), nullptr, nullptr, -1, 192));
+    EXPECT_FALSE(run.run({}, small_config(), nullptr, nullptr, 256, 0));
+    EXPECT_FALSE(run.run({}, small_config(), nullptr, nullptr, 0, 192));
+}

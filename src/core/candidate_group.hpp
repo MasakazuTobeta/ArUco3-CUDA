@@ -93,6 +93,9 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 /// @param buffers The scratch space returned by reserve_candidate_groups. Must not be nullptr.
 /// @param grouped The output region returned by reserve_candidate_groups. Must not be nullptr.
 /// @param stream Stream to submit to. Pass nullptr to use the default stream.
+/// @param width_px Actual segmentation width for post-group border rejection.
+///                 Pass zero with height_px zero for already-filtered legacy input.
+/// @param height_px Actual segmentation height; zero only when width_px is zero.
 /// @return kOk, or kInvalidArgument, kCudaError.
 ///
 /// Ownership: the regions the arguments point to stay owned by the workspace.
@@ -102,7 +105,7 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 /// Example output: count_ = 1, keeping only the candidate with the largest perimeter
 Status build_candidate_groups_async(const DeviceCandidates& input, const DetectorConfig& config,
                                     CandidateGroupBuffers* buffers, DeviceCandidates* grouped,
-                                    cudaStream_t stream);
+                                    cudaStream_t stream, int width_px = 0, int height_px = 0);
 
 }  // namespace aruco3cuda::detail
 

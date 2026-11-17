@@ -20,6 +20,14 @@ tracking, or relaxed detection thresholds are introduced.
 
 ## Current state
 
+Review correction: the contour prototype initially omitted the configured
+border margin. The post-group representative check now applies inclusive bounds
+in segmentation coordinates before decoding, rejecting the entire group when
+its representative is too near an edge. Thus corrected CPU/GPU 96-scene counts
+are 113/113 on and 124/124 off on Spark. The prototype's 118/127 counts below
+include border detections disallowed by CPU; retain them as diagnostic history,
+not a claim of superior recall with matching settings.
+
 The merged component-extrema route at `badb673` reproduces the historical
 91-image evaluation, but the expanded 96-scene corpus exposes a gap. With ArUco3
 on, official and optimized CPU detect 113 of 136 true markers; GPU detects 56.

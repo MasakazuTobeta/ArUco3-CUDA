@@ -33,6 +33,15 @@ and a proximity decision where contour length would merge separate markers.
 The full quality audit remains necessary because grouping can change detection
 and suppression outcomes beyond the focused fixtures.
 
+The ordered-contour detector supplies the actual segmentation width and height
+for border rejection. The existing selection kernel checks all four corners of
+the chosen group representative against the inclusive configured margin before
+compaction. Rejected groups have no replacement representative, matching the CPU
+ordering; interior alternatives cannot revive a border-rejected group. The
+legacy component route has already filtered its inputs and passes zero dimensions
+to preserve its existing behavior. The check adds no kernel launch or allocation.
+
+
 ## Goals
 
 Retain CPU-equivalent or better detection quality across the annotated corpus

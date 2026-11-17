@@ -285,7 +285,14 @@ between transitive GPU grouping and CPU group formation; they have not
 established a new quality failure or justified a wider grouping change. Their
 rendered ID/corner truth and all raw observations are retained locally.
 
-### Final combined Spark quality gate
+### Combined Spark quality gate before border-margin review
+
+The checkpoint below predates the border-margin correction. Its additional GPU
+border detections were later found to violate the configured margin; see the
+[review follow-up](../../docs/gpu-steady-state-report.md#current-state).
+Corrected 96-scene CPU/GPU true positives are 113/113 (on) and 124/124 (off).
+Earlier prototype counts in this document are historical observations, not
+evidence of better recall under identical border settings.
 
 The final combined checkpoint uses ordered contours with edge-aggregate counting,
 warp approximation/materialization and eligible-edge compaction; fused threshold,

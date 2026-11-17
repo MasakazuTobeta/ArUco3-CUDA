@@ -21,15 +21,41 @@ background lines. The expanded 96-scene corpus contains 136 true markers:
 
 | ArUco3 | OpenCV / optimized CPU TP | Old GPU TP | Contour GPU TP on Spark | False positives |
 | --- | ---: | ---: | ---: | ---: |
-| On | 113 | 56 | 118 | 0 |
-| Off | 124 | 65 | 127 | 0 |
+| On | 113 | 56 | 113 | 0 |
+| Off | 124 | 65 | 124 | 0 |
 
 These are unique-scene counts; repeated frames and blank cuts are excluded.
-The contour counts also pass the final lifetime-fix binary on Spark.
+These contour counts include the border-margin review correction on Spark.
 Final-binary validation is recorded below. Photographic agreement without
 annotated ground truth establishes compatibility, not field recall.
 
 ## Current state
+
+Review follow-up: the ordered-contour route omitted the configured image-border
+margin. The correction checks the selected group representative before packing
+and decoding, in segmentation-image coordinates, matching the CPU ordering.
+Earlier GPU counts of 118/127 included five/three truths in border-occlusion
+scenes that violated the configured margin and were rejected by CPU. Correct
+filtering removes those extras; CPU-detectable truths are retained. Remaining
+scene observations and ground-truth metrics are unchanged in the 96-scene audit.
+The focused correction passes 42 grouping/detector tests on Spark and Orin,
+including 64 changing-frame calls over both ArUco3 modes, all four borders and
+direct/captured submission. Three grouping tests cover inclusive boundaries,
+zero/impossible margins, invalid dimensions and representative/alternative
+ordering. All four sanitizer tools pass these four new tests on both hosts.
+The new end-to-end test fails when linked against the immutable previous core,
+and the border-selection mutation also fails the boundary/group-order tests.
+The corrected build additionally passes the complete 2398-call audit and 182
+historical-image evaluations on each ARM host, including nondefault settings,
+all 17 Dictionaries, industrial photographs and annotated close-marker chains.
+Local follow-up records are `build/gpu-study/review-border-spark-full-matrix-complete/`
+and `build/gpu-study/review-border-v3-orin-matrix/`, with focused sanitizer and
+failure-reproduction records alongside them. This correction is not separately
+runtime-validated on RTX 4090; its earlier results below describe the pre-review build.
+The timing tables below describe the earlier frozen source export; they have
+not been remeasured after this correctness correction. Fixed-image repetition
+measures detector-call latency here; changing-frame video throughput remains
+outside this timing study.
 
 CPU-equivalent quality is achieved on the expanded validation matrix. The
 optimized contour route does **not** universally beat the old GPU or optimized
@@ -138,8 +164,9 @@ speed. Local evidence is retained
 under ignored `build/gpu-study/`; generated records are absent from a fresh
 checkout under the [measurement storage policy](measurements/README.md).
 
-The 96-scene counts above apply to both ARM hosts. On x86, platform-dependent
-rendered pixels give CPU/GPU counts 114/119 with ArUco3 on and 124/127 off;
+Before the border correction, the 96-scene ARM counts were 113/118 (on) and
+124/127 (off). On x86, platform-dependent
+rendered pixels gave CPU/GPU counts 114/119 with ArUco3 on and 124/127 off;
 all have zero false positives and correct detected rotations. Across the
 external matrix, each host recovers all 278 CPU detections. The largest positive
 common-truth corner-error delta across variants/chains is 0.000003095 pixels
@@ -169,8 +196,9 @@ The [maintained matrix runner](../tools/gpu_quality/run_matrix.md) records exact
 commands, capacities, completion counts, input/binary hashes and source checks.
 The tested production export has manifest SHA-256
 `c6e689b9c24256d74ef34fb6e18e761fc409a97c45b3f75e124966226e3d2197`.
-Subsequent changes are the affinity test correction, reproduction tools and
-documentation, with no production behavior change.
+The subsequent border-margin correction changes candidate acceptance and is
+validated separately above. The earlier affinity test correction, reproduction
+tools and documentation did not change production behavior.
 
 ### Whole-detector latency
 

@@ -164,14 +164,29 @@ __global__ void merge_pairs_kernel(const std::int32_t* corner_x, const std::int3
 
 /// Resolves the roots to pick the representatives.
 __global__ void select_kernel(std::int32_t* parent, std::int32_t* selected, std::int32_t* offsets,
-                              const std::int32_t* count) {
+                              const std::int32_t* count, DeviceCandidates input,
+                              const std::int32_t* order, int width_px, int height_px, int margin) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= *count) {
         return;
     }
     const std::int32_t root = find_root(parent, index);
     atomicExch(&parent[index], root);
-    const std::int32_t is_root = (root == index) ? 1 : 0;
+    std::int32_t is_root = (root == index) ? 1 : 0;
+    // Check only the chosen representative: rejecting before grouping would
+    // incorrectly promote an interior alternative from the same marker.
+    if (is_root != 0 && width_px > 0) {
+        const int source = order[index];
+        for (int corner = 0; corner < kQuadCornerCount; ++corner) {
+            const int x = input.corner_x_[corner * input.capacity_ + source];
+            const int y = input.corner_y_[corner * input.capacity_ + source];
+            if (x < margin || y < margin || x > width_px - 1 - margin ||
+                y > height_px - 1 - margin) {
+                is_root = 0;
+                break;
+            }
+        }
+    }
     selected[index] = is_root;
     offsets[index] = is_root;
 }
@@ -314,7 +329,11 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 
 Status build_candidate_groups_async(const DeviceCandidates& input, const DetectorConfig& config,
                                     CandidateGroupBuffers* buffers, DeviceCandidates* grouped,
-                                    cudaStream_t stream) {
+                                    cudaStream_t stream, int width_px, int height_px) {
+    if (width_px < 0 || height_px < 0 || (width_px == 0) != (height_px == 0) ||
+        config.min_distance_to_border_px_ < 0) {
+        return Status::kInvalidArgument;
+    }
     if (buffers == nullptr || grouped == nullptr || buffers->parent_ == nullptr ||
         buffers->quad_perimeter_ == nullptr || grouped->corner_x_ == nullptr ||
         input.corner_x_ == nullptr || input.corner_y_ == nullptr || input.count_ == nullptr) {
@@ -348,8 +367,9 @@ Status build_candidate_groups_async(const DeviceCandidates& input, const Detecto
     if (status != Status::kOk) {
         return status;
     }
-    select_kernel<<<linear_grid, linear_block, 0, stream>>>(buffers->parent_, buffers->selected_,
-                                                            buffers->offsets_, input.count_);
+    select_kernel<<<linear_grid, linear_block, 0, stream>>>(
+            buffers->parent_, buffers->selected_, buffers->offsets_, input.count_, input,
+            buffers->order_, width_px, height_px, config.min_distance_to_border_px_);
     status = check_kernel_launch("group.select_kernel", -1, false, stream);
     if (status != Status::kOk) {
         return status;
