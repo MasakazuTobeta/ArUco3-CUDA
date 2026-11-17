@@ -39,6 +39,8 @@ Pose estimation is out of scope. The output corners are in the full-scale coordi
 
 These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 4 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
 
+Generated CPU, GPU and Hybrid measurement output is retained locally and excluded from version control. The paths below identify local records, which are absent from a fresh checkout. Reports and reproduction procedures remain available; see the [measurement storage policy](docs/measurements/README.md).
+
 In this subsection, `CPU` means the official, unmodified OpenCV CPU implementation. The experimental optimized CPU route is evaluated separately in the photographic comparison below.
 
 `CUDA-Resident` is the route that takes device-resident input and processes every stage on the GPU; this is the route the library provides.
