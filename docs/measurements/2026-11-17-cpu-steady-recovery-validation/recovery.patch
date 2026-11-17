@@ -1,0 +1,19 @@
+--- a/cpu/cpu_sparse_pyramid.cpp
++++ b/cpu/cpu_sparse_pyramid.cpp
+@@ -48,11 +48,13 @@
+     const int tiles_x = (size.width + tile - 1) / tile;
+     const int tiles_y = (size.height + tile - 1) / tile;
+     if (cache.pixels_.size() != size || cache.tile_side_px_ != tile) {
++        // Zero is an invalid tile size until every allocation has succeeded.
++        cache.tile_side_px_ = 0;
+         cache.pixels_.create(size, CV_8UC1);
++        cache.valid_.assign(static_cast<std::size_t>(tiles_x) * tiles_y, 0U);
++        cache.tiles_x_ = tiles_x;
++        cache.valid_count_ = 0U;
+         cache.tile_side_px_ = tile;
+-        cache.tiles_x_ = tiles_x;
+-        cache.valid_.assign(static_cast<std::size_t>(tiles_x) * tiles_y, 0U);
+-        cache.valid_count_ = 0U;
+     }
+     const int first_x = requested.x / tile;
+     const int first_y = requested.y / tile;

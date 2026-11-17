@@ -1,0 +1,21 @@
+--- a/cpu/cpu_contours.cpp
++++ b/cpu/cpu_contours.cpp
+@@ -154,9 +154,15 @@
+     if (config.use_aruco3_detection_ && config.min_side_length_canonical_img_px_ != 0) {
+         minimum = static_cast<std::size_t>(4 * config.min_side_length_canonical_img_px_);
+     }
+-    cv::copyMakeBorder(binary, this->padded_, 1, 1, 1, 1, cv::BORDER_CONSTANT | cv::BORDER_ISOLATED,
+-                       cv::Scalar(0));
+-    cv::threshold(this->padded_, this->padded_, 0.0, 255.0, cv::THRESH_BINARY);
++    const cv::Size padded_size(binary.cols + 2, binary.rows + 2);
++    if (this->padded_.size() != padded_size) {
++        // Construct before replacing the old owner so failed allocation cannot retain an
++        // uninitialized border with the requested shape.
++        this->padded_ = cv::Mat(padded_size, CV_8UC1, cv::Scalar(0));
++    }
++    // The scanner never writes its zero border. Every frame replaces the complete center.
++    cv::Mat center = this->padded_(cv::Rect(1, 1, binary.cols, binary.rows));
++    cv::threshold(binary, center, 0.0, 255.0, cv::THRESH_BINARY);
+     const std::ptrdiff_t stride = static_cast<std::ptrdiff_t>(this->padded_.step);
+     for (std::size_t direction = 0; direction < 8U; ++direction) {
+         this->offsets_[direction] = kDy[direction] * stride + kDx[direction];

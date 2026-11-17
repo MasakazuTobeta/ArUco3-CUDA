@@ -5,7 +5,7 @@
 ArUco3-CUDA is a library that independently implements, in CUDA, the ArUco3 detection strategy found in OpenCV's `cv::aruco::ArucoDetector`. It processes an input image on the GPU all the way to marker IDs and corners, and returns the results while they remain on the device. No GPLv3 code from the official ArUco is copied or adapted ([Intellectual property and licensing policy](docs/ip-and-licensing.md)).
 
 > [!IMPORTANT]
-> Evaluation was performed on a synthetic corpus only. Accuracy and speed on a real-image corpus have not been measured. All the numbers below are for the synthetic corpus.
+> GPU accuracy and speed were evaluated on a synthetic corpus. The experimental CPU implementation was also compared with official OpenCV on 16 real industrial photographs across six hosts. Those photographs return no markers under the tested settings; this measures background latency and output compatibility, not detection recall on real images.
 
 ## What it does
 
@@ -35,13 +35,17 @@ Pose estimation is out of scope. The output corners are in the full-scale coordi
 
 ## Speed
 
+### GPU routes on synthetic images
+
 These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 4 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
+
+In this subsection, `CPU` means the official, unmodified OpenCV CPU implementation. The experimental optimized CPU route is evaluated separately in the photographic comparison below.
 
 `CUDA-Resident` is the route that takes device-resident input and processes every stage on the GPU; this is the route the library provides.
 
 `Hybrid` is a **comparison route** that runs downscaling and adaptive thresholding on the GPU and everything from candidate extraction onward on the host. **It is not part of the public API.** It lives in `hybrid/` and requires OpenCV. It exists to cross-check the correctness of the GPU implementation against the CPU baseline, and it is not installed. It appears in the table to show where the move to the GPU pays off.
 
-| Machine | CPU | Hybrid | CUDA-Resident | CUDA-Resident / CPU (1280x720, 4 markers) | Same (3840x2160) |
+| Machine | Official OpenCV (CPU) | Hybrid | CUDA-Resident | CUDA-Resident / OpenCV (1280x720, 4 markers) | Same (3840x2160) |
 | --- | --- | --- | --- | --- | --- |
 | DGX Spark GB10 | 0.699 ms | 0.301 ms | 0.696 ms | 0.99 | 0.31 |
 | Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.64 | 0.25 |
@@ -58,9 +62,34 @@ What determines the boundary is neither resolution nor candidate count, but the 
 
 For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms, and Jetson AGX Thor is 5.2 / 93.2 / 92.8 ms. On DGX Spark the GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident). That does not carry to the others in the same way: on Jetson AGX Orin only Hybrid is larger (3.5% against 0.4% for CPU, with CUDA-Resident at 0.5%), on GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%), and on Jetson AGX Thor CUDA-Resident is the noisy one (16.5% against 1.5% for CPU, with Hybrid at 5.3%).
 
+### CPU routes on industrial photographs
+
+The experimental CPU detector is compared with official, unmodified OpenCV 4.14.0 on the same 16 factory, warehouse and equipment-room photographs across six hosts ([Six-host CPU report](docs/cpu-multihost-report.md)). Images preserve their aspect ratio, with a longest side of at most 1920 pixels. All 16 return zero detections with both implementations. The optimized route uses no CUDA or tracking and does not reuse previous-frame images or detections.
+
+The table uses ArUco3 enabled and `DICT_ARUCO_MIP_36h12`, with one or four threads pinned to distinct physical cores. Each image has three independent processes, 30 warm-ups and 200 measured calls per route/process. Times cover host grayscale input to host results; startup, decoding, setup and warm-up are excluded.
+
+| Machine / CPU | Threads | Official OpenCV (CPU) | Optimized CPU (this repository) | Median speedup over OpenCV |
+| --- | ---: | ---: | ---: | ---: |
+| DGX Spark GB10 | 1 | 3.011 ms | 1.895 ms | 1.577x |
+| DGX Spark GB10 | 4 | 1.423 ms | 0.829 ms | 1.674x |
+| Jetson AGX Orin | 1 | 6.901 ms | 4.518 ms | 1.539x |
+| Jetson AGX Orin | 4 | 2.938 ms | 2.086 ms | 1.389x |
+| Intel N97 | 1 | 5.003 ms | 3.314 ms | 1.509x |
+| Intel N97 | 4 | 2.475 ms | 1.696 ms | 1.443x |
+| Xeon w7-3565X | 1 | 3.757 ms | 2.509 ms | 1.481x |
+| Xeon w7-3565X | 4 | 1.414 ms | 1.056 ms | 1.328x |
+| Jetson AGX Thor | 1 | 5.075 ms | 3.116 ms | 1.629x |
+| Jetson AGX Thor | 4 | 2.218 ms | 1.332 ms | 1.623x |
+| Core i9-12900KS | 1 | 2.994 ms | 2.046 ms | 1.450x |
+| Core i9-12900KS | 4 | 1.206 ms | 0.829 ms | 1.442x |
+
+For each image, p50 is the median of three process p50 values. The time columns then take the median across the 16 images. The speedup column takes the median of the 16 per-image OpenCV/optimized ratios, so it is not the quotient of the two displayed time columns. A speedup above 1 means the optimized CPU route is faster. Per-image absolute p50/p95/p99 times are retained in local measurement output; raw logs and generated results from these CPU experiments are excluded from version control. The [report](docs/cpu-multihost-report.md) records the evaluation conditions and conclusions.
+
+The evaluation also includes ArUco3 disabled. Across both modes, both thread budgets and all six hosts, **all 384 image/configuration comparisons favor the optimized CPU route at aggregated p50, p95 and p99**, with matching detection results. Known four-marker controls also pass in every mode/thread combination. The median speedup depends on the CPU and settings: it ranges from 1.159x to 1.961x across all 24 configurations. The smallest individual-image aggregate margin is 1.041x on Xeon with ArUco3 disabled and four threads. Existing background services and power policies were retained; this sample does not guarantee a speedup on every deployment image. Full conditions, ArUco3-disabled results and independent validation are in the [report](docs/cpu-multihost-report.md).
+
 ## Accuracy
 
-Measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 12 combinations of 3 routes x 4 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
+The official OpenCV (CPU), Hybrid and CUDA-Resident routes were measured on a synthetic corpus of 91 scenes with 480 ground truth items, across the 12 combinations of 3 routes x 4 machines ([Accuracy evaluation results](docs/accuracy-report.md)).
 
 | Metric | Result |
 | --- | --- |
@@ -86,6 +115,46 @@ The differences from the OpenCV CPU implementation are as follows. The Hybrid ro
 On the two machines with integrated GPUs, the host and device share the same physical memory, so transfer costs differ from those of a discrete GPU. Adding one machine with a discrete GPU separates results specific to integrated GPUs from results that hold generally. Jetson support targets the Orin family. Support for Nano, Xavier, and Thor is undetermined.
 
 ## Building and running
+
+### Experimental CPU implementation
+
+The `experiment/cpu-optimization` branch includes a host-only detector under
+[`cpu/`](cpu/cpu_detector.md). Its default route retains OpenCV's contour-based
+detection rules, while reusing workspaces, sharing threshold calculations,
+packing dictionary comparisons, precomputing exact-word matches, filtering
+contours before allocation, and building demanded current-frame pyramid tiles.
+No tracking or previous-frame detections are used. An independent-frame video
+benchmark also compares persistent workers with intra-frame parallelism.
+Algorithm-changing experiments are explicit options. This is an experimental
+target and is not part of the installed CUDA API.
+
+On DGX Spark, the primary 48-scene subset with detected markers shows median
+speedups over pinned OpenCV of 2.45x with one thread and 2.43x with four. A final
+44-scene confirmation preserves the advantage. The report below records source
+stages, exact-output validation, video throughput, memory use and conditions
+where OpenCV or the previous CPU route remains faster.
+
+A separate [six-host real-background evaluation](docs/cpu-multihost-report.md)
+uses 16 factory/warehouse photographs. The Speed section above compares official
+OpenCV and the optimized CPU implementation; the report includes both ArUco3
+modes, per-image latencies, exact-output checks and measurement limitations.
+
+Build it with OpenCV 4.14, GoogleTest and Python 3, without a CUDA toolkit or GPU:
+
+```bash
+cmake -S cpu/standalone -B build/cpu-opt -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/cpu-opt -j
+ctest --test-dir build/cpu-opt --output-on-failure --schedule-random -j 4
+build/cpu-opt/cpu/aruco3cuda_cpu_benchmark --input-dir data/cpu-experiment \
+  --generate --variants opencv,optimized --iterations 200 --warmup 30
+```
+
+`ARUCO3CPU_NATIVE=ON` explicitly tunes the experimental library for the build
+host; it is off by default. The regular CUDA build can include the experiment
+with `ARUCO3CUDA_BUILD_CPU_EXPERIMENT=ON`. See the
+[CPU experiment design and validation plan](docs/design/cpu-optimization.md)
+and [CPU steady-state report](docs/cpu-steady-state-report.md) for comparison conditions,
+measurements, and limitations.
 
 Because the same procedure is used on all four machines, builds and measurements are performed in a container. Choose one of the profile names `dgx-spark`, `jetson-orin`, `jetson-thor`, or `rtx-blackwell`.
 
@@ -221,7 +290,7 @@ with aruco3cuda.Detector() as detector:
 
 ## Limitations
 
-- Evaluation covers the synthetic corpus only. A real-image corpus has not been prepared, and accuracy and the crossover point on real images have not been measured.
+- GPU accuracy and the CPU/GPU crossover were evaluated on synthetic images only. The experimental CPU route has also been measured on 16 real industrial photographs with zero configured detections, but real-image detection recall and the GPU crossover remain unmeasured.
 - Seventeen dictionaries are bundled: the sixteen `DICT_NxN_*` of OpenCV 4.x, and `DICT_ARUCO_MIP_36h12`. `DICT_ARUCO_ORIGINAL` is deliberately left out, because it contains markers that are unchanged by a 180 degree rotation, so their orientation cannot be recovered. The AprilTag families OpenCV lists alongside them are out of scope. `ARUCO_MIP_16h3` and `_25h7` exist only in the GPLv3 ArUco distribution and cannot be bundled ([Dictionary policy](docs/dictionaries.md)).
 - Pose estimation is out of scope.
 - Per-stage times are wall-clock and include host synchronization. Per-stage measurement using CUDA events has not been done.
@@ -234,6 +303,8 @@ with aruco3cuda.Detector() as detector:
 - [Samples](examples/README.md)
 - [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [C ABI and Python binding](docs/design/c-abi-and-python.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
 - [Evaluation plan](docs/evaluation-plan.md) / [Benchmark report](docs/benchmark-report.md) / [Accuracy evaluation results](docs/accuracy-report.md)
+- [CPU steady-state report](docs/cpu-steady-state-report.md) / [Six-host CPU benchmark report](docs/cpu-multihost-report.md)
+- [CPU adversarial review and regression checks](docs/cpu-adversarial-review.md)
 - [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Glossary](docs/terminology.md)
 - [ADR-0001: Implement first in an independent repository](docs/adr/0001-independent-implementation.md) / [ADR-0002: Fix the build infrastructure and target environment baseline](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: Adopt approach A as the primary plan for quadrilateral candidate extraction](docs/adr/0003-candidate-extraction-approach.md)
 - [Intellectual property and licensing policy](docs/ip-and-licensing.md) / [Code provenance record](docs/code-provenance.md) / [Contribution guidelines](CONTRIBUTING.md)

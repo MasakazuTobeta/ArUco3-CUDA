@@ -163,14 +163,50 @@ project-wide LICENSE is Apache-2.0, but older files in `imgproc` retain
 holders. Clause 1 of the 3-clause BSD requires that redistribution in source
 form preserve the copyright notice, the conditions, and the disclaimer.
 
-The highest degree of copying in this project is the `oracle` namespace in
-`test_corner_refine.cpp`, and both files it was copied from are 3-clause BSD.
+The `oracle` namespace in `test_corner_refine.cpp` copies expression from two
+3-clause BSD files. The later CPU contour and refinement adaptations are
+recorded separately in PR-006 below.
 **As a conservative measure, the corresponding copyright notices and license
 text were placed in the `NOTICE` at the repository root.** Judging whether the
 copy legally constitutes a derivative work is outside the scope of this record
 and requires confirmation by a professional.
 
 The official ArUco GPLv3 source code has not been referenced.
+
+### PR-006: Further CPU contour and sparse-pyramid optimization
+
+| Item | Content |
+| --- | --- |
+| Implementation | [CPU contour workspace](../cpu/cpu_contours.md), [sparse pyramid](../cpu/cpu_sparse_pyramid.md) |
+| Source version | OpenCV 4.14.0, commit `0654a42e19215ef25b1d367d822f3c630447e7c7` |
+| Contour basis | Adaptation of `modules/imgproc/src/contours_truco.cpp` tracing, visited flags and vectorized scan; no file-level license header, covered by the inspected pinned repository Apache-2.0 LICENSE |
+| Contour modifications | Sequential tracing per threshold window, reusable vectors, immediate quadrilateral filtering, isolated ROI padding; remove the overlapping internal stripe scheduler and unused approximation modes |
+| Refinement basis | Adapted arithmetic from `modules/imgproc/src/cornersubpix.cpp`, whose file header is BSD-3-Clause and names Intel (2000) and OpenCV Foundation (2013) |
+| Refinement modifications | Demand-generated current-frame pyramid regions and monitored interpolation footprints; OpenCV public image operations retain numerical behavior |
+| Reused expression | Source arithmetic/control flow is adapted explicitly, rather than described as an independent reimplementation; required notices are retained in `NOTICE` |
+
+The contour source SHA-256 is
+`57625f4ee96306f467ddba303ef25d965401a9fba8e7ad7ea0ed52a332008cba`.
+The refinement source hash and its full BSD notices are recorded above. No
+official ArUco GPLv3 source was consulted or used. These CPU changes do not alter
+the baseline OpenCV build.
+
+External photo and regression inputs are fetched from the pinned
+`opencv/opencv_extra` revision recorded in the
+[fixture manifest](../cpu/experiments/opencv-fixtures.json). They are used only as
+local compatibility inputs, are not redistributed, and are not treated as
+independently annotated ground truth. The manifest records original file hashes
+and the lack of a discovered repository/per-directory license file; it does not
+assign those images the source-code license.
+
+The subsequent real-background timing evaluation uses 16 public industrial
+photographs from Wikimedia Commons. Their
+[manifest](../cpu/experiments/real_background_manifest.json) pins description-page
+revisions, original URLs, author/license, original bytes and prepared pixels;
+the [preparation record](../cpu/experiments/real_background.md) describes the exact
+transform and attribution. Photos remain under ignored local data storage,
+with their individual public-domain/CC BY/CC BY-SA terms. They are evaluation
+inputs, not implementation sources, and are not licensed as repository code.
 
 ## Goals
 

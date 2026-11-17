@@ -10,6 +10,49 @@ The scope covers the stage structure of detection, the main design decisions, th
 
 ## Current state
 
+### CPU experiment
+
+The optional host-only detector is described separately in the
+[CPU design](design/cpu-optimization.md) and
+[current CPU steady-state report](cpu-steady-state-report.md), with the
+[previous CPU measurement report](cpu-benchmark-report.md) retained as historical
+evidence. It retains the OpenCV reference
+as the compatibility oracle; it does not replace that baseline in the existing
+CUDA comparisons.
+
+The current CPU suite has 46 tests. It covers the full synthetic corpus under
+1/2/4 threads and both ArUco3 strategies, preserving three historical routes and
+adding the current defaults. It also covers the 512 combinations of the original
+nine switches, explicit new-option combinations, changing frames, dictionaries,
+ROI boundaries, lifecycle errors and numerical limits. The final refinement gate
+checks current-default subpixel refinement with ArUco3 disabled on both normal
+and near-border ROI inputs.
+
+Current CPU-module coverage is **96.2% C0 (1,445/1,502 lines)** and **67.8% branch
+coverage (1,373/2,024 edges)**, with **100% function coverage (50/50)**. The scope
+is `cpu/`, excluding benchmark/resource/video CLIs and archived experiments;
+OpenCV shared libraries and CUDA are not instrumented by this standalone build.
+Counters update atomically because host workers execute concurrently. The full
+46-test Debug suite and the targeted refinement extension supplied the initial
+counters. After the allocation-recovery repair, only the changed sparse
+translation unit's counters were cleared, then seven focused cases refreshed
+that unit alongside retained unchanged-module counters. The repaired source
+also passed all 46 Release cases, seven focused ASan/native cases and two
+controlled allocation-exception recovery checks under sanitizers. Commands,
+source stages, per-file results and uncovered lines are retained in the
+[initial validation record](measurements/2026-11-17-cpu-steady-validation/README.md)
+and [recovery verification](measurements/2026-11-17-cpu-steady-recovery-validation/README.md).
+
+The 100% C0/C1 goal is not met. Remaining gaps include failure handlers,
+post-validation guards, 64-bit epoch rollover, unused combinations of disabled
+experiments, rare sparse-warp/cache-release paths, compiler source mapping and
+C++ exceptional edges. These are reported rather than removed from the metric.
+The cache-refinement predecessor's 94.4% C0 (822/871), 66.3% branches (773/1,166)
+and 100% functions (32/32) remain a
+historical result (local `measurements/2026-11-17-cpu-validation/validation.json`).
+CUDA path coverage is unchanged. Hardware and real-image limitations are
+recorded separately in the CPU reports.
+
 ### What works
 
 - Everything from downscaling and thresholding the input image through candidate extraction, dictionary matching, and subpixel refinement of the corners (S1 through S10) completes on the GPU. The results can be referenced while still in device buffers (S11), and `Detector::detect_async` returns without host synchronization. To use them on the host, retrieve them with `download()`.
@@ -143,7 +186,7 @@ Rounding does not change by a single bit. The changes in the ratio to CPU (below
 | 1280x720, 4 markers | 1.94 → 0.98 | 1.08 → 0.66 | 1.32 → 0.68 |
 | 3840x2160, 4 markers | 0.99 → 0.45 | 0.46 → 0.30 | 0.60 → 0.28 |
 
-These come from the 9-scene set that the [benchmark summary](benchmark-report.md) measures alternately within a single session, not from the 28-scene sweep. **That set is not included in `docs/measurements/`, and there is no measurement file at all for the state before optimization, so a reader cannot re-derive these ratios from the published data.** The 28-scene sweep, which is published, gives 0.89 on the DGX Spark, 0.63 on the Jetson AGX Orin, and 0.68 on the GeForce RTX 5070 Ti for 1280x720 with 4 markers after optimization; it contains no 3840x2160 scene with detections, so the 3840x2160 row has no counterpart there.
+These come from the 9-scene set that the [benchmark summary](benchmark-report.md) measures alternately within a single session, not from the 28-scene sweep. **That set is not included in `docs/measurements/`, and there is no measurement file at all for the state before optimization, so a reader cannot re-derive these ratios from the locally retained data.** The locally retained 28-scene sweep gives 0.89 on the DGX Spark, 0.63 on the Jetson AGX Orin, and 0.68 on the GeForce RTX 5070 Ti for 1280x720 with 4 markers after optimization; it contains no 3840x2160 scene with detections, so the 3840x2160 row has no counterpart there.
 
 Even so, at 640x480 with 4 markers the CPU remains faster on the DGX Spark and the GeForce RTX 5070 Ti (1.32 and 1.25); on the Jetson AGX Orin the GPU wins there (0.87). What determines the boundary is neither the resolution nor the candidate count but the contour point count after thresholding: the coefficient per 1e5 contour points is 2.48 to 5.35 ms for CPU and 0.041 to 0.278 ms for CUDA-Resident. Hybrid's coefficient is nearly the same as the CPU's (2.54 to 5.48 ms), because it performs everything from contour extraction onward on the host.
 

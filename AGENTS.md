@@ -54,3 +54,30 @@ When a failure that could recur or an environment-specific caveat comes to light
 - In a completely empty repository, blob creation through the Git Data API fails with `409 Git Repository is empty`.
 - First create a single file such as `README.md` through the Contents API to initialize the default branch.
 - After initialization, multiple files can be combined into one commit in the order blob, tree, commit, ref update.
+
+### Coverage of parallel CPU work
+
+- Gcov's non-atomic counters can produce negative branch counts when OpenCV workers execute instrumented code concurrently. Build coverage targets with `-fprofile-update=atomic`; do not ignore negative-count parser errors as if they were valid coverage.
+- After changing an instrumented source or its flags, remove the old `*.gcda` files in that coverage build directory before running the tests. Mixing checksums from different builds makes the report unreliable.
+
+### Interpreting DGX Spark frequency snapshots
+
+- During the CPU experiment, `scaling_cur_freq` sometimes exceeded `scaling_max_freq`. The cause is unverified. Preserve the raw values and governor in the results, but do not describe the snapshot as a controlled or confirmed physical clock. Use the recorded topology to identify performance cores.
+
+### Pinned OpenCV contour oracle and ROIs
+
+- OpenCV 4.14.0's `RETR_LIST` fast finder pads without `BORDER_ISOLATED`. A direct ROI with nonzero parent pixels can expose an invalid contour border. Clone an ROI before using this finder as an isolated-image oracle; keep the candidate helper's original strided ROI input. The detector's threshold planes already own their storage.
+- The pinned TRU stripe tracer can write visited flags beyond its own stripe. Repeated four-thread scratch calls showed varying contours even with size filtering disabled. The CPU optimized helper uses one sequential scan per independently owned threshold window. Do not reintroduce overlapping stripe writes as a performance shortcut.
+
+### Exact sparse-pyramid sampling
+
+- Calling `warpPerspectiveBlocklineNN` directly did not reproduce every public `warpPerspective` result at fractional image-edge quads, although the ordinary detector corpus passed. The precise compiler/HAL cause was not established. The maintained sparse route prepares the required pixels and executes the actual global-coordinate public warp.
+- Compare canonical bytes at half-integer borders and nondefault canonical sizes, and poison unrequested cached storage differently in repeated tests. Detection-ID agreement alone cannot establish that a sparse image sampler reads only initialized current-frame pixels.
+
+### Container scripts supplied on standard input
+
+- Use `docker exec -i` when passing a Python or shell script through a heredoc. Without `-i`, the interpreter can receive empty input and exit successfully without executing the checks. Verify expected output files or record counts as well as the exit status.
+
+### Instrumented CPU test timeouts
+
+- The full-corpus and changing-frame cases can exceed the inherited 600 s CTest limit under ASan/UBSan on GB10 efficiency cores. Preserve the timeout logs, check for sanitizer diagnostics, and rerun only the affected cases with a recorded generated-build timeout override. Do not reduce inputs or assertions to obtain a pass. The [steady-state validation record](docs/measurements/2026-11-17-cpu-steady-validation/README.md) retains the 1800 s override and successful unchanged-case reruns.

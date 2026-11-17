@@ -1,0 +1,80 @@
+{
+  "repository": "opencv/opencv_extra",
+  "revision": "ebf9366b3845efe1e54bf2440cf238fd68905bab",
+  "purpose": "Local-only external compatibility fixtures; no independent ground-truth claim",
+  "license": "No repository or per-directory license file found; images are not redistributed",
+  "files": [
+    {
+      "name": "chocclusion_original.jpg",
+      "path": "testdata/cv/aruco/chocclusion_original.jpg",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/chocclusion_original.jpg",
+      "git_blob_sha1": "037a8eb128449bfb4a4303cb2ba26179f1fbc862",
+      "size": 115198,
+      "sha256": "dbf523034ce569b99657c393987c68c5dce7ddd141e582ab9e0fd041ab448785"
+    },
+    {
+      "name": "choriginal.jpg",
+      "path": "testdata/cv/aruco/choriginal.jpg",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/choriginal.jpg",
+      "git_blob_sha1": "3ca7c3149ffed5fced1c6f993f34dde54d68a161",
+      "size": 117428,
+      "sha256": "12eddb0bd4c67cc45ad00f3eec7870241eb19843173e0f212eee7e70ee5c3d1e"
+    },
+    {
+      "name": "diamondmarkers.jpg",
+      "path": "testdata/cv/aruco/diamondmarkers.jpg",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/diamondmarkers.jpg",
+      "git_blob_sha1": "7d270ad6480d1c4507fa1c96dad66c9ebf978b0e",
+      "size": 56070,
+      "sha256": "14ad24e06fe8658ac9dba65b5a158406cebe81e987f7745225ac4ae8b830526c"
+    },
+    {
+      "name": "failmask9.png",
+      "path": "testdata/cv/aruco/failmask9.png",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/failmask9.png",
+      "git_blob_sha1": "1cfbd573041c671399dbcdbfe28ef35848d3acef",
+      "size": 18743,
+      "sha256": "5732ce968e90c22c5dd6edbc308b73da20a8c791a50a94b53eb336ffa0453b83"
+    },
+    {
+      "name": "gboriginal.jpg",
+      "path": "testdata/cv/aruco/gboriginal.jpg",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/gboriginal.jpg",
+      "git_blob_sha1": "8343139aedeed7c048c6e2cdc4cbc5e114f6dc80",
+      "size": 62756,
+      "sha256": "caa8c17557d0e4c10e05a6518f5f450057be37d2d50ab1f17e3ec19ee97caf90"
+    },
+    {
+      "name": "recover.png",
+      "path": "testdata/cv/aruco/recover.png",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/recover.png",
+      "git_blob_sha1": "b2ed1b4c0a1ab928f8a407ade608f346e6f6da5d",
+      "size": 294380,
+      "sha256": "5336b07a5e896ab96337c6cc36b4869bbae5022dce8256d5a0641653b78d0e3d"
+    },
+    {
+      "name": "regression_2492.png",
+      "path": "testdata/cv/aruco/regression_2492.png",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/regression_2492.png",
+      "git_blob_sha1": "e7f3b1cf8c6fcbdac9c084966ea18ad096f85c63",
+      "size": 36618,
+      "sha256": "e93ce27c048afa90043249f4f9ba4b6fa57e7f16674df73f5de201931b95281d"
+    },
+    {
+      "name": "regression_3192.png",
+      "path": "testdata/cv/aruco/regression_3192.png",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/regression_3192.png",
+      "git_blob_sha1": "017ba5d4bff821b09e9536b935d80f5a43fb2f53",
+      "size": 32250,
+      "sha256": "dd2a42d8dd359b491f583f1bb8b2e742170d6717ab80f9e0e750cf9841bcb2c3"
+    },
+    {
+      "name": "singlemarkersoriginal.jpg",
+      "path": "testdata/cv/aruco/singlemarkersoriginal.jpg",
+      "url": "https://raw.githubusercontent.com/opencv/opencv_extra/ebf9366b3845efe1e54bf2440cf238fd68905bab/testdata/cv/aruco/singlemarkersoriginal.jpg",
+      "git_blob_sha1": "a0c9c43be49ce4f9db439490c5e5aea45d468ade",
+      "size": 80728,
+      "sha256": "669cb5afa78a084e69baa472f5235d136179e409b6a3c5ccda6a457e723d4754"
+    }
+  ]
+}

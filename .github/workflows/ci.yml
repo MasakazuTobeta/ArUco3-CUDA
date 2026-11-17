@@ -47,6 +47,9 @@ jobs:
       - name: Check the relative links in the documentation
         run: python3 tools/check-doc-links.py
 
+      - name: Test CPU measurement tools without OpenCV or a GPU
+        run: python3 -m unittest discover -s test/cpu -p 'test_*experiments.py' -v
+
       - name: Check the SPDX identifiers on new source files
         run: |
           missing=0
