@@ -139,7 +139,7 @@ uses 16 factory/warehouse photographs. The Speed section above compares official
 OpenCV and the optimized CPU implementation; the report includes both ArUco3
 modes, per-image latencies, exact-output checks and measurement limitations.
 
-Build it with OpenCV 4.14 and GoogleTest, without a CUDA toolkit or GPU:
+Build it with OpenCV 4.14, GoogleTest and Python 3, without a CUDA toolkit or GPU:
 
 ```bash
 cmake -S cpu/standalone -B build/cpu-opt -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -304,6 +304,7 @@ with aruco3cuda.Detector() as detector:
 - [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [C ABI and Python binding](docs/design/c-abi-and-python.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
 - [Evaluation plan](docs/evaluation-plan.md) / [Benchmark report](docs/benchmark-report.md) / [Accuracy evaluation results](docs/accuracy-report.md)
 - [CPU steady-state report](docs/cpu-steady-state-report.md) / [Six-host CPU benchmark report](docs/cpu-multihost-report.md)
+- [CPU adversarial review and regression checks](docs/cpu-adversarial-review.md)
 - [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Glossary](docs/terminology.md)
 - [ADR-0001: Implement first in an independent repository](docs/adr/0001-independent-implementation.md) / [ADR-0002: Fix the build infrastructure and target environment baseline](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: Adopt approach A as the primary plan for quadrilateral candidate extraction](docs/adr/0003-candidate-extraction-approach.md)
 - [Intellectual property and licensing policy](docs/ip-and-licensing.md) / [Code provenance record](docs/code-provenance.md) / [Contribution guidelines](CONTRIBUTING.md)

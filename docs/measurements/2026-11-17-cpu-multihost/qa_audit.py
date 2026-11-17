@@ -124,6 +124,8 @@ def audit_group(directory, manifest, source):
 
 
 def main():
+    if not __debug__:
+        raise RuntimeError('Validation requires Python assertions; disable -O/-OO and PYTHONOPTIMIZE')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('hosts', nargs='+', type=pathlib.Path)
     parser.add_argument('--output', type=pathlib.Path, required=True)

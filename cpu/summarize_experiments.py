@@ -16,27 +16,56 @@ def main():
     args = parser.parse_args()
     environment = json.loads((args.directory / "environment.json").read_text())
     files = sorted(args.directory.glob("run-*.jsonl"))
-    if len(files) != environment["independent_processes"]:
+    runs = environment["independent_processes"]
+    if type(runs) is not int or runs < 1 or {path.name for path in files} != {
+            f"run-{index}.jsonl" for index in range(1, runs + 1)}:
         raise ValueError("The independent measurement processes are incomplete")
     grouped = collections.defaultdict(lambda: collections.defaultdict(list))
+    configuration = None
+    stable_outputs = {}
+    stable_fields = ("sha256", "width", "height", "detections", "reference_detections",
+                     "rejected", "reference_rejected", "compatibility_discrepancy",
+                     "max_corner_error_px")
     for path in files:
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        headers = [row for row in rows if row["type"] == "environment"]
+        if len(headers) != 1:
+            raise ValueError(f"Expected exactly one benchmark configuration: {path}")
+        if configuration is None:
+            configuration = headers[0]
+        elif headers[0] != configuration:
+            raise ValueError(f"Benchmark configurations differ between processes: {path}")
         seen = set()
-        for line in path.read_text().splitlines():
-            row = json.loads(line)
+        for row in rows:
             if row["type"] != "measurement":
                 continue
             key = (row["scene"], row["variant"])
             if key in seen:
                 raise ValueError(f"Duplicate measurement {key} in {path}")
             seen.add(key)
+            percentiles = [row[name] for name in ["p50_ms", "p95_ms", "p99_ms"]]
+            if (not all(type(value) in (int, float) and math.isfinite(value)
+                        for value in percentiles) or
+                    not 0 < percentiles[0] <= percentiles[1] <= percentiles[2]):
+                raise ValueError(f"Invalid latency percentiles for {key} in {path}")
+            if not all(type(row.get(field)) is int and row[field] > 0
+                       for field in ("width", "height")):
+                raise ValueError(f"Invalid image dimensions for {key} in {path}")
+            outputs = tuple(row.get(field) for field in stable_fields)
+            if key in stable_outputs and stable_outputs[key] != outputs:
+                raise ValueError(f"Inputs or detection outputs differ between processes: {key}")
+            stable_outputs[key] = outputs
             grouped[row["scene"]][row["variant"]].append(row)
+        if not seen:
+            raise ValueError(f"No measurements in {path}")
     scenes = []
     for scene, variants in sorted(grouped.items()):
         reference = variants["opencv"]
         candidate = variants[args.candidate]
         if len(reference) != len(files) or len(candidate) != len(files):
             raise ValueError(f"Missing paired measurement: {scene}")
-        if len({row["sha256"] for row in reference + candidate}) != 1:
+        if len({(row["sha256"], row["width"], row["height"])
+                for row in reference + candidate}) != 1:
             raise ValueError(f"Inputs differ between measurements: {scene}")
         baseline_ms = statistics.median(row["p50_ms"] for row in reference)
         candidate_ms = statistics.median(row["p50_ms"] for row in candidate)
@@ -60,7 +89,9 @@ def main():
         if "previous" in variants:
             previous = variants["previous"]
             if len(previous) != len(files) or any(
-                    row["sha256"] != reference[0]["sha256"] for row in previous):
+                    (row["sha256"], row["width"], row["height"]) !=
+                    (reference[0]["sha256"], reference[0]["width"], reference[0]["height"])
+                    for row in previous):
                 raise ValueError(f"Missing or different previous input: {scene}")
             previous_ms = statistics.median(row["p50_ms"] for row in previous)
             scenes[-1].update({

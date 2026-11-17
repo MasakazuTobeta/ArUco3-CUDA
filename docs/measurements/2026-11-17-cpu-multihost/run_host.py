@@ -24,10 +24,13 @@ def read(path):
 
 
 def save(path, value):
-    path.write_text(json.dumps(value, indent=2) + '\n')
+    with path.open('x') as output:
+        output.write(json.dumps(value, indent=2) + '\n')
 
 
 def main():
+    if not __debug__:
+        raise RuntimeError('Validation requires Python assertions; disable -O/-OO and PYTHONOPTIMIZE')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True, type=pathlib.Path)
     parser.add_argument('--output-dir', required=True, type=pathlib.Path)
@@ -43,14 +46,16 @@ def main():
             raise RuntimeError('Snapshot differs: ' + path)
     binary = str(args.binary.resolve())
     binary_sha = sha(binary)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    save(args.output_dir / 'snapshot.json', manifest)
-    save(args.output_dir / 'input-hashes.json', manifest['inputs'])
     available = os.sched_getaffinity(0)
     one = {args.cpu_one}
     four = {int(c) for c in args.cpu_four.split(',')}
     if len(four) != 4 or not (one | four) <= available:
         raise RuntimeError('Invalid CPU affinity')
+    # Claim the whole result directory before publishing any provenance. Group
+    # collision checks alone cannot protect top-level metadata from a rerun.
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    save(args.output_dir / 'snapshot.json', manifest)
+    save(args.output_dir / 'input-hashes.json', manifest['inputs'])
 
     def run(name, threads, aruco3, iterations, warmup, runs, positive=False):
         destination = args.output_dir / name

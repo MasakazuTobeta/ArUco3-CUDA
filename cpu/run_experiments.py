@@ -39,10 +39,10 @@ def main():
     cpus = {int(cpu) for cpu in args.cpu_list.split(",")}
     if args.runs < 1 or args.threads < 1 or args.iterations < 1 or args.warmup < 0:
         parser.error("runs, threads, iterations must be positive; warmup must be nonnegative")
+    binary = pathlib.Path(args.binary).resolve()
     os.sched_setaffinity(0, cpus)
     destination = pathlib.Path(args.output_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    command = [args.binary, "--input-dir", args.input_dir, "--iterations", str(args.iterations),
+    command = [str(binary), "--input-dir", args.input_dir, "--iterations", str(args.iterations),
                "--warmup", str(args.warmup), "--threads", str(args.threads), "--aruco3", args.aruco3,
                "--variants", args.variants, "--filter", args.filter,
                "--dictionary", args.dictionary,
@@ -62,7 +62,7 @@ def main():
         "cpuinfo": read_text("/proc/cpuinfo"),
         "product_name": read_text("/sys/class/dmi/id/product_name"),
         "load_average_at_start": read_text("/proc/loadavg"),
-        "binary_sha256": hashlib.sha256(pathlib.Path(args.binary).read_bytes()).hexdigest(),
+        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "opencv_provenance": read_text("/opt/opencv/share/aruco3cuda/opencv-provenance.json"),
         "power_mode": "Host configuration retained; no power or clock settings changed",
         "background_load": args.background_note + "; paired timings alternate route order",
@@ -76,12 +76,14 @@ def main():
     metadata["source_sha256"] = {path: hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
                                   for path in source_paths if pathlib.Path(path).is_file() and
                                   pathlib.Path(path).suffix in {".cpp", ".hpp", ".py", ".txt"}}
-    (destination / "environment.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    # Claim a fresh directory atomically after preflight. A failed or concurrent
+    # invocation must never pair old measurements with new provenance.
+    destination.mkdir(parents=True, exist_ok=False)
+    with (destination / "environment.json").open("x") as output:
+        output.write(json.dumps(metadata, indent=2) + "\n")
     for run in range(1, args.runs + 1):
         path = destination / f"run-{run}.jsonl"
-        if path.exists():
-            raise RuntimeError(f"Refusing to overwrite existing measurement: {path}")
-        with path.open("w") as output:
+        with path.open("x") as output:
             subprocess.run(command, stdout=output, check=True)
         print(f"Completed {path}", flush=True)
 

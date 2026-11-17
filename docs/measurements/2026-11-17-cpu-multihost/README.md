@@ -61,12 +61,20 @@ python3 docs/measurements/2026-11-17-cpu-multihost/run_host.py \
 ```
 
 Select valid distinct physical cores for the machine being tested. The example
-affinity is for DGX Spark. The runner refuses existing group directories. For
+affinity is for DGX Spark. The runner claims a new output directory atomically
+after manifest, binary and affinity preflight. It rejects existing directories,
+including empty or partially completed ones, before publishing any metadata.
+Do not precreate the final result directory. Save before-run host captures beside
+it, then copy those captures into it after the run if desired. A failed run leaves
+its evidence intact; a retry must select a fresh result directory. For
 a relocated OpenCV installation, use `--provenance`; a portable runtime also
 requires its library directory in `LD_LIBRARY_PATH`. Capture build information
 and actual resolved library hashes separately as in the local host evidence.
 The aggregation and audit scripts also require their completed local result
 directories; they cannot reconstruct historical measurements from Git alone.
+The host runner and independent audit require Python assertions: both reject
+`-O`, `-OO` and a nonzero `PYTHONOPTIMIZE` before writing output. These modes
+would otherwise disable their compatibility and integrity checks.
 
 ## Goals
 
