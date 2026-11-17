@@ -43,6 +43,7 @@ struct Settings {
     int throughput_frames_ = 0;
     bool aruco3_ = true;
     bool profile_ = false;
+    bool save_samples_ = false;
     bool generate_ = false;
 };
 
@@ -59,6 +60,10 @@ Settings parse(int argc, char** argv) {
     Settings settings;
     for (int i = 1; i < argc; ++i) {
         const std::string name = argv[i];
+        if (name == "--save-samples") {
+            settings.save_samples_ = true;
+            continue;
+        }
         if (name == "--profile") {
             settings.profile_ = true;
             continue;
@@ -70,7 +75,8 @@ Settings parse(int argc, char** argv) {
         if (name == "--help") {
             std::cout << "usage: aruco3cuda_cpu_benchmark --input-dir DIR [--generate] "
                          "[--filter TEXT] [--iterations N] [--warmup N] [--threads N] "
-                         "[--aruco3 0|1] [--dictionary NAME] [--profile] [--throughput-frames N] "
+                         "[--aruco3 0|1] [--dictionary NAME] [--profile] [--save-samples] "
+                         "[--throughput-frames N] "
                          "[--variants "
                          "opencv,previous,optimized,control,lazy,packed,cells,threshold,spatial,"
                          "sparse,contours,cached,lookup,round2]\n";
@@ -353,6 +359,7 @@ void run(const Settings& settings) {
                            CpuOptions{}.threshold_max_prefix_bytes_);
     environment.member_bool("aruco3", settings.aruco3_);
     environment.member_bool("profile_stages", settings.profile_);
+    environment.member_bool("save_samples", settings.save_samples_);
     environment.member_string("dictionary", settings.dictionary_);
     environment.key("cpu_options");
     environment.begin_array();
@@ -503,6 +510,14 @@ void run(const Settings& settings) {
             row.member_double("p50_ms", statistics.p50_, 9);
             row.member_double("p95_ms", statistics.p95_, 9);
             row.member_double("p99_ms", statistics.p99_, 9);
+            if (settings.save_samples_) {
+                row.key("latency_samples_ms");
+                row.begin_array();
+                for (double sample : variant.samples_) {
+                    row.value_double(sample, 9);
+                }
+                row.end_array();
+            }
             row.member_double("throughput_fps",
                               settings.throughput_frames_ > 0
                                       ? settings.throughput_frames_ / throughput_seconds
