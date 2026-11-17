@@ -27,7 +27,7 @@ evaluation, not artifacts we ship.
 flowchart LR
     A["examples/python/*.py"] --> B["python/aruco3cuda<br/>Detector, Config, DeviceImage, Stream"]
     B --> C["_binding.py<br/>ctypes declarations"]
-    C --> D["libaruco3cuda_c.so<br/>16 C functions"]
+    C --> D["libaruco3cuda_c.so<br/>17 C functions"]
     D --> E["aruco3cuda::Detector<br/>C++ core"]
     C -.->|"device memory,<br/>streams"| F["libcudart"]
 ```
@@ -36,7 +36,7 @@ The Python package reaches the C++ core only through the C ABI. It also loads
 the CUDA runtime directly, for the one thing the detector deliberately does not
 do for its caller: allocating the device image and creating the stream.
 
-- 16 functions are exported, and nothing else. The internal C++ symbols of the
+- 17 functions are exported, and nothing else. The internal C++ symbols of the
   static libraries linked in are hidden with `--exclude-libs,ALL`; without it
   they were all re-exported, because `CXX_VISIBILITY_PRESET` covers only the
   shared library's own translation unit.
@@ -54,9 +54,64 @@ do for its caller: allocating the device image and creating the stream.
   without a copy.
 - The package is staged into `<build dir>/python` next to the shared object it
   loads, so a build tree works with `PYTHONPATH` alone.
-- 32 Python tests run from `ctest`, split into the 21 that need no device and
-  the 11 that do. The samples add 22 more, including three that compare the
+- Python tests run from `ctest`, split between tests that need no device and
+  tests that exercise detection and device diagnostics. The samples add 22 more, including three that compare the
   Python and C++ renderers byte for byte.
+
+### Submission lifetime and reinitialization
+
+The detector owns a completion event and orders each submission and download after
+its previous work, including across nonblocking streams. It never synchronizes a
+previous caller stream handle, which may already have been destroyed. Layout
+rebuilding, dictionary replacement, and destruction wait for owned completion.
+Steady submissions remain asynchronous on the host; event wait/record API cost is
+included in end-to-end timing. Input image storage still belongs to the caller and
+must remain valid and unmodified while the submission may read it. The caller
+owns input-write ordering: an upload queued on another stream before `detect`
+can still race an earlier invocation reading the same input. The owned event
+orders detector work, not caller operations that were already submitted.
+
+A partially issued direct dispatch is tracked even when a later launch check
+fails. A failed dispatch does not cancel prior queued work: the caller must keep
+its input alive and synchronize/order its reuse on the supplied stream. The
+owned completion event protects detector-owned storage. If completion recording itself fails, the detector drains that submission's
+stream and invalidates its initialized state; if the drain fails too, reuse requires
+a successful device drain. Host validation leaves old initialization intact, but
+any failure after resource replacement starts leaves the detector uninitialized
+and invalidates old result views. This prevents successful dictionary growth
+followed by failed frame growth from exposing freed dictionary storage.
+
+### Asynchronous failure reporting
+
+`aruco3cuda_detector_device_failure_bits()` adds an independent getter for a
+borrowed device `int32_t` pointer. The existing `Aruco3CudaDeviceDetections` layout
+is unchanged. Python `DeviceDetections.failure_bits` exposes the same address,
+with named values in `DeviceFailure`; the ctypes result structure remains unchanged.
+Neither getter synchronizes or reads a device counter on the host.
+
+The C change is additive: existing C struct layouts, function signatures, and
+`SOVERSION` remain unchanged, so existing C consumers can use the new library.
+The updated Python package requires the new getter and rejects an older shared
+library with a descriptive `ImportError`; reverse compatibility is not promised.
+Use Python files and `libaruco3cuda_c` from the same build. Symbol presence is the
+capability check during this pre-1.0 development phase; the unchanged version
+string alone does not establish support for the additive getter.
+
+All detection routes write the word each frame, including blank frames, in the
+existing final emission kernel. Consumers must read it on the producing stream
+or after successful stream completion. Zero means no reported failure. Any
+nonzero combination invalidates the entire invocation and publishes detection
+count zero; diagnostic `accepted_total` remains intact. Bits are invalid contour
+cycle (1), contour point budget (2), candidate budget (4), contour approximation
+stack (8), and inconsistent candidate counters (16). Unknown nonzero bits also
+invalidate the result. Marker-limit truncation is separate: with zero failure
+bits, `accepted_total > count` reports the retained partial marker list.
+
+`download()` checks this word at its existing synchronization boundary. Candidate
+budget exhaustion returns `CANDIDATE_OVERFLOW`; contour point/stack budgets return
+`INVALID_CONFIG`; consistency failures return `CUDA_ERROR`. These failures leave
+the caller's result unchanged. This also closes the previous legacy-route gap
+where candidate truncation could silently return an incomplete successful result.
 
 ### Decisions
 

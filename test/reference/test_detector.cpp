@@ -33,6 +33,7 @@
 #include "aruco3cuda/dictionary.hpp"
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/types.hpp"
+#include "aruco3cuda/workspace.hpp"
 #include "device_image.hpp"
 #include "test_detector_probe.hpp"
 
@@ -619,6 +620,126 @@ TEST(DetectorTest, reports_marker_overflow) {
     EXPECT_EQ(detections.accepted_total_, 3);
 }
 
+// Candidate truncation must not be hidden by successful decoding of the subset
+// that happened to fit. Preserve caller output on error and recover next frame.
+TEST(DetectorTest, candidate_overflow_preserves_output_and_recovers) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
+    }
+    const cv::aruco::Dictionary dictionary =
+            cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
+    cv::Mat scene(480, 960, CV_8UC1, cv::Scalar(235));
+    for (int id = 0; id < 3; ++id) {
+        cv::Mat marker;
+        dictionary.generateImageMarker(id, kMarkerSidePx, marker, 1);
+        marker.copyTo(scene(cv::Rect(30 + id * 300, 150, kMarkerSidePx, kMarkerSidePx)));
+    }
+    DetectorConfig config = config_for(scene);
+    config.max_candidates_ = 1;
+    config.max_markers_ = 1;
+    OwnedStream stream;
+    ASSERT_NE(stream.get(), nullptr);
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    Detector detector;
+    std::string message;
+    ASSERT_EQ(detector.initialize(table(), config, &message), Status::kOk) << message;
+    ASSERT_EQ(detector.detect_async(image.view(), stream.get(), &message), Status::kOk) << message;
+    HostDetections output;
+    output.ids_ = {999};
+    output.rotations_ = {3};
+    output.corners_ = {1, 2, 3, 4, 5, 6, 7, 8};
+    output.accepted_total_ = 23;
+    const std::string before = digest_of(output);
+    ASSERT_EQ(detector.download(&output, stream.get(), &message), Status::kCandidateOverflow)
+            << message;
+    EXPECT_NE(message.find("candidate budget"), std::string::npos) << message;
+    EXPECT_EQ(digest_of(output), before);
+    EXPECT_EQ(output.accepted_total_, 23);
+    EXPECT_FALSE(output.marker_overflow_);
+    DeviceDetections device;
+    ASSERT_EQ(detector.device_detections(&device), Status::kOk);
+    if (device.failure_bits_ != nullptr) {
+        std::int32_t bits = 0;
+        std::int32_t count = -1;
+        ASSERT_EQ(cudaMemcpy(&bits, device.failure_bits_, sizeof(bits), cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(cudaMemcpy(&count, device.count_, sizeof(count), cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        EXPECT_NE(bits & 4, 0);
+        EXPECT_EQ(count, 0);
+    }
+
+    scene.setTo(235);
+    ASSERT_TRUE(image.upload(scene));
+    ASSERT_EQ(detector.detect_async(image.view(), stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(detector.download(&output, stream.get(), &message), Status::kOk) << message;
+    EXPECT_TRUE(output.ids_.empty());
+    EXPECT_EQ(output.accepted_total_, 0);
+}
+
+// The device diagnostic is observable without a host download on both routes.
+// Inject each diagnostic after completion, then verify download refuses to
+// publish invalid results and the following direct/graph invocation clears it.
+TEST(DetectorTest, device_failure_bits_preserve_output_and_reset_per_frame) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
+    }
+    const cv::Mat scene(96, 128, CV_8UC1, cv::Scalar(235));
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    for (const bool use_graph : {false, true}) {
+        OwnedStream owned_stream;
+        ASSERT_NE(owned_stream.get(), nullptr);
+        const cudaStream_t stream = use_graph ? owned_stream.get() : nullptr;
+        Detector detector;
+        std::string message;
+        ASSERT_EQ(detector.initialize(table(), config_for(scene), &message), Status::kOk)
+                << message;
+        ASSERT_EQ(detector.detect_async(image.view(), stream, &message), Status::kOk) << message;
+        DeviceDetections device;
+        ASSERT_EQ(detector.device_detections(&device), Status::kOk);
+        ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
+        ASSERT_NE(device.failure_bits_, nullptr);
+        struct FailureCase {
+            std::int32_t bits;
+            Status status;
+            const char* message;
+        };
+        const FailureCase failures[] = {{1, Status::kCudaError, "invalid cycle"},
+                                        {2, Status::kInvalidConfig, "point budget"},
+                                        {4, Status::kCandidateOverflow, "candidate budget"},
+                                        {8, Status::kInvalidConfig, "stack budget"},
+                                        {16, Status::kCudaError, "candidate counters"},
+                                        {32, Status::kCudaError, "failure bits=32"}};
+        for (const FailureCase& failure : failures) {
+            ASSERT_EQ(cudaMemcpyAsync(device.failure_bits_, &failure.bits, sizeof(failure.bits),
+                                      cudaMemcpyHostToDevice, stream),
+                      cudaSuccess);
+            HostDetections output;
+            output.ids_ = {999};
+            output.rotations_ = {3};
+            output.corners_ = {1, 2, 3, 4, 5, 6, 7, 8};
+            output.accepted_total_ = 23;
+            const std::string before = digest_of(output);
+            ASSERT_EQ(detector.download(&output, stream, &message), failure.status) << message;
+            EXPECT_NE(message.find(failure.message), std::string::npos) << message;
+            EXPECT_EQ(digest_of(output), before);
+            EXPECT_EQ(output.accepted_total_, 23);
+            EXPECT_FALSE(output.marker_overflow_);
+            ASSERT_EQ(detector.detect_async(image.view(), stream, &message), Status::kOk)
+                    << message;
+            ASSERT_EQ(detector.download(&output, stream, &message), Status::kOk) << message;
+            EXPECT_TRUE(output.ids_.empty());
+            std::int32_t cleared = -1;
+            ASSERT_EQ(cudaMemcpy(&cleared, device.failure_bits_, sizeof(cleared),
+                                 cudaMemcpyDeviceToHost),
+                      cudaSuccess);
+            EXPECT_EQ(cleared, 0);
+        }
+    }
+}
+
 // Failure path: rejects unsupported configuration combinations.
 TEST(DetectorTest, rejects_unsupported_combinations) {
     DetectorConfig aruco3_without_refine;
@@ -708,6 +829,163 @@ TEST(DetectorTest, supports_move) {
     EXPECT_FALSE(source.initialized());
     // NOLINTNEXTLINE(bugprone-use-after-move)
     EXPECT_EQ(source.device_detections(nullptr), Status::kNotInitialized);
+}
+
+/// Storage allocated before delayed submissions, avoiding an implicit allocation drain.
+struct CompletionProbe {
+    aruco3cuda::Workspace workspace_;
+    int* values_ = nullptr;
+    bool reserve() {
+        void* data = nullptr;
+        if (this->workspace_.ensure_capacity(256, aruco3cuda::MemorySpace::kDevice) !=
+                    Status::kOk ||
+            this->workspace_.allocate(3 * sizeof(int), alignof(int), &data) != Status::kOk) {
+            return false;
+        }
+        this->values_ = static_cast<int*>(data);
+        return true;
+    }
+};
+
+TEST(DetectorTest, orders_same_layout_across_nonblocking_streams) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    const cv::Mat original = make_scene(640, 480, cv::Point(240, 140));
+    const cv::Mat replacement = make_scene(640, 480, cv::Point(240, 140), 7);
+    SceneImage image;
+    SceneImage changed;
+    ASSERT_TRUE(image.upload(original));
+    ASSERT_TRUE(changed.upload(replacement));
+    CompletionProbe probe;
+    ASSERT_TRUE(probe.reserve());
+    Detector detector;
+    OwnedStream first;
+    OwnedStream second;
+    ASSERT_NE(first.get(), nullptr);
+    ASSERT_NE(second.get(), nullptr);
+    std::string message;
+    ASSERT_EQ(detector.initialize(table(), config_for(original), &message), Status::kOk) << message;
+    ASSERT_EQ(detector.detect_async(image.view(), first.get(), &message), Status::kOk) << message;
+    HostDetections warm;
+    ASSERT_EQ(detector.download(&warm, first.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(warm.ids_, std::vector<int>({kMarkerId}));
+
+    ASSERT_TRUE(aruco3cuda::test::enqueue_spin(500000000LL, probe.values_, first.get()));
+    ASSERT_EQ(cudaMemcpy2DAsync(const_cast<std::uint8_t*>(image.view().data_),
+                                image.view().pitch_bytes_, changed.view().data_,
+                                changed.view().pitch_bytes_, original.cols, original.rows,
+                                cudaMemcpyDeviceToDevice, first.get()),
+              cudaSuccess);
+    ASSERT_EQ(detector.detect_async(image.view(), first.get(), &message), Status::kOk) << message;
+    // Same pointer/dimensions, but another nonblocking stream. Its work must
+    // follow the first detector submission, including that stream's prior copy.
+    ASSERT_EQ(detector.detect_async(image.view(), second.get(), &message), Status::kOk) << message;
+    HostDetections actual;
+    ASSERT_EQ(detector.download(&actual, second.get(), &message), Status::kOk) << message;
+    EXPECT_EQ(actual.ids_, std::vector<int>({7}));
+}
+
+TEST(DetectorTest, orders_layout_change_after_work_on_another_stream) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    const cv::Mat original = make_scene(640, 480, cv::Point(240, 140));
+    const cv::Mat replacement = make_scene(800, 600, cv::Point(300, 200), 7);
+    SceneImage image;
+    SceneImage changed;
+    ASSERT_TRUE(image.upload(original));
+    ASSERT_TRUE(changed.upload(replacement));
+    CompletionProbe probe;
+    ASSERT_TRUE(probe.reserve());
+    Detector detector;
+    OwnedStream first;
+    OwnedStream second;
+    ASSERT_NE(first.get(), nullptr);
+    ASSERT_NE(second.get(), nullptr);
+    std::string message;
+    ASSERT_EQ(detector.initialize(table(), config_for(replacement), &message), Status::kOk)
+            << message;
+    ASSERT_EQ(detector.detect_async(image.view(), first.get(), &message), Status::kOk) << message;
+    HostDetections warm;
+    ASSERT_EQ(detector.download(&warm, first.get(), &message), Status::kOk) << message;
+    ASSERT_TRUE(aruco3cuda::test::enqueue_spin(500000000LL, probe.values_, first.get()));
+    ASSERT_EQ(detector.detect_async(image.view(), first.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(detector.detect_async(changed.view(), second.get(), &message), Status::kOk)
+            << message;
+    // Deliberately complete both streams before inspecting the final output:
+    // an old delayed frame must not overwrite the newer frame's reusable storage.
+    ASSERT_EQ(cudaStreamSynchronize(first.get()), cudaSuccess);
+    ASSERT_EQ(cudaStreamSynchronize(second.get()), cudaSuccess);
+    HostDetections actual;
+    ASSERT_EQ(detector.download(&actual, second.get(), &message), Status::kOk) << message;
+    EXPECT_EQ(actual.ids_, std::vector<int>({7}));
+}
+
+TEST(DetectorTest, reinitialize_waits_before_reusing_dictionary_storage) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    const cv::Mat scene = make_scene(640, 480, cv::Point(240, 140));
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    CompletionProbe probe;
+    ASSERT_TRUE(probe.reserve());
+    Detector detector;
+    OwnedStream stream;
+    ASSERT_NE(stream.get(), nullptr);
+    std::string message;
+    const DetectorConfig config = config_for(scene);
+    ASSERT_EQ(detector.initialize(table(), config, &message), Status::kOk) << message;
+    ASSERT_EQ(detector.detect_async(image.view(), stream.get(), &message), Status::kOk) << message;
+    HostDetections warm;
+    ASSERT_EQ(detector.download(&warm, stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(warm.ids_, std::vector<int>({kMarkerId}));
+    DeviceDetections view;
+    ASSERT_EQ(detector.device_detections(&view), Status::kOk);
+    ASSERT_TRUE(aruco3cuda::test::enqueue_spin(500000000LL, probe.values_, stream.get()));
+    ASSERT_EQ(detector.detect_async(image.view(), stream.get(), &message), Status::kOk) << message;
+    ASSERT_EQ(cudaMemcpyAsync(probe.values_ + 1, view.count_, sizeof(int), cudaMemcpyDeviceToDevice,
+                              stream.get()),
+              cudaSuccess);
+    ASSERT_EQ(cudaMemcpyAsync(probe.values_ + 2, view.ids_, sizeof(int), cudaMemcpyDeviceToDevice,
+                              stream.get()),
+              cudaSuccess);
+    // Equal capacity avoids any allocation implicitly synchronizing old work.
+    auto replacement = table();
+    std::vector<aruco3cuda::MarkerCode> empty_codes(
+            static_cast<std::size_t>(replacement.code_count_) * 4U, 0);
+    replacement.codes_ = empty_codes.data();
+    ASSERT_EQ(detector.initialize(replacement, config, &message), Status::kOk) << message;
+    int copied[2] = {-1, -1};
+    ASSERT_EQ(cudaMemcpy(copied, probe.values_ + 1, sizeof(copied), cudaMemcpyDeviceToHost),
+              cudaSuccess);
+    EXPECT_EQ(copied[0], 1);
+    EXPECT_EQ(copied[1], kMarkerId);
+    EXPECT_EQ(detector.device_detections(&view), Status::kNotInitialized);
+}
+
+TEST(DetectorTest, completion_survives_destroyed_producer_stream) {
+    if (!has_cuda_device())
+        GTEST_SKIP();
+    const cv::Mat scene = make_scene(640, 480, cv::Point(240, 140));
+    SceneImage image;
+    ASSERT_TRUE(image.upload(scene));
+    Detector detector;
+    std::string message;
+    ASSERT_EQ(detector.initialize(table(), config_for(scene), &message), Status::kOk) << message;
+    {
+        OwnedStream producer;
+        ASSERT_NE(producer.get(), nullptr);
+        ASSERT_EQ(detector.detect_async(image.view(), producer.get(), &message), Status::kOk)
+                << message;
+        ASSERT_EQ(cudaStreamSynchronize(producer.get()), cudaSuccess);
+    }
+    HostDetections actual;
+    ASSERT_EQ(detector.download(&actual, nullptr, &message), Status::kOk) << message;
+    EXPECT_EQ(actual.ids_, std::vector<int>({kMarkerId}));
+    // Reinitialization must wait on an owned event, never the dead stream handle.
+    ASSERT_EQ(detector.initialize(table(), config_for(scene), &message), Status::kOk) << message;
+    ASSERT_EQ(detector.detect_async(image.view(), nullptr, &message), Status::kOk) << message;
+    ASSERT_EQ(detector.download(&actual, nullptr, &message), Status::kOk) << message;
+    EXPECT_EQ(actual.ids_, std::vector<int>({kMarkerId}));
 }
 
 }  // namespace

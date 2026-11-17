@@ -199,6 +199,14 @@ def declare(library):
     Without this, ctypes assumes int for everything, which silently truncates a
     64-bit pointer on the way in and on the way out.
     """
+    # This package requires the additive asynchronous-failure getter. Existing C
+    # struct layouts are unchanged, but an older shared library lacks this API.
+    if not hasattr(library, "aruco3cuda_detector_device_failure_bits"):
+        raise ImportError(
+            "aruco3cuda Python requires libaruco3cuda_c with asynchronous failure reporting "
+            "(missing aruco3cuda_detector_device_failure_bits); rebuild the shared library "
+            "and use the Python package from the same build"
+        )
     library.aruco3cuda_version_string.argtypes = []
     library.aruco3cuda_version_string.restype = ctypes.c_char_p
 
@@ -280,6 +288,12 @@ def declare(library):
         ctypes.POINTER(Aruco3CudaDeviceDetections),
     ]
     library.aruco3cuda_detector_device_detections.restype = ctypes.c_int
+
+    library.aruco3cuda_detector_device_failure_bits.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    library.aruco3cuda_detector_device_failure_bits.restype = ctypes.c_int
 
     library.aruco3cuda_detector_workspace_statistics.argtypes = [
         ctypes.c_void_p,

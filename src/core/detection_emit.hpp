@@ -52,7 +52,7 @@ struct DetectionEmitBuffers {
 /// Synchronization: host only; it holds no synchronization point. Calls no CUDA API.
 ///
 /// Example input: settings with max_candidates_ = 4096 and max_markers_ = 1024
-/// Example output: 62464
+/// Example output: 62720
 std::size_t detection_workspace_bytes(const DetectorConfig& config);
 
 /// Allocates the detections and the scratch space.
@@ -96,9 +96,12 @@ Status reserve_detections(const DetectorConfig& config, Workspace& workspace,
 /// @param buffers Scratch space.
 /// @param out Destination.
 /// @param stream Stream the kernels are submitted to.
+/// @param original Optional pre-group candidate counters for overflow validation.
+/// @param upstream_failure Optional device diagnostic word from candidate extraction.
 /// @return kOk. kInvalidArgument on invalid arguments, kCudaError when a kernel
-///         launch fails. Exceeding the limit is not returned here; pick it up
-///         from read_detection_count.
+///         launch fails. Resource failure is reported by out->failure_bits_ after
+///         stream completion; read_detection_count alone reports only marker truncation
+///         and cannot validate the device failure word.
 ///
 /// Ownership: does not retain the argument regions.
 /// Synchronization: submits kernels asynchronously on the stream. The results
@@ -108,7 +111,9 @@ Status reserve_detections(const DetectorConfig& config, Workspace& workspace,
 /// Example output: kOk. count_ = 2
 Status emit_detections_async(const DeviceCandidates& grouped, const MatchBuffers& matches,
                              const CandidateTreeBuffers& tree, DetectionEmitBuffers* buffers,
-                             DeviceDetections* out, cudaStream_t stream);
+                             DeviceDetections* out, cudaStream_t stream,
+                             const DeviceCandidates* original = nullptr,
+                             const std::int32_t* upstream_failure = nullptr);
 
 /// Reads the detection count back to the host.
 ///

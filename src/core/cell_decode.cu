@@ -11,6 +11,7 @@
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/workspace.hpp"
 #include "candidate_filter.hpp"
+#include "candidate_grid.hpp"
 #include "cell_sample.hpp"
 #include "cuda_check.hpp"
 
@@ -66,7 +67,7 @@ struct OtsuCandidate {
 /// occurs, and changing the order of the additions leaves the result bit-identical.**
 template <bool CountOccupied>
 __device__ double otsu_center(const int* histogram, double scale, double* warp_partial,
-                              int* occupied_warps) {
+                              [[maybe_unused]] int* occupied_warps) {
     double partial = 0.0;
     for (int i = static_cast<int>(threadIdx.x); i < kHistogramBins;
          i += static_cast<int>(blockDim.x)) {
@@ -213,15 +214,11 @@ __device__ int otsu_argmax(const OtsuState& state, double mu, OtsuCandidate* war
 
 /// Computes the cell ratios per candidate and counts the erroneous border cells. One block
 /// handles one candidate.
-__global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::int32_t* count,
-                                    float* ratios, std::int32_t* border_errors,
-                                    std::uint8_t* accepted, std::int32_t* thresholds,
-                                    DecodeParams params) {
-    const int candidate = static_cast<int>(blockIdx.x);
-    if (candidate >= *count) {
-        return;
-    }
-
+__device__ __forceinline__ void decode_one_candidate(const std::uint8_t* canonical, int candidate,
+                                                     float* ratios, std::int32_t* border_errors,
+                                                     std::uint8_t* accepted,
+                                                     std::int32_t* thresholds,
+                                                     DecodeParams params) {
     __shared__ int histogram[kHistogramBins];
 #if defined(ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT) && ARUCO3CUDA_EXPERIMENT_OTSU_FIXED_POINT == 2
     __shared__ int occupied_warps[kDecodeWarps];
@@ -399,6 +396,31 @@ __global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::in
     }
 }
 
+/// A block reuses shared scratch only after every lane finishes the prior
+/// candidate. Device-helper returns, including lane-zero match failure, rejoin
+/// this barrier rather than terminating one lane's persistent loop.
+__global__ void decode_cells_kernel(const std::uint8_t* canonical, const std::int32_t* count,
+                                    float* ratios, std::int32_t* border_errors,
+                                    std::uint8_t* accepted, std::int32_t* thresholds,
+                                    DecodeParams params) {
+#if ARUCO3CUDA_EXPERIMENT_PERSISTENT_CANDIDATES
+    const long long total = *count;
+    for (long long slot = static_cast<long long>(blockIdx.x); slot < total;
+         slot += static_cast<long long>(gridDim.x)) {
+        const int candidate = static_cast<int>(slot);
+        decode_one_candidate(canonical, candidate, ratios, border_errors, accepted, thresholds,
+                             params);
+        __syncthreads();
+    }
+#else
+    const int candidate = static_cast<int>(blockIdx.x);
+    if (candidate < *count) {
+        decode_one_candidate(canonical, candidate, ratios, border_errors, accepted, thresholds,
+                             params);
+    }
+#endif
+}
+
 }  // namespace
 
 int cells_per_side(const DetectorConfig& config, int marker_size) {
@@ -516,7 +538,7 @@ Status build_cell_ratios_async(const CanonicalBuffers& canonical,
         return Status::kInvalidConfig;
     }
 
-    decode_cells_kernel<<<static_cast<unsigned int>(candidates.capacity_),
+    decode_cells_kernel<<<candidate_grid_blocks(candidates.capacity_),
                           static_cast<unsigned int>(kDecodeThreads), 0, stream>>>(
             canonical.images_, candidates.count_, ratios->ratios_, ratios->border_errors_,
             ratios->accepted_, ratios->thresholds_, params);

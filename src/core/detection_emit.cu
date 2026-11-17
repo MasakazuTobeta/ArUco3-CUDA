@@ -84,14 +84,28 @@ __global__ void emit_kernel(const DeviceCandidates grouped, const MatchBuffers m
 }
 
 /// Writes out the detection count.
-__global__ void store_detection_count_kernel(const std::int32_t* total, std::int32_t* count,
-                                             std::int32_t* accepted_total, int capacity) {
+__global__ void store_detection_count_kernel(
+        const std::int32_t* total, std::int32_t* count, std::int32_t* accepted_total, int capacity,
+        const std::int32_t* candidate_count, const std::int32_t* candidate_total,
+        int candidate_capacity, const std::int32_t* upstream_failure, std::int32_t* failure_bits) {
     if (threadIdx.x != 0U || blockIdx.x != 0U) {
         return;
     }
     const std::int32_t value = *total;
+    std::int32_t failure = upstream_failure == nullptr ? 0 : *upstream_failure;
+    if (candidate_count != nullptr) {
+        if (*candidate_count < 0 || *candidate_count > candidate_capacity ||
+            *candidate_total < *candidate_count) {
+            failure |= static_cast<std::int32_t>(DeviceFailure::kInvalidCandidateCounters);
+        } else if (*candidate_total > *candidate_count) {
+            failure |= static_cast<std::int32_t>(DeviceFailure::kCandidateOverflow);
+        }
+    }
+    // A single thread overwrites the status each frame before refinement. A failed
+    // invocation retains diagnostic totals but publishes no partial detections.
+    *failure_bits = failure;
     *accepted_total = value;
-    *count = (value > capacity) ? capacity : value;
+    *count = failure != 0 ? 0 : ((value > capacity) ? capacity : value);
 }
 
 }  // namespace
@@ -108,7 +122,7 @@ std::size_t detection_workspace_bytes(const DetectorConfig& config) {
     const std::size_t scan = scan_workspace_bytes(config.max_candidates_);
     const std::size_t int_planes = plane_bytes(markers, sizeof(std::int32_t)) * 3U;
     const std::size_t corner_planes = plane_bytes(markers * kQuadCornerCount, sizeof(float)) * 2U;
-    const std::size_t scalars = plane_bytes(1U, sizeof(std::int32_t)) * 2U;
+    const std::size_t scalars = plane_bytes(1U, sizeof(std::int32_t)) * 3U;
     if (offsets == 0U || scan == 0U || int_planes == 0U || corner_planes == 0U || scalars == 0U) {
         return 0U;
     }
@@ -161,7 +175,8 @@ Status reserve_detections(const DetectorConfig& config, Workspace& workspace,
         }
         *target = static_cast<float*>(pointer);
     }
-    std::int32_t** scalar_targets[] = {&detections.count_, &detections.accepted_total_};
+    std::int32_t** scalar_targets[] = {&detections.count_, &detections.accepted_total_,
+                                       &detections.failure_bits_};
     for (std::int32_t** target : scalar_targets) {
         status = workspace.allocate(sizeof(std::int32_t), kPlaneAlignment, &pointer);
         if (status != Status::kOk) {
@@ -177,10 +192,17 @@ Status reserve_detections(const DetectorConfig& config, Workspace& workspace,
 
 Status emit_detections_async(const DeviceCandidates& grouped, const MatchBuffers& matches,
                              const CandidateTreeBuffers& tree, DetectionEmitBuffers* buffers,
-                             DeviceDetections* out, cudaStream_t stream) {
+                             DeviceDetections* out, cudaStream_t stream,
+                             const DeviceCandidates* original,
+                             const std::int32_t* upstream_failure) {
     if (buffers == nullptr || out == nullptr || buffers->offsets_ == nullptr ||
-        out->ids_ == nullptr || out->count_ == nullptr || grouped.count_ == nullptr ||
-        matches.ids_ == nullptr || tree.depth_ == nullptr || tree.stop_depth_ == nullptr) {
+        out->ids_ == nullptr || out->count_ == nullptr || out->failure_bits_ == nullptr ||
+        grouped.count_ == nullptr || matches.ids_ == nullptr || tree.depth_ == nullptr ||
+        tree.stop_depth_ == nullptr) {
+        return Status::kInvalidArgument;
+    }
+    if (original != nullptr &&
+        (original->count_ == nullptr || original->accepted_total_ == nullptr)) {
         return Status::kInvalidArgument;
     }
     if (buffers->capacity_ < grouped.capacity_ || matches.capacity_ < grouped.capacity_ ||
@@ -212,8 +234,11 @@ Status emit_detections_async(const DeviceCandidates& grouped, const MatchBuffers
         return status;
     }
 
-    store_detection_count_kernel<<<1U, 1U, 0, stream>>>(buffers->scan_.total_, out->count_,
-                                                        out->accepted_total_, out->capacity_);
+    store_detection_count_kernel<<<1U, 1U, 0, stream>>>(
+            buffers->scan_.total_, out->count_, out->accepted_total_, out->capacity_,
+            original == nullptr ? nullptr : original->count_,
+            original == nullptr ? nullptr : original->accepted_total_,
+            original == nullptr ? 0 : original->capacity_, upstream_failure, out->failure_bits_);
     return check_kernel_launch("detection_emit.store_detection_count_kernel", -1, false, stream);
 }
 
@@ -228,17 +253,26 @@ Status read_detection_count(const DeviceDetections& detections, int* out_count,
                                                cudaMemcpyDeviceToHost, stream),
                                "cudaMemcpyAsync", "detection.read_count", -1, stream);
     if (status != Status::kOk) {
+        // A failed later copy can leave an earlier write into values[] queued.
+        // Drain before stack storage expires, preserving the original diagnostic.
+        static_cast<void>(cudaStreamSynchronize(stream));
         return status;
     }
     status = check_cuda(cudaMemcpyAsync(&values[1], detections.accepted_total_,
                                         sizeof(std::int32_t), cudaMemcpyDeviceToHost, stream),
                         "cudaMemcpyAsync", "detection.read_total", -1, stream);
     if (status != Status::kOk) {
+        // A failed later copy can leave an earlier write into values[] queued.
+        // Drain before stack storage expires, preserving the original diagnostic.
+        static_cast<void>(cudaStreamSynchronize(stream));
         return status;
     }
     status = check_cuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize",
                         "detection.read_count", -1, stream);
     if (status != Status::kOk) {
+        // A failed later copy can leave an earlier write into values[] queued.
+        // Drain before stack storage expires, preserving the original diagnostic.
+        static_cast<void>(cudaStreamSynchronize(stream));
         return status;
     }
     *out_count = static_cast<int>(values[0]);

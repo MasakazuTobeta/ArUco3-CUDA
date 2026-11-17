@@ -85,3 +85,15 @@ When a failure that could recur or an environment-specific caveat comes to light
 ### Instrumented CPU test timeouts
 
 - The full-corpus and changing-frame cases can exceed the inherited 600 s CTest limit under ASan/UBSan on GB10 efficiency cores. Preserve the timeout logs, check for sanitizer diagnostics, and rerun only the affected cases with a recorded generated-build timeout override. Do not reduce inputs or assertions to obtain a pass. The [steady-state validation record](docs/measurements/2026-11-17-cpu-steady-validation/README.md) retains the 1800 s override and successful unchanged-case reruns.
+
+### Build-dependent getters and static archive order
+
+- The optimized CPU library also compiles `src/core/config.cpp` without CUDA-private definitions. Putting resize/build-profile getters in that shared source let CPU-first static linking silently select the generic descriptor for the GPU audit; this changed runtime resize arithmetic as well as metadata. Keep build-dependent getters in core-only sources. Test CPU-first and core-first link orders against CMake's explicit expected values, and assert the actual executable's profile metadata before accepting quality or timing logs.
+
+### CUDA runtime and driver checks on optional benchmark hosts
+
+- An installed toolkit does not establish runtime compatibility. On the RTX 4090 host, the mounted CUDA 13 build compiled but GPU tests skipped because device discovery failed with the existing 575.64.03 driver (reported CUDA 12.9 capability). Rebuilding in a separate CUDA 12.6 container executed the same tests and all four sanitizer tools successfully. Keep failed/skipped logs, never count skipped device tests as a pass, and use a toolkit compatible with the existing driver rather than changing a shared host's driver for a benchmark.
+
+### Affinity tests in restricted containers
+
+- A container or job scheduler may exclude CPU 0 from the process affinity mask. A successful-affinity test must select a CPU returned by `sched_getaffinity`, then restore the original mask so later cases are not constrained. Preserve an `affinity-failed` result for unavailable CPUs; do not relax the production error check or widen the container CPU allocation merely to pass the test.

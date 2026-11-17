@@ -16,6 +16,7 @@ were checked by deliberately inserting a field into the ctypes struct alone:
 
 Neither alone is enough, which is why both are here.
 """
+import ctypes
 import unittest
 
 import aruco3cuda
@@ -26,6 +27,15 @@ class VersionTest(unittest.TestCase):
         version = aruco3cuda.version()
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         self.assertEqual(version, aruco3cuda.__version__)
+
+
+class LibraryCompatibilityTest(unittest.TestCase):
+    def test_older_library_without_failure_getter_is_rejected_clearly(self):
+        class OlderLibrary:
+            pass
+
+        with self.assertRaisesRegex(ImportError, "missing aruco3cuda_detector_device_failure_bits"):
+            aruco3cuda._binding.declare(OlderLibrary())
 
 
 class DictionaryTest(unittest.TestCase):
@@ -186,6 +196,35 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(_status_name(aruco3cuda.Status.OK), "kOk")
         self.assertEqual(_status_name(aruco3cuda.Status.CUDA_ERROR), "kCudaError")
         self.assertEqual(_status_name(aruco3cuda.Status.INTERNAL_ERROR), "kInternalError")
+
+
+class DeviceFailureBindingTest(unittest.TestCase):
+    def test_device_result_abi_layout_is_unchanged(self):
+        from aruco3cuda import _binding
+
+        self.assertEqual(
+            [name for name, _ in _binding.Aruco3CudaDeviceDetections._fields_],
+            ["ids", "rotations", "corner_x", "corner_y", "source", "count",
+             "accepted_total", "capacity"],
+        )
+        self.assertEqual(_binding.Aruco3CudaDeviceDetections.capacity.offset,
+                         7 * ctypes.sizeof(ctypes.c_void_p))
+
+    def test_failure_getter_rejects_invalid_arguments_without_changing_output(self):
+        from aruco3cuda import _lib
+
+        pointer = ctypes.c_void_p(1234)
+        getter = _lib.aruco3cuda_detector_device_failure_bits
+        self.assertEqual(getter(None, ctypes.byref(pointer)),
+                         aruco3cuda.Status.INVALID_ARGUMENT)
+        self.assertEqual(pointer.value, 1234)
+        with aruco3cuda.Detector() as detector:
+            self.assertEqual(getter(detector._handle, None),
+                             aruco3cuda.Status.INVALID_ARGUMENT)
+            self.assertEqual(getter(detector._handle, ctypes.byref(pointer)),
+                             aruco3cuda.Status.NOT_INITIALIZED)
+            self.assertEqual(pointer.value, 1234)
+
 
 
 class DetectorLifetimeTest(unittest.TestCase):

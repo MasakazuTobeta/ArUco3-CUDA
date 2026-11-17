@@ -39,6 +39,7 @@ __all__ = [
     "Detections",
     "Detector",
     "DeviceDetections",
+    "DeviceFailure",
     "DeviceImage",
     "DictionaryInfo",
     "Error",
@@ -71,6 +72,17 @@ class Status(enum.IntEnum):
     CUDA_ERROR = 7
     NOT_INITIALIZED = 8
     INTERNAL_ERROR = 100
+
+
+class DeviceFailure(enum.IntFlag):
+    """Bits in the device failure word. Any nonzero value invalidates results."""
+
+    NONE = 0
+    INVALID_CONTOUR_CYCLE = 1
+    CONTOUR_POINT_OVERFLOW = 2
+    CANDIDATE_OVERFLOW = 4
+    CONTOUR_APPROXIMATION_OVERFLOW = 8
+    INVALID_CANDIDATE_COUNTERS = 16
 
 
 class MemorySpace(enum.IntEnum):
@@ -183,9 +195,14 @@ class Detections:
 class DeviceDetections:
     """Device pointers to the results, for a stage that stays on the GPU.
 
-    The detector owns this memory. The pointers become invalid when the detector
-    is closed or the input dimensions change, and the contents are not final
-    until the stream has completed.
+    The detector owns this memory. Reinitialization, closing, or layout rebuilding
+    invalidates these borrowed views; the next detection overwrites their contents.
+    Order external readers before those operations, because the detector does not
+    track readers. The contents are not final until the producing stream completes.
+    Read the int32 word at failure_bits on the
+    producing stream or after completion; any nonzero DeviceFailure value
+    invalidates all results. This scalar is reset each frame. Marker-limit
+    truncation is separate and uses accepted_total > count.
     """
 
     __slots__ = (
@@ -197,9 +214,10 @@ class DeviceDetections:
         "count",
         "accepted_total",
         "capacity",
+        "failure_bits",
     )
 
-    def __init__(self, raw):
+    def __init__(self, raw, failure_bits=None):
         self.ids = raw.ids
         self.rotations = raw.rotations
         self.corner_x = raw.corner_x
@@ -208,6 +226,7 @@ class DeviceDetections:
         self.count = raw.count
         self.accepted_total = raw.accepted_total
         self.capacity = raw.capacity
+        self.failure_bits = failure_bits
 
     def __repr__(self):
         return f"DeviceDetections(capacity={self.capacity}, ids=0x{self.ids or 0:x})"
@@ -460,7 +479,10 @@ class Detector:
         dimensions of the images actually being processed unless that is what is
         wanted.
 
-        Synchronizes the whole device once.
+        Waits for prior detector work and synchronizes the whole device at the end.
+        Host validation failure preserves an existing detector. Once resource
+        replacement begins, borrowed result views are invalidated and failure
+        leaves the detector uninitialized.
         """
         config = Config() if config is None else config
         buffer = ctypes.create_string_buffer(_binding.kMessageCapacity)
@@ -489,7 +511,17 @@ class Detector:
         rejected on purpose: use DeviceImage.from_host so that the transfer is
         visible in the calling code.
 
-        Returns immediately. Nothing has run when it does.
+        Unchanged-layout steady submissions are host-asynchronous. Changed image
+        pointers, dimensions, or pitch wait for prior detector work before rebuilding;
+        first or rebuilt layout preparation can also synchronize for resize coefficients.
+        A successful return does not mean GPU work has completed.
+
+        Keep image storage valid and unmodified while this invocation may read it,
+        including after an error that follows partial submission. The caller orders
+        uploads against earlier reads of the same buffer; detector stream ordering
+        cannot retroactively order an upload already queued by the caller.
+        Completion-record failure invalidates the detector; initialize it again
+        successfully before submitting another detection.
         """
         view = _to_image_view(image)
         buffer = ctypes.create_string_buffer(_binding.kMessageCapacity)
@@ -544,14 +576,22 @@ class Detector:
         """Borrow the device pointers to the results of the most recent detect.
 
         Does not synchronize. The contents are not final until the stream has
-        completed.
+        completed. Check the device int32 word at result.failure_bits before
+        consuming detections; a nonzero DeviceFailure value invalidates them.
         """
         raw = _binding.Aruco3CudaDeviceDetections()
         _check(
             _lib.aruco3cuda_detector_device_detections(self._handle, ctypes.byref(raw)),
             "device_detections",
         )
-        return DeviceDetections(raw)
+        failure_bits = ctypes.c_void_p()
+        _check(
+            _lib.aruco3cuda_detector_device_failure_bits(
+                self._handle, ctypes.byref(failure_bits)
+            ),
+            "device_failure_bits",
+        )
+        return DeviceDetections(raw, failure_bits.value)
 
     def workspace_statistics(self):
         """Report how the device workspace is being used."""
@@ -563,7 +603,10 @@ class Detector:
         return WorkspaceStatistics(raw)
 
     def close(self):
-        """Release the detector and its device memory. Safe to call twice."""
+        """Wait for detector work and release its memory. Safe to call twice.
+
+        Finish external readers of borrowed results before closing.
+        """
         if getattr(self, "_handle", None) is not None and self._handle.value is not None:
             _lib.aruco3cuda_detector_destroy(self._handle)
             self._handle = ctypes.c_void_p()

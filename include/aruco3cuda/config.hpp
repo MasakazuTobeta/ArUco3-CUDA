@@ -35,6 +35,109 @@ enum class CornerRefineMethod : int {
 /// Example output: "kSubpix"
 const char* to_string(CornerRefineMethod method);
 
+/// Returns the segmentation resize arithmetic profile compiled into the core.
+///
+/// @return "GENERIC" or "OPENCV_ARM_HAL", matching ARUCO3CUDA_RESIZE_PROFILE.
+///
+/// Ownership: points to immutable static storage; the caller must not free it.
+/// Synchronization: host only, with no synchronization or CUDA API calls.
+///
+/// Example input: no arguments, core built with -DARUCO3CUDA_RESIZE_PROFILE=GENERIC
+/// Example output: "GENERIC"
+const char* compiled_resize_profile() noexcept;
+
+/// Returns the effective host-HAL descriptor used by the core resize profile.
+///
+/// @return "GENERIC", "NEON", "SVE128", "SVE256", or "SVE512". AUTO is resolved
+///         and cached on first use; explicit build overrides require no probing.
+///
+/// Ownership: points to immutable static storage; the caller must not free it.
+/// Synchronization: no CUDA calls or device synchronization. AUTO queries host
+///                  CPU capabilities and the calling thread's SVE vector length
+///                  once. Later thread vector-length changes do not change it.
+///
+/// Example input: ARM HAL profile with ARUCO3CUDA_RESIZE_ARM_BACKEND=NEON
+/// Example output: "NEON"
+const char* compiled_resize_backend() noexcept;
+
+/// Returns the SVE vector length used by the effective resize descriptor.
+///
+/// @return 16, 32, or 64 bytes for SVE128/256/512; 0 for GENERIC or NEON.
+///         AUTO uses NEON when SVE2 or a supported vector length is unavailable.
+///
+/// Ownership: returns a value and retains no caller storage.
+/// Synchronization: same cached host-only query as compiled_resize_backend().
+///
+/// Example input: ARM HAL profile with ARUCO3CUDA_RESIZE_ARM_BACKEND=SVE256
+/// Example output: 32
+int resize_sve_vector_bytes() noexcept;
+
+/// Returns whether the ARM Carotene general path contracts horizontal coordinates.
+///
+/// @return true for the ARM profile with FUSED; false for SEPARATE or GENERIC.
+///
+/// Ownership: returns a value and retains no caller storage.
+/// Synchronization: host only, with no CUDA calls or synchronization.
+///
+/// Example input: ARM HAL profile with ARUCO3CUDA_CAROTENE_X_FMA=FUSED
+/// Example output: true
+bool resize_carotene_x_fma() noexcept;
+
+/// Returns the compiled Carotene horizontal contraction identity.
+///
+/// @return "FUSED", "SEPARATE", or "NOT_APPLICABLE" for GENERIC.
+///
+/// Ownership: points to immutable static storage; the caller must not free it.
+/// Synchronization: host only, with no CUDA calls or synchronization.
+///
+/// Example input: ARM HAL profile with ARUCO3CUDA_CAROTENE_X_FMA=SEPARATE
+/// Example output: "SEPARATE"
+const char* compiled_carotene_x_fma() noexcept;
+
+/// Immutable identifiers and configured limits of the compiled CUDA algorithms.
+/// Ownership: string members point to immutable static storage.
+/// Synchronization: plain host values, no CUDA calls or synchronization.
+/// Example input: default build.
+/// Example output: contour_ is "COMPONENT_EXTREMA".
+struct GpuBuildStrategies {
+    const char* contour_;              ///< Candidate extraction strategy.
+    const char* threshold_;            ///< Threshold kernel strategy.
+    const char* pyramid_;              ///< Pyramid sampling strategy.
+    const char* otsu_;                 ///< Otsu algorithm strategy.
+    const char* candidate_grid_;       ///< Candidate-stage launch strategy.
+    const char* resize_coefficients_;  ///< Direct arithmetic or immutable layout coefficients.
+    const char*
+            contour_topology_;   ///< Live representation: original pixel slots and compact roots.
+    const char* contour_count_;  ///< Contour counting strategy.
+    const char* contour_rdp_;    ///< Polygon approximation strategy.
+    const char* contour_materialize_;             ///< Contour path materialization strategy.
+    const char* contour_materialize_compaction_;  ///< Materialization edge compaction strategy.
+    int otsu_max_occupied_bins_;  ///< Configured density cutoff, including when inactive.
+    int candidate_grid_blocks_;   ///< Configured persistent block limit, including when inactive.
+};
+
+/// Returns the compiled CUDA algorithm identifiers and tunable limits.
+///
+/// @return Immutable static build profile; inactive tuning values remain recorded.
+///
+/// Ownership: the core owns the returned object and strings; callers must not modify them.
+/// Synchronization: host only, with no CUDA calls or synchronization.
+///
+/// Example input: default build
+/// Example output: contour_ is "COMPONENT_EXTREMA", otsu_ is "REFERENCE".
+const GpuBuildStrategies& compiled_gpu_strategies() noexcept;
+
+/// Returns a canonical identity containing every compiled strategy and tuning limit.
+///
+/// @return A value string suitable for benchmark and audit grouping.
+///
+/// Ownership: returns independent caller-owned string storage.
+/// Synchronization: host only, with no CUDA calls or synchronization.
+///
+/// Example input: default build
+/// Example output: starts with "contour=COMPONENT_EXTREMA;threshold=SEPARABLE;".
+std::string compiled_gpu_strategy_identity();
+
 /// Detection settings.
 ///
 /// The defaults follow `cv::aruco::DetectorParameters` of OpenCV 4.x, except for the
@@ -117,8 +220,10 @@ struct DetectorConfig {
     float min_marker_length_ratio_original_img_ = 0.05F;
 
     // --- CUDA specific ---
-    /// Capacity of the candidate buffer. On overflow, kCandidateOverflow is returned
-    /// and the results are truncated.
+    /// Capacity of the candidate buffer. Overflow invalidates the invocation:
+    /// the device failure word reports kCandidateOverflow, the published detection
+    /// count is zero, and download returns kCandidateOverflow without replacing
+    /// the caller's output. Submission alone does not report asynchronous failure.
     ///
     /// The CPU path has no such limit, but the GPU allocates its output storage at
     /// initialization time, so a limit is required. Dropping candidates silently would

@@ -10,7 +10,13 @@ The scope covers the stage breakdown of the detector core, the GPU suitability a
 
 ## Current state
 
-S1 through S11 are all implemented in CUDA. `aruco3cuda::Detector` chains them into a single path and returns results on the device without host synchronization. The degree of agreement with OpenCV differs by route. **The hybrid route matches on 91 of 91 images with a corner difference of 0.0000 px**, whereas **the GPU-resident route matches on 90 of 91 images, differing by 3.804 px on the single image with occlusion** (relative to the ground truth, the GPU side is the closer one). The details are in [the accuracy evaluation results](../accuracy-report.md).
+S1 through S11 are implemented in CUDA. Fresh builds retain the component-extrema route and full-pyramid baseline. The explicit `dgx-spark-steady` and `jetson-orin-steady` presets select ordered contours, close-contour retry, and the steady-state strategies described below. They use the same detection algorithm on both devices; resize arithmetic is selected to match each pinned CPU OpenCV build. See [the strategy configuration](../../cmake/ArUco3CudaStrategies.md) and [ADR-0004](../adr/0004-device-contours-for-cpu-quality.md).
+
+The historical component route matched 90 of 91 images, with a 3.804 px corner difference on one occluded image; the hybrid route matched all 91. Those results remain in [the historical accuracy evaluation](../accuracy-report.md), but do not establish compatibility on the expanded corpus. Background lines can join multiple marker borders into one foreground component while leaving separate detectable hole contours.
+
+The combined Spark checkpoint passes 2,398 changing-frame audit calls plus both historical 91-scene modes. On the 96 annotated scenes, CPU/GPU true positives are 113/118 with ArUco3 on and 124/127 with it off, with no false positives. All 278 external CPU observations across 17 Dictionaries and both modes are recovered; factory photographs remain empty. The explicit candidate budget is 16,384. These are tested-scope quality results, not a universal recall or performance claim. See [the maintained audit](../../tools/gpu_quality/audit.md) for configurations, corner deltas, source identities, and the separate cross-hardware acceptance gate.
+
+Unchanged-layout submission remains asynchronous on the host. Reinitialization, layout changes, result readback and exceptional recovery have explicit completion boundaries; see [submission and storage lifetime](../../src/core/detector.md).
 
 For the ArUco3 detection strategy of OpenCV 4.x, which is the compatibility target, the following observed specification has been confirmed from the Apache-2.0 public headers and sources. For the retrieval sources and hashes, see [the Code Provenance record](../code-provenance.md).
 
@@ -51,33 +57,33 @@ The above is a compatibility baseline, not ground truth. The default value of `t
 
 ### Agreement of preprocessing with OpenCV
 
-For S1 and S2, the differences from OpenCV have been measured.
+Compatibility is measured against the public operations of the pinned OpenCV build, including its selected host HAL.
 
-| Stage | Corresponding OpenCV processing | Difference |
+| Stage | Corresponding OpenCV processing | Current compatibility condition |
 | --- | --- | --- |
-| S1 pyramid | `buildPyramid` (`pyrDown`) | Exact match at every level |
-| S2 segmentation | `INTER_LINEAR` of `resize` | At most 1 gray level. The mismatch rate ranges from 0 to 0.372 depending on the downscale factor |
-| S3 adaptive thresholding | `ADAPTIVE_THRESH_MEAN_C` and `THRESH_BINARY_INV` of `adaptiveThreshold` | Exact match |
+| S1 pyramid | `buildPyramid` (`pyrDown`) | Exact generated pixels; demand and full routes agree on every requested level |
+| S2 segmentation | Public `resize(..., INTER_LINEAR)` | Exact bytes on maintained profile-specific pixel tests; generic and ARM HAL profiles remain explicit choices |
+| S3 adaptive thresholding | `ADAPTIVE_THRESH_MEAN_C` and `THRESH_BINARY_INV` | Exact bytes for the separable and supported fused routes |
 
-The pyramid is integer arithmetic with `[1,4,6,4,1]`, and it can be reproduced exactly by using `BORDER_REFLECT_101` at the borders and `(sum + 128) >> 8` for rounding. Since the subpixel correction of the corners is performed on the pyramid, agreement here is a precondition for accuracy.
+The pyramid uses integer arithmetic with `[1,4,6,4,1]`, `BORDER_REFLECT_101` and `(sum + 128) >> 8` rounding. The `DEMAND` strategy moves generation after grouping and computes the maximum required level on the device, including refinement needs. It generates complete prefix planes, retaining their allocation and fixed graph launch sequence. Empty frames request no generated levels; unused kernels return before reading image storage. Every invocation overwrites the demand scalar, so unchanged input addresses do not permit reuse of old pixels. Sparse tiles are not implemented.
 
-Segmentation cannot be made an exact match. The 8-bit `INTER_LINEAR` of OpenCV returns the same result as `INTER_LINEAR_EXACT`, and its substance is a bit-exact path built from `softdouble` software floating point and `ufixedpoint16`. It is a design intended to obtain the same result across platforms, and reproducing it inside a kernel would require porting those two numeric types. This is not worth the cost for a preprocessing stage, so we accept the 1 gray level difference.
+Public `INTER_LINEAR` is not interchangeable with `INTER_LINEAR_EXACT`. The pinned implementation can select generic, Kleidi or Carotene arithmetic with different coordinate rounding and vector-tail behavior. Earlier generic GPU resize differed by one gray level on some ARM inputs; expanded nondefault tests showed that this could move candidate corners and materially worsen refined geometry. The maintained ARM profile reproduces the observed public resize arithmetic rather than accepting that difference.
 
-The effect of this difference on the downstream thresholding was measured after implementing S3. When 1280x720 is downscaled to 427x240 and thresholded with windows 3, 13, and 23, the fraction of pixels whose black/white flips ranges from 0.039% to 0.054%. An estimate assuming a random 1 gray level perturbation gave 0.45%, but the actual difference has structure and the local mean moves in the same direction, so the effect stays at one tenth of that.
+The measured Spark profile is `OPENCV_ARM_HAL` / `SVE128` / `SEPARATE`; Orin uses `OPENCV_ARM_HAL` / `NEON` / `FUSED`. These describe the pinned CPU build, not GPU instructions. Both pass zero-tolerance public-resize tests on strided inputs, vector tails, small dimensions and nondefault ratios. A different OpenCV build requires its own validated descriptor. `KLEIDI_PRECOMPUTED` caches layout coefficients only for that path; coefficients contain no input pixels. Other paths retain direct arithmetic. See [resize configuration](../../cmake/ArUco3CudaResizeProfile.md) and [preprocessing design](../../src/core/preprocess.md).
 
-In the classification of candidate differences, this amount is treated separately from design differences in candidate extraction. Should bit-level agreement become necessary in the future, one option is a configuration in which the coefficient tables are computed on the host by the same procedure as OpenCV and transferred, with the kernel performing only integer arithmetic.
+`FUSED_AUTO` computes supported threshold windows in a tiled multiwindow kernel and falls back to the separable implementation outside its supported range. It preserves the same output bytes and shared-buffer ordering.
 
-S3 matches OpenCV exactly. The mean is `boxFilter` applied with normalization, the border is `BORDER_REPLICATE`, rounding is round-half-to-even, and the test is "pixel - mean <= -floor(constant)" for 255. An even window is rounded up to an odd one. Because the sums are taken separately in the row and column directions, no rounding enters in between and the value equals the two-dimensional total.
+S3 matches OpenCV exactly. The mean is `boxFilter` applied with normalization, the border is `BORDER_REPLICATE`, rounding is round-half-to-even, and the test is "pixel - mean <= -floor(constant)" for 255. An even window is rounded up to an odd one. In the separable route, row/column sums retain the exact integer total without intermediate rounding. The fused route preserves the same normalization and comparison.
 
 ### Agreement of the option C hybrid route with OpenCV
 
 For option C, the difference from the CPU baseline has been measured. Across 36 comparisons made up of 12 synthetic scenes (varying marker count, side length, in-plane rotation, projective distortion, blur, noise, illumination gradient, and resolution from 640x480 to 1920x1080) and 3 settings (ArUco3 enabled, OpenCV default, OpenCV default + subpixel correction), there were 0 missed detections, 0 extra detections, and a maximum corner difference of 0.0000 pixels. Scenes in which a marker is nested inside a surrounding black frame also match. The same results were obtained on DGX Spark and Jetson AGX Orin.
 
-The reason the corners match despite the up to 1 gray level difference in S2 is that the thresholding flips do not reach the contour vertices. Since differences may still appear with a future corpus, the tests judge against an upper bound of 0.5 pixels rather than against the measured values themselves.
+In that historical corpus, thresholding flips from the former S2 approximation did not change the contour vertices. This observation does not generalize to the expanded nondefault corpus; the explicit ARM resize profiles above address the later failures. The historical hybrid tests retain their 0.5 px bound.
 
-Agreement required making the proximity merging of S6 follow the same rule as OpenCV. Because S3 tries three windows, slightly different candidates are obtained from the same marker. OpenCV sorts the candidates in descending order of perimeter, groups those whose mean corner distance is below `perimeter * minMarkerDistanceRate`, and selects the candidate with the **largest perimeter** within the group as the representative. If no representative is selected and the first candidate found is kept instead, the small candidate originating from the smallest window remains and the corners move inward. For a marker with a 160 pixel side at 1280x720, this difference was 7.9 pixels in original-size terms. On the segmentation image at a downscale factor of 1/3 it is 2.6 pixels, a magnitude that the 1 gray level difference of S2 cannot explain.
+Agreement required making the proximity merging of S6 follow the same rule as OpenCV. Because S3 tries three windows, slightly different candidates are obtained from the same marker. OpenCV ranks candidates by quadrilateral Euclidean perimeter and uses it in grouping and representative selection. The ordered GPU route computes this quantity separately from contour point count, which remains the sampling-level input. See [grouping details](../../src/core/candidate_group.md). If no representative is selected and the first candidate found is kept instead, the small candidate originating from the smallest window remains and the corners move inward. For a marker with a 160 pixel side at 1280x720, this difference was 7.9 pixels in original-size terms. On the segmentation image at a downscale factor of 1/3 it is 2.6 pixels, a magnitude that the 1 gray level difference of S2 cannot explain.
 
-Among the non-representative candidates, those farther from the representative than `minGroupDistance * moduleSize` are kept rather than discarded, and are used as alternatives when identification of the representative fails. In addition, the containment relations among the candidates are held as a tree; identification proceeds from the inner candidates, and once a marker is confirmed, its outer (parent) candidate is excluded from identification. Since both the outer and inner boundaries of a marker's black frame become candidates, without this suppression the same marker would be counted twice.
+Among the non-representative candidates, eligible close contours are retained as alternatives when identification of the representative fails. The ordered GPU route implements these retries on the device, preserving the representative geometry for the containment tree and its canonical level for alternatives; the first successful eligible retry supplies the output corners. See [retry ordering and bounds](../../src/core/candidate_retry.md). In addition, the containment relations among the candidates are held as a tree; identification proceeds from the inner candidates, and once a marker is confirmed, its outer (parent) candidate is excluded from identification. Since both the outer and inner boundaries of a marker's black frame become candidates, without this suppression the same marker would be counted twice.
 
 When `useAruco3Detection` is enabled, OpenCV overrides the corner refinement setting to `CORNER_REFINE_SUBPIX`, because subpixel correction is the only means of mapping corners obtained on the downscaled image back to the original size. This project does not override the setting. `Detector::initialize()` rejects the two combinations instead and returns `Status::kInvalidConfig`: `use_aruco3_detection_` enabled together with `corner_refine_method_ == kNone`, because the corners would stay in downscaled coordinates, and `use_aruco3_detection_` disabled together with `kSubpix`, because the pyramid then has a single level and the refinement never runs. Silently rewriting the setting would leave the caller's coordinate systems inconsistent without saying so.
 
@@ -298,20 +304,25 @@ Unlike the preceding stages, a 1 ULP difference becomes a discrete difference. T
 
 ### Stage breakdown
 
+This diagram shows the ordered-contour demand route. The `FULL` control builds the pyramid before segmentation; the component control omits close-contour retry.
+
 ```mermaid
 flowchart TD
-    S0["S0 input validation"] --> S1["S1 grayscale pyramid construction"]
-    S1 --> S2["S2 segmentation image generation"]
+    S0["S0 input validation and level-zero view"] --> S2["S2 segmentation image generation"]
     S2 --> S3["S3 adaptive thresholding, nScales images"]
-    S3 --> S4["S4 connected component labeling"]
+    S3 --> S4["S4 component labeling or contour cycles"]
     S4 --> S5["S5 quadrilateral candidate extraction"]
     S5 --> S6["S6 candidate filtering and proximity merging"]
-    S6 --> S7["S7 perspective transform and cell sampling"]
+    S6 --> S1["S1 requested pyramid prefix (DEMAND)"]
+    S1 --> S7["S7 perspective transform and cell sampling"]
     S7 --> S8["S8 border verification and Dictionary matching"]
-    S8 --> S9["S9 duplicate cleanup and compaction"]
+    S8 --> R["eligible close-contour retries"]
+    R --> S9["S9 containment suppression and compaction"]
     S9 --> S10["S10 subpixel correction of corners and upsampling"]
     S10 --> S11["S11 result output"]
 ```
+
+All stages consume current-frame data on one ordered stream. Stage numbers describe responsibilities rather than an immutable launch order.
 
 ### Parallelization approach per stage
 
@@ -319,29 +330,35 @@ flowchart TD
 | --- | --- | --- | --- |
 | S0 input validation | - | Boundary validation on the host | Out of scope (done on the host) |
 | S1 pyramid | Output pixel | Launch a separable downsample kernel per level | High |
-| S2 segmentation | Output pixel | Bilinear or area downscaling | High |
-| S3 thresholding | Output pixel | Box mean from separable row sums followed by a column pass, both in global memory | High |
-| S4 labeling | Pixel and label | Per-block union-find and inter-block merge | Medium |
-| S5 candidate extraction | Label | Corner estimation by extreme point search | Medium |
-| S6 filtering | Candidate | Predicate evaluation and stream compaction | High |
-| S7 warp and sampling | Candidate | One block per candidate, per-cell sampling | High |
-| S8 border verification | Candidate | One block per candidate, histogram in shared memory and integer sums | High |
+| S2 segmentation | Output pixel | Profile-selected public `INTER_LINEAR` arithmetic | High |
+| S3 thresholding | Output pixel | Separable box mean or exact tiled multiwindow kernel | High |
+| S4 topology | Pixel/edge and root | Component labeling or directed contour-cycle union | Medium |
+| S5 candidate extraction | Component or contour | Extreme points, or exact unit paths and closed polygon approximation | Medium |
+| S6 filtering/grouping | Candidate | Predicates, quad perimeter ranking, proximity groups and alternatives | Medium |
+| S7 warp and sampling | Candidate | Block per candidate or bounded persistent grid, per-cell sampling | High |
+| S8 border verification | Candidate | Block per candidate or persistent grid, shared histogram and integer sums | High |
 | S8 Dictionary matching | Candidate and codeword | Popcount over packed codewords and a minimum reduction | High |
 | S9 suppression and compaction | Candidate | Containment test per candidate, scan sequential in a single block, repacking by scan | Medium |
 | S10 corner correction | Corner | One block per corner, striding over the corner slots; the accumulation of the normal equations is kept sequential | Medium |
 | S11 output | - | Device buffer or host transfer | - |
 
-S3 evaluates three window sizes by default. The CPU implementation runs everything up to contour extraction per window and merges the results, and the CUDA implementation keeps the same per-window sequence: `Detector::Impl::dispatch` issues S3 for each window in turn, then loops over the windows again running S4, S5 and the S6 predicate filter, appending each window's candidates to a single list. The sweeps stay on one stream because the buffers they work in are shared across windows -- the row-sum scratch of S3, and the labels, the statistics and the quads of S4 and S5 -- so sweeps issued to separate streams would overwrite each other. The proximity merge across windows happens in S6, after the loop.
+S3 evaluates three window sizes by default. Separable processing emits each threshold plane in turn; the fused route emits supported planes together. Candidate extraction then visits windows serially on the same stream and appends to one list. Contour scratch, or the legacy labels/statistics/quads, is reused across windows. Cross-window grouping follows extraction.
 
 ### Design options for quadrilateral candidate extraction
 
-S4 and S5 are the parts of this pipeline least suited to the GPU, because contour tracing is sequential per candidate. The following three options are the comparison targets.
+Contour topology and closed polygon approximation now provide a device-only alternative to component extrema. Per-contour dependencies remain, but edge aggregation and warp cooperation reduce the sequential work.
 
 | Option | Content | Positioning |
 | --- | --- | --- |
-| A | Obtain the corners directly by connected component labeling and extreme point search | Primary option. Settled in [ADR-0003](../adr/0003-candidate-extraction-approach.md) |
-| B | Perform boundary tracing on the GPU and apply polygonal approximation | Not implemented. To be reconsidered if option A stops meeting the requirements |
-| C | GPU up to labeling, delegating corner extraction to the CPU | Compatibility baseline and fallback. Kept in continued use for differential verification |
+| A | Connected components and extreme points | Fresh-build control; historical decision in [ADR-0003](../adr/0003-candidate-extraction-approach.md) |
+| B | Device boundary cycles, exact pixel paths and polygon approximation | Implemented `ORDERED_CONTOURS` route in explicit steady presets; [ADR-0004](../adr/0004-device-contours-for-cpu-quality.md) |
+| C | CPU contour extraction with GPU stages | Independent compatibility oracle; never an automatic fallback inside the device detector |
+
+#### Procedure of option B
+
+Directed foreground/background interfaces form cycles with 8-connected foreground and 4-connected background semantics. Both outer boundaries and holes produce oriented unit pixel paths. Canonical seeds and closing-point handling preserve the CPU contour convention, including diagonal contacts, one-pixel components and repeated path points. Closed polygon approximation uses the pinned OpenCV arithmetic and cleanup rules.
+
+The explicit steady presets aggregate point counts and signed areas by final cycle root, approximate contours cooperatively within a warp, and materialize long paths using compact eligible-edge jump tables. Stable earliest-index reductions preserve polygon tie-breaking. Serial variants remain available for ablation. The point bound is `2WH+W+H` for segmentation dimensions `W,H`; caller limits can be smaller and must report overflow. Four original edge slots per pixel remain the topology representation. See [workspace lifetimes, proof and tests](../../src/core/contour_candidates.md).
 
 #### Procedure of option A
 
@@ -357,7 +374,7 @@ flowchart TD
     P3 --> V["validity verification as a quadrilateral"]
 ```
 
-1. The black frame of a marker becomes a square connected component with a hole inside on the thresholded image. Since extreme point search targets all pixels of the component, there is no need to treat the hole specially.
+1. The black frame of a marker becomes a square connected component with a hole inside on the thresholded image. Extreme point search targets all pixels of that component, so this route does not enumerate the hole separately. Joined components can therefore hide multiple valid hole candidates.
 2. Each pass is implemented with an `atomicMax` over the distance and the pixel index packed into 64 bits, fully parallelized per label.
 3. The corner ordering is normalized to a fixed winding, and candidates are filtered by conditions corresponding to `minCornerDistanceRate` and `minDistanceToBorder`.
 4. Validity verification checks the fraction of component pixels that fall inside the estimated quadrilateral, and the bbox occupancy of the component relative to the quadrilateral area. The decision corresponding to `polygonalApproxAccuracyRate` in the CPU implementation is mapped onto this.
@@ -366,18 +383,18 @@ flowchart TD
 
 - Benefit: Contour ordering and variable-length contour buffers become unnecessary, and full parallelization per label is possible. It can be recorded as an independent design that does not port the structure of the official ArUco GPLv3 implementation.
 - Limitation: Since it is not polygonal approximation itself, the candidate set may not match the CPU baseline results. In particular, the behavior differs for components whose corners are missing due to occlusion, and for cases where multiple markers touch and become a single component.
-- Conclusion: Making option A the primary option was decided in [ADR-0003](../adr/0003-candidate-extraction-approach.md). The grounds are that with ArUco3 enabled the candidate set matches option C exactly and the corner difference is within 1.414 pixels. The withdrawal conditions are in the same ADR.
+- Historical conclusion: [ADR-0003](../adr/0003-candidate-extraction-approach.md) chose option A from the small corpus below. The expanded quality failures trigger reconsideration in ADR-0004; that historical candidate agreement is not a general guarantee.
 
 #### Measurements of option A
 
-Option A was compared against option C over 9 synthetic scenes x 2 settings. Since preprocessing and thresholding are common inputs, they are excluded from the measurement.
+In the historical extraction-only evaluation, option A was compared against option C over 9 synthetic scenes x 2 settings. Since preprocessing and thresholding are common inputs, they are excluded from the measurement.
 
 | Setting | Detections against ground truth | Candidates emitted only by option C | Candidates emitted only by option A | Maximum corner difference |
 | --- | --- | --- | --- | --- |
 | ArUco3 enabled (extraction on the downscaled image) | 38/38 | 0 | 0 | 1.414 px |
 | ArUco3 disabled (extraction at original size) | 38/38 | 7 to 58 | 0 | 1.414 px |
 
-The reason option C has more candidates with ArUco3 disabled is that option C creates a candidate per contour. The outer and inner boundaries of the black frame and the contours of the inner cells each become candidates. Since option A creates only one set of corners per connected component, no inner boundary appears. With ArUco3 enabled, downscaling puts the perimeter of the inner boundary below the lower bound, so it is dropped on the option C side as well and no difference appears.
+The reason option C has more candidates with ArUco3 disabled is that option C creates a candidate per contour. The outer and inner boundaries of the black frame and the contours of the inner cells each become candidates. Since option A creates only one set of corners per connected component, no inner boundary appears. In those nine scenes with ArUco3 enabled, downscaling put inner boundaries below the perimeter bound. The expanded corpus contains eligible holes even after downscaling, so that explanation is specific to the historical inputs.
 
 Which is faster depends on the content of the scene. On DGX Spark with ArUco3 enabled, on a plain scene with 4 markers, option A takes 0.543 ms against 0.168 ms for option C; adding noise to the same scene gives 0.530 ms for option A against 1.728 ms for option C. Option A is determined almost entirely by the pixel count, while option C is proportional to the number and length of the contours.
 
@@ -400,55 +417,56 @@ The inside ratio alone cannot reject the L shape and the cross, and the edge sup
 
 ### Variable-length output and overflow
 
-- The candidate count and the detection count are input-dependent and variable. A bounded device buffer and a counter on the device are used.
-- The bounds are determined from `max_candidates_` and `max_markers_` of `DetectorConfig`, not from fixed values in the source.
-- If a counter exceeds its bound, writing is stopped, an overflow flag is raised, and it is returned in the result as an explicit status value. No silent truncation is performed.
-- For compaction, correctness is first pinned down with a naive implementation using an atomic counter, after which it is compared with a prefix sum approach.
+Candidate and marker capacities are explicit `DetectorConfig` limits. Contour workspace sizing also checks the image-derived point bound and arithmetic overflow. The expanded audit uses 16,384 candidates: a full-resolution checkerboard needs 5,460 across three windows and correctly fails the unchanged 4,096 default.
+
+A detector-owned device failure word is rewritten on every invocation in both candidate routes. Bits report invalid contour cycles (1), contour point overflow (2), candidate overflow (4), polygon workspace overflow (8), and invalid candidate counters (16). Any nonzero value invalidates the whole result and publishes zero detections; failure remains sticky across threshold windows. Host download reports the failure without modifying the caller's previous output. Device consumers must inspect the word on the producing stream or after successful completion. Counter comparison alone cannot establish validity.
+
+Marker capacity is a separate contract: with a zero failure word, `accepted_total_ > count_` signals marker truncation. The host returns `kMarkerOverflow` with the bounded partial marker list and its explicit flag; benchmarks reject such partial results. The C ABI exposes a separate borrowed failure-word view, preserving the existing result structure layout, and Python checks it before accepting a result. See [the public binding contract](c-abi-and-python.md).
 
 ### Workspace and memory policy
 
-- The required amount is computed from the assumed maximum resolution, maximum number of pyramid levels, `nScales`, and the candidate bound, and is allocated all at once when the detector is created.
-- No per-frame `cudaMalloc` or `cudaFree` is performed. Reallocation happens only when the input resolution changes, and the occurrence of a reallocation is recorded as a statistic.
-- Intermediate buffers are reused across stages, and only buffers that must be alive at the same time are given separate regions.
-- DGX Spark GB10 and Jetson Orin both have integrated GPUs, where the host and device share the same physical memory. The four routes — pageable host, pinned host, managed, and device-resident — can be selected in the implementation, so that each can be measured individually in [the evaluation plan](../evaluation-plan.md).
+Initialization reserves reusable frame and persistent arenas from configuration and layout bounds. Layout changes can grow storage and recapture the graph; unchanged-layout submissions allocate no frame storage. Buffers share regions only when their lifetimes do not overlap. Ordered contours retain complete image-derived workspace even when few contours survive; a blank image does not imply negligible storage.
+
+The same device algorithm runs on Spark and Orin. GPU-resident input, host upload, and result readback are different timing scopes even though both machines share physical memory between CPU and GPU. Stage device-event timing and separate kernel profiling complement end-to-end wall-clock measurements; no kernel-sum measurement is presented as caller latency.
 
 ### Synchronization and streams
 
-- The public API takes a caller-owned `cudaStream_t` and issues all kernels to that stream.
-- The per-frame path never calls `cudaDeviceSynchronize()`. `Detector::initialize()` calls it once, after uploading the dictionary from pageable host storage, so that the transfer is ordered against a `detect_async` issued on another stream, and the device self test in `run_device_self_test()` calls it to check its own kernel.
-- Synchronization occurs only at the point where the host needs the result count. An API that returns the device-side result buffer as is is provided so that the count need not be brought back to the host.
-- Benchmarks record wall-clock time only. Separating kernel time with CUDA events is not implemented.
+The API borrows a caller stream and owns a completion event. Each successful or partially issued submission records completion; a later submission or download waits for it on the destination stream. This also handles different nonblocking streams and recycled caller stream handles. Steady unchanged-layout submissions remain asynchronous on the host, including graph launches.
+
+Reinitialization, layout rebuild and destruction wait for owned completion before replacing storage. Resource replacement invalidates old views and initialized/result state before an allocation can fail. If event recording fails, the detector invalidates itself and drains the submitting stream; a failed drain forces a device-wide recovery attempt before later initialization or destruction. These are exceptional paths, not steady-state synchronization.
+
+Download synchronizes before publishing host output. Upload/readback error paths drain outstanding copies before borrowed host input or local output storage can expire, preserving the original diagnostic. Input uploads and downstream readers submitted on other streams still require caller-established dependencies. See [the lifecycle contract and fault tests](../../src/core/detector.md).
 
 ### Handling of machine differences
 
-- The common route is the authoritative one, and the same algorithm and the same accuracy tests are applied on `sm_87` and `sm_121`.
-- The only machine-tuning value exposed as a setting is `cuda_block_dim_`, the block side of the 2D kernels. There are no settings for tile size, shared memory usage, or L2-aware partitioning. The one value derived per machine is the number of blocks the S10 refinement launches, taken from the SM count of the device. The reasoning for both is below.
-- Branching on `__CUDA_ARCH__` is localized as kernel specialization and does not change the behavior of the common route.
+Both steady presets select ordered contours, fused thresholding, demand pyramid, density-selected fixed-point Otsu (96 occupied bins), persistent candidate grids (512 blocks), edge aggregation, warp approximation/materialization and eligible-edge compaction. Resize descriptors differ only to reproduce the pinned CPU HAL arithmetic. Core-only getters record actual compiled strategies and numerical profiles in every audit/benchmark identity.
+
+All strategy choices and tuning limits have explicit CMake overrides; fresh builds retain their previous settings. A persistent grid bounds launch size and loops over device counts without host readback. The 512-block choice has unfavorable dense-stage cases and is not a universal speed claim. `cuda_block_dim_` retains its narrower historical role below. See [configuration and controls](../../cmake/ArUco3CudaStrategies.md).
 
 ## Design decisions
 
-- Option A is the primary option for candidate extraction, and option C is always maintained as the compatibility baseline and fallback.
-- S3 through S5 are executed per window in a serial loop on a single stream, as in the CPU implementation, because the scratch buffers of those stages are shared across windows. Each window appends to one candidate list, and the proximity merge happens in S6.
+- Fresh-build option A remains available; explicit steady presets select option B. Option C is a separate compatibility oracle, with no host contour fallback in the device route.
+- Candidate extraction visits threshold windows serially because its scratch is shared. Fused S3 may produce threshold planes together; S6 groups the appended candidates afterward.
 - Dictionary matching is done by popcount over packed codewords with the 4 rotations expanded in advance, so that the rotation search is not a branch.
 - Subpixel correction of the corners is implemented on the GPU without permitting delegation to the CPU, because it is directly tied to the accuracy of ArUco3.
 - The input is limited to 8-bit grayscale, and color conversion is the responsibility of the adapter.
 
-### The decision not to make block size configurable
+### Historical 2D block-size evaluation
 
-`DetectorConfig::cuda_block_dim_` is a setting that overrides the block side for 2D kernels, but **it reaches only 5 out of 12** (3 in `preprocess.cu` and 2 in `threshold.cu`). `labeling.cu`, `candidate_filter.cu`, and `quad_extract.cu` fix it at 16.
+In the original implementation, `DetectorConfig::cuda_block_dim_` reached five of twelve 2D kernels (three preprocessing and two threshold kernels). Labeling, candidate filtering and extreme-point extraction fixed their blocks at 16. This historical count does not describe the added contour or fused-threshold kernels.
 
-We will **neither** widen the reach nor remove the setting itself. In measurements sweeping 8 / 16 / 32 on the three machines measured at the time, **16 was optimal on every machine**, and 32 was 3 to 8% slower. There is no reason to change it even though it is exposed as a setting, and widening its reach would gain nothing.
+The original decision retained that scope. In measurements sweeping 8 / 16 / 32 on the three machines measured at the time, **16 was optimal on every machine**, and 32 was 3 to 8% slower. Those measurements supported retaining the original scope; they do not establish optimal launch policies for the newly added kernels.
 
 To avoid redoing the same sweep, the measured facts are left here.
 
-Among the machine-dependent values, the only one that actually mattered was the number of blocks launched for the S10 correction. That is not a setting but is **derived from the SM count of the device**. The details are in [Implementation structure and verification](../implementation-plan.md).
+In that sweep, the machine-dependent value that materially affected S10 was its launched block count. That is not a setting but is **derived from the SM count of the device**. The details are in [Implementation structure and verification](../implementation-plan.md).
 
 ## Open questions
 
 - How to tune the validity verification thresholds of option A on real images. The current inside ratio of 0.80 and edge support of 2.0 are based on measurements on synthetic shapes.
-- Whether an integral image or a sliding window is advantageous for thresholding on the target machines.
+- Whether the combined explicit steady presets meet the final cross-hardware latency and memory acceptance criteria, including dense masks and empty natural photographs.
 - Whether to include white marker detection equivalent to `detectInvertedMarker` in the initial scope.
-- The maximum size for placing the Dictionary in constant memory, and where to place it when that is exceeded.
+- Whether additional CPU HAL builds need validated resize descriptors, and whether transitive GPU grouping differs on inputs beyond the maintained close-chain corpus.
 
 ## See also
 

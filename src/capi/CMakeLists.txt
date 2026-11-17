@@ -30,8 +30,9 @@ set_target_properties(aruco3cuda_c PROPERTIES
 # default visibility and are re-exported from the shared object unless the
 # linker is told otherwise. Checked with nm -D: before this was added the object
 # also exported the mangled aruco3cuda:: symbols of core and dictionary, down to
-# Detector::Impl internals; afterwards it exports the 16 C functions and nothing
-# else. That matters so a consumer cannot bind to an internal symbol that is
+# Detector::Impl internals; afterwards no project C++ internals are exported.
+# Some host toolchains still emit weak standard-library helpers; consumers must
+# use only the declared public C functions. This prevents binding an internal symbol that is
 # free to change, and so that loading this alongside another copy of the same
 # static libraries cannot cross-bind.
 if(UNIX AND NOT APPLE)

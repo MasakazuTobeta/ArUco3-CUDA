@@ -27,6 +27,7 @@
 #include <sstream>
 #include <string>
 
+#include <sched.h>
 #include <unistd.h>
 #include <vector>
 
@@ -291,6 +292,49 @@ TEST_F(BenchmarkHarnessTest, hybrid_supports_both_memory_modes) {
     EXPECT_GT(pageable.end_to_end_ms_.p50_, 0.0);
 }
 
+// A bounded marker list is a valid public API result, but not a complete-quality
+// benchmark sample. Exercise both the resident count check and per-frame download.
+TEST_F(BenchmarkHarnessTest, cuda_rejects_marker_overflow_instead_of_partial_measurement) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
+    }
+    const cv::aruco::Dictionary dictionary =
+            cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
+    cv::Mat scene(480, 960, CV_8UC1, cv::Scalar(235));
+    for (int id = 0; id < 3; ++id) {
+        cv::Mat marker;
+        dictionary.generateImageMarker(id, 160, marker, 1);
+        marker.copyTo(scene(cv::Rect(30 + 300 * id, 150, 160, 160)));
+    }
+    ASSERT_TRUE(cv::imwrite(this->image_path_, scene));
+    for (const Route route : {Route::kCudaResident, Route::kCudaEndToEnd}) {
+        SCOPED_TRACE(aruco3cuda::bench::to_string(route));
+        BenchmarkConfig config = this->config_;
+        config.route_ = route;
+        config.memory_mode_ = route == Route::kCudaResident
+                                      ? aruco3cuda::bench::MemoryMode::kDevice
+                                      : aruco3cuda::bench::MemoryMode::kHostPageable;
+        config.warmup_iterations_ = 0;
+        config.latency_iterations_ = 1;
+        config.throughput_frames_ = 0;
+        config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
+        config.cuda_detector_.max_markers_ = 1;
+        MeasurementRecord truncated;
+        std::string error;
+        EXPECT_FALSE(
+                aruco3cuda::bench::measure_image(this->image_path_, config, &truncated, &error));
+        EXPECT_NE(error.find("max_markers=1"), std::string::npos) << error;
+        EXPECT_NE(error.find("detected=3, retained=1"), std::string::npos) << error;
+        EXPECT_EQ(truncated.end_to_end_ms_.count_, 0U);
+        config.cuda_detector_.max_markers_ = 3;
+        MeasurementRecord complete;
+        ASSERT_TRUE(aruco3cuda::bench::measure_image(this->image_path_, config, &complete, &error))
+                << error;
+        EXPECT_EQ(complete.detection_count_, 3U);
+        EXPECT_EQ(complete.end_to_end_ms_.count_, 1U);
+    }
+}
+
 // Failure path: a memory kind the hybrid route does not support is rejected.
 TEST_F(BenchmarkHarnessTest, hybrid_rejects_unsupported_memory_mode) {
     BenchmarkConfig config = this->config_;
@@ -395,6 +439,33 @@ TEST_F(BenchmarkHarnessTest, can_save_all_samples) {
     EXPECT_EQ(record.end_to_end_samples_ms_.size(), 5U);
 }
 
+// Serialization needs no detector execution or CUDA context. Nondefault budgets
+// must remain visible even on the paired CPU row, where they are not applied.
+TEST(BenchmarkConfigTest, json_records_explicit_gpu_resource_limits) {
+    BenchmarkConfig config;
+    config.cuda_detector_.max_candidates_ = 16384;
+    config.cuda_detector_.max_markers_ = 2048;
+    MeasurementRecord record;
+    std::ostringstream cpu;
+    aruco3cuda::bench::write_measurement_line(cpu, config, record);
+    EXPECT_NE(cpu.str().find(std::string("\"gpu_resize_profile\":\"") +
+                             aruco3cuda::compiled_resize_profile() + "\""),
+              std::string::npos);
+    EXPECT_NE(cpu.str().find(std::string("\"gpu_resize_backend\":\"") +
+                             aruco3cuda::compiled_resize_backend() + "\""),
+              std::string::npos);
+    EXPECT_NE(cpu.str().find(std::string("\"gpu_carotene_x_fma\":\"") +
+                             aruco3cuda::compiled_carotene_x_fma() + "\""),
+              std::string::npos);
+    EXPECT_NE(cpu.str().find("\"max_candidates\":16384"), std::string::npos);
+    EXPECT_NE(cpu.str().find("\"max_markers\":2048"), std::string::npos);
+    EXPECT_NE(cpu.str().find("\"gpu_resource_limits_applied\":false"), std::string::npos);
+    config.route_ = Route::kCudaResident;
+    std::ostringstream gpu;
+    aruco3cuda::bench::write_measurement_line(gpu, config, record);
+    EXPECT_NE(gpu.str().find("\"gpu_resource_limits_applied\":true"), std::string::npos);
+}
+
 // Happy path: the measurement conditions and the scale factor survive into the
 // result JSONL.
 TEST_F(BenchmarkHarnessTest, jsonl_contains_conditions_and_environment) {
@@ -442,10 +513,24 @@ TEST(BenchmarkEnvironmentTest, records_cpu_topology_and_affinity) {
     EXPECT_EQ(unpinned.cpu_affinity_, "unpinned");
     EXPECT_FALSE(unpinned.address_randomization_.empty());
 
-    config.cpu_affinity_ = {0};
+    // Containers and job schedulers may exclude CPU 0. Exercise a permitted
+    // CPU, then restore the caller's affinity for later tests in this process.
+    cpu_set_t original_mask;
+    CPU_ZERO(&original_mask);
+    ASSERT_EQ(sched_getaffinity(0, sizeof(original_mask), &original_mask), 0);
+    int allowed_cpu = -1;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (CPU_ISSET(cpu, &original_mask)) {
+            allowed_cpu = cpu;
+            break;
+        }
+    }
+    ASSERT_GE(allowed_cpu, 0);
+    config.cpu_affinity_ = {allowed_cpu};
     const aruco3cuda::bench::EnvironmentRecord pinned =
             aruco3cuda::bench::collect_environment(config);
-    EXPECT_EQ(pinned.cpu_affinity_, "0");
+    EXPECT_EQ(pinned.cpu_affinity_, std::to_string(allowed_cpu));
+    EXPECT_EQ(sched_setaffinity(0, sizeof(original_mask), &original_mask), 0);
 }
 
 // Failure path: an out-of-range CPU number is not pinned, and that fact is

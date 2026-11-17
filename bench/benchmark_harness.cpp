@@ -454,6 +454,10 @@ const char* to_string(MemoryMode mode) {
 
 EnvironmentRecord collect_environment(const BenchmarkConfig& config) {
     EnvironmentRecord environment;
+    environment.gpu_resize_profile_ = aruco3cuda::compiled_resize_profile();
+    environment.gpu_resize_backend_ = aruco3cuda::compiled_resize_backend();
+    environment.gpu_carotene_x_fma_ = aruco3cuda::compiled_carotene_x_fma();
+    environment.gpu_strategy_identity_ = aruco3cuda::compiled_gpu_strategy_identity();
 
     std::array<char, 256> hostname{};
     if (gethostname(hostname.data(), hostname.size() - 1U) == 0) {
@@ -633,13 +637,13 @@ bool validate_iteration_counts(const BenchmarkConfig& config, std::string* out_e
         return false;
     }
     if (config.warmup_iterations_ < 0) {
-        *out_error = "warmup_iterations must be 0 or more: " +
-                     std::to_string(config.warmup_iterations_);
+        *out_error =
+                "warmup_iterations must be 0 or more: " + std::to_string(config.warmup_iterations_);
         return false;
     }
     if (config.throughput_frames_ < 0) {
-        *out_error = "throughput_frames must be 0 or more: " +
-                     std::to_string(config.throughput_frames_);
+        *out_error =
+                "throughput_frames must be 0 or more: " + std::to_string(config.throughput_frames_);
         return false;
     }
     return true;
@@ -656,9 +660,8 @@ bool measure_cpu(const std::string& image_path, const BenchmarkConfig& config,
     // The CPU route has no memory kind. Accepting one would line up, in the
     // aggregation, a measurement unrelated to that kind as its result.
     if (config.memory_mode_ != MemoryMode::kNotApplicable) {
-        *out_error =
-                std::string("the CPU route supports only the N/A memory kind; requested: ") +
-                to_string(config.memory_mode_);
+        *out_error = std::string("the CPU route supports only the N/A memory kind; requested: ") +
+                     to_string(config.memory_mode_);
         return false;
     }
     // The startup cost appears only once. Rebuild the instance and measure the
@@ -702,8 +705,9 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
                     MeasurementRecord* record, std::string* out_error) {
     if (config.memory_mode_ != MemoryMode::kDevice &&
         config.memory_mode_ != MemoryMode::kHostPageable) {
-        *out_error = std::string("the hybrid route supports only the M-Device and M-Pageable "
-                                 "memory kinds; requested: ") +
+        *out_error = std::string(
+                             "the hybrid route supports only the M-Device and M-Pageable "
+                             "memory kinds; requested: ") +
                      to_string(config.memory_mode_);
         return false;
     }
@@ -840,17 +844,18 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
                   MeasurementRecord* record, std::string* out_error) {
     const bool resident = config.route_ == Route::kCudaResident;
     if (resident && config.memory_mode_ != MemoryMode::kDevice) {
-        *out_error =
-                std::string("the CUDA-Resident route supports only the M-Device memory kind; "
-                            "requested: ") +
-                to_string(config.memory_mode_);
+        *out_error = std::string(
+                             "the CUDA-Resident route supports only the M-Device memory kind; "
+                             "requested: ") +
+                     to_string(config.memory_mode_);
         return false;
     }
     if (!resident && config.memory_mode_ != MemoryMode::kHostPageable &&
         config.memory_mode_ != MemoryMode::kHostPinned &&
         config.memory_mode_ != MemoryMode::kManaged) {
-        *out_error = std::string("the CUDA-EndToEnd route supports only the M-Pageable, "
-                                 "M-Pinned, and M-Managed memory kinds; requested: ") +
+        *out_error = std::string(
+                             "the CUDA-EndToEnd route supports only the M-Pageable, "
+                             "M-Pinned, and M-Managed memory kinds; requested: ") +
                      to_string(config.memory_mode_);
         return false;
     }
@@ -955,6 +960,21 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     const StreamGuard guard{stream};
 
     aruco3cuda::HostDetections detections;
+    const auto complete_download = [&](aruco3cuda::Status status, const char* context) {
+        if (status == aruco3cuda::Status::kOk) {
+            return true;
+        }
+        if (status == aruco3cuda::Status::kMarkerOverflow) {
+            *out_error = "marker budget exceeded: max_markers=" +
+                         std::to_string(detector_config.max_markers_) +
+                         ", detected=" + std::to_string(detections.accepted_total_) +
+                         ", retained=" + std::to_string(detections.ids_.size()) +
+                         "; incomplete benchmark result discarded";
+        } else {
+            *out_error = std::string(context) + message;
+        }
+        return false;
+    };
     const auto step = [&](Phase phase) {
         (void)phase;
         if (!resident && !upload()) {
@@ -972,21 +992,15 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
             // it only the cost of issuing would be measured.
             const cudaError_t synchronized = cudaStreamSynchronize(stream);
             if (synchronized != cudaSuccess) {
-                *out_error =
-                        std::string("cannot synchronize the stream: ") +
-                        cudaGetErrorString(synchronized);
+                *out_error = std::string("cannot synchronize the stream: ") +
+                             cudaGetErrorString(synchronized);
                 return false;
             }
             return true;
         }
         // download synchronizes the stream.
         const aruco3cuda::Status downloaded = detector.download(&detections, stream, &message);
-        if (downloaded != aruco3cuda::Status::kOk &&
-            downloaded != aruco3cuda::Status::kMarkerOverflow) {
-            *out_error = "cannot retrieve the results: " + message;
-            return false;
-        }
-        return true;
+        return complete_download(downloaded, "cannot retrieve the results: ");
     };
 
     const auto first_start = std::chrono::steady_clock::now();
@@ -1002,8 +1016,7 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     // The detection count is read once, outside the measured interval. It is
     // needed even on the device-resident route.
     const aruco3cuda::Status counted = detector.download(&detections, stream, &message);
-    if (counted != aruco3cuda::Status::kOk && counted != aruco3cuda::Status::kMarkerOverflow) {
-        *out_error = "cannot read the detection count: " + message;
+    if (!complete_download(counted, "cannot read the detection count: ")) {
         return false;
     }
     record->detection_count_ = detections.ids_.size();
@@ -1107,6 +1120,10 @@ void write_environment_line(std::ostream& out, const EnvironmentRecord& environm
     writer.member_string("cpu_affinity", environment.cpu_affinity_);
     writer.member_string("address_randomization", environment.address_randomization_);
     writer.member_string("opencv_version", environment.opencv_version_);
+    writer.member_string("gpu_resize_profile", environment.gpu_resize_profile_);
+    writer.member_string("gpu_resize_backend", environment.gpu_resize_backend_);
+    writer.member_string("gpu_carotene_x_fma", environment.gpu_carotene_x_fma_);
+    writer.member_string("gpu_strategy_identity", environment.gpu_strategy_identity_);
     writer.member_int("opencv_threads", environment.opencv_threads_);
     writer.member_string("cuda_toolkit", environment.cuda_toolkit_version_);
     writer.member_string("gpu_name", environment.gpu_name_);
@@ -1164,6 +1181,15 @@ void write_measurement_line(std::ostream& out, const BenchmarkConfig& config,
             static_cast<double>(config.detector_.min_marker_length_ratio_original_img_), 6);
     writer.member_double("fxfy_effective", record.fxfy_effective_, 6);
     writer.member_string("dictionary", config.detector_.dictionary_name_);
+    writer.member_string("gpu_resize_profile", aruco3cuda::compiled_resize_profile());
+    writer.member_string("gpu_resize_backend", aruco3cuda::compiled_resize_backend());
+    writer.member_string("gpu_carotene_x_fma", aruco3cuda::compiled_carotene_x_fma());
+    writer.member_string("gpu_strategy_identity", aruco3cuda::compiled_gpu_strategy_identity());
+    writer.member_int("max_candidates", config.cuda_detector_.max_candidates_);
+    writer.member_int("max_markers", config.cuda_detector_.max_markers_);
+    writer.member_bool(
+            "gpu_resource_limits_applied",
+            config.route_ == Route::kCudaResident || config.route_ == Route::kCudaEndToEnd);
     writer.end_object();
 
     write_statistics(writer, "end_to_end", record.end_to_end_ms_);

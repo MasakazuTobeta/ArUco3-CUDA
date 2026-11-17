@@ -463,3 +463,63 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(cli.aggregate.reads_supported_schema_4 PROPERTIES
     TIMEOUT 300 PASS_REGULAR_EXPRESSION "=== Measurement results ===")
 endif()
+
+# The budget parser and aggregation identity run without an image or CUDA work.
+if(Python3_Interpreter_FOUND)
+  add_test(NAME cli.bench.resource_budgets
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_benchmark_budget.py"
+            $<TARGET_FILE:aruco3cuda_bench_cli> "${PROJECT_SOURCE_DIR}/bench/aggregate.py")
+  set_tests_properties(cli.bench.resource_budgets PROPERTIES TIMEOUT 120)
+endif()
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME cli.resize_profile.selection
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_resize_profile.py"
+            "${CMAKE_COMMAND}" "${PROJECT_SOURCE_DIR}/cmake/ArUco3CudaResizeProfile.cmake")
+  set_tests_properties(cli.resize_profile.selection PROPERTIES TIMEOUT 120)
+endif()
+
+# The optimized CPU library independently compiles config.cpp. These executable
+# link orders reproduce both the audit (CPU first) and GPU consumers (core first).
+# Expected values come from CMake, never from another call to the tested getter.
+if(TARGET aruco3cuda_cpu)
+  if(ARUCO3CUDA_RESIZE_PROFILE STREQUAL "OPENCV_ARM_HAL")
+    set(kExpectedCaroteneFma "${ARUCO3CUDA_CAROTENE_X_FMA}")
+  else()
+    set(kExpectedCaroteneFma "NOT_APPLICABLE")
+  endif()
+  foreach(kLinkOrder IN ITEMS cpu_first core_first)
+    set(kLinkTarget "aruco3cuda_resize_link_${kLinkOrder}")
+    add_executable(${kLinkTarget} test_resize_linkage.cpp)
+    if(kLinkOrder STREQUAL "cpu_first")
+      target_link_libraries(${kLinkTarget} PRIVATE aruco3cuda::cpu aruco3cuda::core)
+    else()
+      target_link_libraries(${kLinkTarget} PRIVATE aruco3cuda::core aruco3cuda::cpu)
+    endif()
+    target_link_libraries(${kLinkTarget} PRIVATE aruco3cuda::bench aruco3cuda::warnings)
+    target_compile_definitions(${kLinkTarget} PRIVATE
+      EXPECTED_RESIZE_PROFILE="${ARUCO3CUDA_RESIZE_PROFILE}"
+      EXPECTED_CAROTENE_X_FMA="${kExpectedCaroteneFma}"
+      EXPECTED_CONTOUR="${ARUCO3CUDA_CONTOUR_STRATEGY}"
+      EXPECTED_THRESHOLD="${ARUCO3CUDA_THRESHOLD_STRATEGY}"
+      EXPECTED_PYRAMID="${ARUCO3CUDA_PYRAMID_STRATEGY}"
+      EXPECTED_OTSU="${ARUCO3CUDA_OTSU_STRATEGY}"
+      EXPECTED_GRID="${ARUCO3CUDA_CANDIDATE_GRID_STRATEGY}"
+      EXPECTED_OTSU_BINS=${ARUCO3CUDA_OTSU_MAX_OCCUPIED_BINS}
+      EXPECTED_GRID_BLOCKS=${ARUCO3CUDA_CANDIDATE_GRID_BLOCKS}
+      EXPECTED_CONTOUR_COUNT="${ARUCO3CUDA_CONTOUR_COUNT_STRATEGY}"
+      EXPECTED_CONTOUR_RDP="${ARUCO3CUDA_CONTOUR_RDP_STRATEGY}"
+      EXPECTED_CONTOUR_MATERIALIZE="${ARUCO3CUDA_CONTOUR_MATERIALIZE_STRATEGY}"
+      EXPECTED_CONTOUR_MATERIALIZE_COMPACTION="${ARUCO3CUDA_CONTOUR_MATERIALIZE_COMPACTION_STRATEGY}"
+      EXPECTED_RESIZE_COEFFICIENTS="${ARUCO3CUDA_RESIZE_COEFFICIENT_STRATEGY}")
+    add_test(NAME "cli.resize_profile.link_${kLinkOrder}" COMMAND ${kLinkTarget})
+    set_tests_properties("cli.resize_profile.link_${kLinkOrder}" PROPERTIES TIMEOUT 30)
+  endforeach()
+endif()
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME cli.cuda_strategies.selection
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_cuda_strategies.py"
+            "${CMAKE_COMMAND}" "${PROJECT_SOURCE_DIR}/cmake/ArUco3CudaStrategies.cmake")
+  set_tests_properties(cli.cuda_strategies.selection PROPERTIES TIMEOUT 120)
+endif()

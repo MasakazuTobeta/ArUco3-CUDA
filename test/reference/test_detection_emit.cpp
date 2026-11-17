@@ -80,7 +80,7 @@ public:
     EmitRun& operator=(const EmitRun&) = delete;
 
     bool run(const std::vector<CandidateInput>& inputs, int stop_depth, int max_markers,
-             const DetectorConfig& base, int candidate_capacity = 0) {
+             const DetectorConfig& base, int candidate_capacity = 0, int accepted_candidates = -1) {
         DetectorConfig config = base;
         config.max_candidates_ = (candidate_capacity > 0)
                                          ? candidate_capacity
@@ -120,20 +120,32 @@ public:
         if (!this->upload(inputs, stop_depth, candidates, matches, tree)) {
             return false;
         }
-        if (aruco3cuda::detail::emit_detections_async(candidates, matches, tree, &emit, &detections,
-                                                      nullptr) != Status::kOk) {
+        if (accepted_candidates != -1 &&
+            cudaMemcpy(candidates.accepted_total_, &accepted_candidates,
+                       sizeof(accepted_candidates), cudaMemcpyHostToDevice) != cudaSuccess) {
+            return false;
+        }
+        if (aruco3cuda::detail::emit_detections_async(
+                    candidates, matches, tree, &emit, &detections, nullptr,
+                    accepted_candidates == -1 ? nullptr : &candidates) != Status::kOk) {
             return false;
         }
         this->count_status_ =
                 aruco3cuda::detail::read_detection_count(detections, &this->count_, nullptr);
+        if (cudaMemcpy(&this->failure_bits_, detections.failure_bits_, sizeof(this->failure_bits_),
+                       cudaMemcpyDeviceToHost) != cudaSuccess) {
+            return false;
+        }
         return this->download(detections);
     }
 
+    int failure_bits() const { return this->failure_bits_; }
     const std::vector<Detection>& detections() const { return this->detections_; }
     int count() const { return this->count_; }
     Status count_status() const { return this->count_status_; }
 
 private:
+    std::int32_t failure_bits_ = 0;
     bool upload(const std::vector<CandidateInput>& inputs, int stop_depth,
                 const aruco3cuda::detail::DeviceCandidates& candidates,
                 const aruco3cuda::detail::MatchBuffers& matches,
@@ -419,6 +431,26 @@ TEST(DetectionEmitTest, results_are_deterministic) {
     }
 }
 
+// Emission preserves totals while publishing no detections on a candidate
+// failure, and initializes the diagnostic even when no upstream word exists.
+TEST(DetectionEmitTest, candidate_failures_publish_zero_count_and_explicit_bits) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
+    }
+    const std::vector<CandidateInput> inputs = {make_candidate(0, 0, 100, 100, 3, 0, 0)};
+    EmitRun run;
+    ASSERT_TRUE(run.run(inputs, 1, 1, DetectorConfig(), 1, 2));
+    EXPECT_EQ(run.count(), 0);
+    EXPECT_EQ(run.failure_bits(), static_cast<int>(aruco3cuda::DeviceFailure::kCandidateOverflow));
+    ASSERT_TRUE(run.run(inputs, 1, 1, DetectorConfig(), 1, 0));
+    EXPECT_EQ(run.count(), 0);
+    EXPECT_EQ(run.failure_bits(),
+              static_cast<int>(aruco3cuda::DeviceFailure::kInvalidCandidateCounters));
+    ASSERT_TRUE(run.run(inputs, 1, 1, DetectorConfig(), 1, 1));
+    EXPECT_EQ(run.count(), 1);
+    EXPECT_EQ(run.failure_bits(), 0);
+}
+
 // Failure path: invalid arguments perform no work.
 TEST(DetectionEmitTest, rejects_invalid_arguments) {
     Workspace workspace;
@@ -456,7 +488,7 @@ TEST(DetectionEmitTest, rejects_invalid_arguments) {
     config.max_markers_ = 1024;
     // Pin down the same value the documented example output shows; if it
     // drifts, the workspace will be too small.
-    EXPECT_EQ(aruco3cuda::detail::detection_workspace_bytes(config), 62464U);
+    EXPECT_EQ(aruco3cuda::detail::detection_workspace_bytes(config), 62720U);
 }
 
 }  // namespace

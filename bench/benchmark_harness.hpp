@@ -21,11 +21,11 @@ namespace aruco3cuda::bench {
 /// recorded route disagree with what was measured, and the results could no
 /// longer be interpreted afterwards.
 enum class Route : int {
-    kCpu = 0,        ///< OpenCV ArUco3. From a cv::Mat input to the results
+    kCpu = 0,  ///< OpenCV ArUco3. From a cv::Mat input to the results
     /// CUDA with host input. Includes upload, detection, download and synchronization
     kCudaEndToEnd,
-    kCudaResident,   ///< CUDA with device input. From a GPU-resident image to the device results
-    kHybrid,         ///< A combination of CUDA and CPU
+    kCudaResident,  ///< CUDA with device input. From a GPU-resident image to the device results
+    kHybrid,        ///< A combination of CUDA and CPU
 };
 
 /// Memory type of the input buffer.
@@ -34,7 +34,7 @@ enum class Route : int {
 /// explicit copy differs greatly from a discrete GPU. It is recorded as a
 /// measurement axis independent of the route.
 enum class MemoryMode : int {
-    kNotApplicable = 0, ///< CPU route
+    kNotApplicable = 0,  ///< CPU route
     /// Ordinary host memory. The measured interval includes the transfer to the device.
     kHostPageable,
     kHostPinned,
@@ -188,6 +188,14 @@ struct EnvironmentRecord {
     std::string kernel_;
     std::string architecture_;
     std::string opencv_version_;
+    /// Actual core build's segmentation resize arithmetic profile.
+    std::string gpu_resize_profile_;
+    /// Effective host-HAL vector/tail descriptor, after AUTO resolution.
+    std::string gpu_resize_backend_;
+    /// Horizontal Carotene contraction identity, independent of vector layout.
+    std::string gpu_carotene_x_fma_;
+    /// Canonical compiled algorithms and tuning limits, including inactive values.
+    std::string gpu_strategy_identity_;
     int opencv_threads_ = 0;
     /// Version of the CUDA Toolkit that nvcc reports, including the patch
     /// version, as in 11.4.315. Falls back to the minor version when nvcc

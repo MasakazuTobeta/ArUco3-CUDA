@@ -23,7 +23,9 @@ namespace aruco3cuda::detail {
 /// Example input: reserve_candidate_groups with a candidate limit of 4096
 /// Example output: capacity_ = 4096 with a pointer in every array
 struct CandidateGroupBuffers {
-    /// Rank in descending perimeter order. Indexed by candidate index.
+    /// Euclidean quad perimeter for grouping, distinct from contour point count.
+    float* quad_perimeter_ = nullptr;
+    /// Rank in descending Euclidean quad perimeter order. Indexed by candidate index.
     std::int32_t* rank_ = nullptr;
     /// Map from rank back to candidate index. The inverse of rank_.
     std::int32_t* order_ = nullptr;
@@ -74,8 +76,9 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 ///
 /// Changing the binarization window yields slightly different candidates from
 /// the same marker. Candidates whose mean corner distance is closer than a
-/// ratio of the perimeter form one group, and the candidate with the largest
-/// perimeter in the group is kept. Keeping a smaller one pulls the corners
+/// ratio of the Euclidean quad perimeter form one group, and the candidate with the largest
+/// quad perimeter in the group is kept. Contour point counts remain unchanged for
+/// canonical level selection. Keeping a smaller one pulls the corners
 /// inward.
 ///
 /// There is one difference from the CPU reference. When two nearby candidates

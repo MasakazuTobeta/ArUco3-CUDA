@@ -7,12 +7,11 @@
 //   with the results, so that performance is recorded in a form that can be
 //   reproduced later. The results are written as JSONL: the first line holds the
 //   environment information and the lines after it hold the measurements.
+#include <cstddef>
 #include <cstdlib>
 #include <exception>
-#include <string>
 #include <fstream>
 #include <iostream>
-#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -21,8 +20,8 @@
 namespace {
 
 using aruco3cuda::bench::BenchmarkConfig;
-using aruco3cuda::bench::Route;
 using aruco3cuda::bench::MemoryMode;
+using aruco3cuda::bench::Route;
 
 void print_usage(std::ostream& out) {
     out << "Usage: aruco3cuda_bench [option]... --input <image>...\n"
@@ -51,6 +50,8 @@ void print_usage(std::ostream& out) {
         << "  --use-aruco3 <0|1>             Default 1\n"
         << "  --min-marker-length-ratio <f>  Default 0.05. No downscaling happens at 0\n"
         << "  --min-side-length-canonical <n>  Default 32\n"
+        << "  --max-candidates <n>           GPU candidate budget. Default 4096\n"
+        << "  --max-markers <n>              GPU output budget. Default 1024; <= max-candidates\n"
         << "  --help                         Print this help and exit\n";
 }
 
@@ -148,6 +149,8 @@ int main(int argc, char** argv) {
     // has no memory kind, and hybrid is measured with device-resident input as
     // its upper bound.
     bool memory_mode_given = false;
+    int max_candidates = config.cuda_detector_.max_candidates_;
+    int max_markers = config.cuda_detector_.max_markers_;
     std::vector<std::string> inputs;
     std::string output_path;
 
@@ -223,11 +226,22 @@ int main(int argc, char** argv) {
             } else if (option == "--min-marker-length-ratio") {
                 const float parsed = std::stof(value);
                 if (!(parsed >= 0.0F) || !(parsed <= 1.0F)) {
-                    std::cerr << option << " must be between 0 and 1 inclusive: " << parsed
-                              << '\n';
+                    std::cerr << option << " must be between 0 and 1 inclusive: " << parsed << '\n';
                     return EXIT_FAILURE;
                 }
                 config.detector_.min_marker_length_ratio_original_img_ = parsed;
+            } else if (option == "--max-candidates" || option == "--max-markers") {
+                std::size_t consumed = 0;
+                const int parsed = std::stoi(value, &consumed);
+                if (consumed != value.size()) {
+                    std::cerr << "cannot parse the value: " << option << ' ' << value << '\n';
+                    return EXIT_FAILURE;
+                }
+                if (option == "--max-candidates") {
+                    max_candidates = parsed;
+                } else {
+                    max_markers = parsed;
+                }
             } else if (option == "--min-side-length-canonical") {
                 const int parsed = std::stoi(value);
                 if (!check_range(option, parsed, 0, 4096)) {
@@ -256,6 +270,15 @@ int main(int argc, char** argv) {
     // whether ArUco3 is enabled diverge, so that two different conditions were
     // being compared.
     config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
+    // Resource budgets are CUDA-only settings and must survive copying the
+    // common quality settings from the CPU reference configuration.
+    config.cuda_detector_.max_candidates_ = max_candidates;
+    config.cuda_detector_.max_markers_ = max_markers;
+    std::string config_error;
+    if (config.cuda_detector_.validate(&config_error) != aruco3cuda::Status::kOk) {
+        std::cerr << config_error << '\n';
+        return EXIT_FAILURE;
+    }
     if (!memory_mode_given) {
         // For each route, default to a kind that route supports. CUDA-EndToEnd is
         // a route that includes the transfer in the measured interval, so

@@ -72,6 +72,24 @@ static_assert(static_cast<int>(aruco3cuda::CornerRefineMethod::kSubpix) ==
                       ARUCO3CUDA_CORNER_REFINE_SUBPIX,
               "corner refine method drift");
 
+static_assert(static_cast<int>(aruco3cuda::DeviceFailure::kNone) == ARUCO3CUDA_DEVICE_FAILURE_NONE,
+              "device failure drift");
+static_assert(static_cast<int>(aruco3cuda::DeviceFailure::kInvalidContourCycle) ==
+                      ARUCO3CUDA_DEVICE_FAILURE_INVALID_CONTOUR_CYCLE,
+              "device failure drift");
+static_assert(static_cast<int>(aruco3cuda::DeviceFailure::kContourPointOverflow) ==
+                      ARUCO3CUDA_DEVICE_FAILURE_CONTOUR_POINT_OVERFLOW,
+              "device failure drift");
+static_assert(static_cast<int>(aruco3cuda::DeviceFailure::kCandidateOverflow) ==
+                      ARUCO3CUDA_DEVICE_FAILURE_CANDIDATE_OVERFLOW,
+              "device failure drift");
+static_assert(static_cast<int>(aruco3cuda::DeviceFailure::kContourApproximationOverflow) ==
+                      ARUCO3CUDA_DEVICE_FAILURE_CONTOUR_APPROXIMATION_OVERFLOW,
+              "device failure drift");
+static_assert(static_cast<int>(aruco3cuda::DeviceFailure::kInvalidCandidateCounters) ==
+                      ARUCO3CUDA_DEVICE_FAILURE_INVALID_CANDIDATE_COUNTERS,
+              "device failure drift");
+
 /// Copies a reason into a caller-provided buffer, truncating to fit.
 void copy_message(const std::string& text, char* out, std::size_t capacity) {
     if (out == nullptr || capacity == 0U) {
@@ -431,6 +449,20 @@ Aruco3CudaStatus aruco3cuda_detector_device_detections(const Aruco3CudaDetector*
     out->count = source.count_;
     out->accepted_total = source.accepted_total_;
     out->capacity = source.capacity_;
+    return ARUCO3CUDA_STATUS_OK;
+}
+
+Aruco3CudaStatus aruco3cuda_detector_device_failure_bits(const Aruco3CudaDetector* detector,
+                                                         const int32_t** out) {
+    if (detector == nullptr || out == nullptr) {
+        return ARUCO3CUDA_STATUS_INVALID_ARGUMENT;
+    }
+    aruco3cuda::DeviceDetections source;
+    const Status status = detector->detector_.device_detections(&source);
+    if (status != Status::kOk) {
+        return static_cast<Aruco3CudaStatus>(status);
+    }
+    *out = source.failure_bits_;
     return ARUCO3CUDA_STATUS_OK;
 }
 

@@ -259,6 +259,37 @@ std::size_t compare_ratios(const cv::Mat& expected, const cv::Mat& actual) {
 }
 
 // Happy path: cell ratios match the CPU reference on marker-like images.
+TEST(CellDecodeTest, many_candidate_waves_reset_uniform_and_otsu_scratch) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+    const DetectorConfig config;
+    std::vector<cv::Mat> canonicals;
+    for (int index = 0; index < 515; ++index) {
+        if (index % 3 == 0) {
+            canonicals.emplace_back(32, 32, CV_8UC1, cv::Scalar(index % 2 == 0 ? 30 : 220));
+        } else {
+            canonicals.push_back(
+                    make_marker_canonical(6, 4, 1, 2026111702U + index, index % 3 == 1 ? 0 : 60));
+        }
+    }
+    DecodeRun run;
+    ASSERT_TRUE(run.run(canonicals, 6, config));
+    for (std::size_t index = 0; index < canonicals.size(); ++index) {
+        const cv::Mat expected = reference_ratio(canonicals[index], 6, config);
+        EXPECT_EQ(compare_ratios(expected, run.ratios()[index]), 0U) << index;
+        EXPECT_EQ(reference_border_errors(expected, 6, config), run.border_errors()[index])
+                << index;
+        cv::Mat thresholded;
+        const int threshold =
+                index % 3U == 0U
+                        ? 0
+                        : static_cast<int>(cv::threshold(canonicals[index], thresholded, 125, 255,
+                                                         cv::THRESH_BINARY | cv::THRESH_OTSU));
+        EXPECT_EQ(threshold, run.thresholds()[index]) << index;
+    }
+}
+
 TEST(CellDecodeTest, matches_reference_ratios) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "skipping: no CUDA device available in this environment";

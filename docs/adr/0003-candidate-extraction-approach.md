@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-08-27
 
+The expanded CPU-quality audit has reopened this decision. See proposed
+[ADR-0004](0004-device-contours-for-cpu-quality.md) for the newly observed
+connected-marker hole contours and device-contour evaluation. The historical
+measurements below describe the original corpus, not the expanded quality gate.
+
 ## Purpose
 
 Of the three plans raised in the [detection pipeline design](../design/detector-pipeline.md), decide which one to proceed with for S4 and S5 (quadrilateral candidate extraction). Because the subsequent decode implementation builds on this choice, we settle it now that the candidate extraction paths are in place.

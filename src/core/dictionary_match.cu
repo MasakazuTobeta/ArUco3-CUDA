@@ -11,6 +11,7 @@
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/workspace.hpp"
 #include "candidate_filter.hpp"
+#include "candidate_grid.hpp"
 #include "cell_decode.hpp"
 #include "cuda_check.hpp"
 
@@ -60,14 +61,11 @@ __device__ int distance_to_id(const MarkerCode* codes, int id, MarkerCode not_bl
 
 /// Matches the cell ratios of each candidate against the dictionary. One block handles one
 /// candidate.
-__global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
-                             const std::int32_t* count, const MarkerCode* codes, std::int32_t* ids,
-                             std::int32_t* rotations, std::int32_t* distances, MatchParams params) {
-    const int candidate = static_cast<int>(blockIdx.x);
-    if (candidate >= *count) {
-        return;
-    }
-
+__device__ __forceinline__ void match_one_candidate(const float* ratios,
+                                                    const std::uint8_t* accepted, int candidate,
+                                                    const MarkerCode* codes, std::int32_t* ids,
+                                                    std::int32_t* rotations,
+                                                    std::int32_t* distances, MatchParams params) {
     // unsigned long long and MarkerCode have the same width here. atomicOr only exists for
     // unsigned long long, so the masks are held in that type.
     __shared__ unsigned long long not_black;
@@ -159,6 +157,28 @@ __global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
         rotations[candidate] = rotation;
         distances[candidate] = distance;
     }
+}
+
+/// A block reuses shared scratch only after every lane finishes the prior
+/// candidate. Device-helper returns, including lane-zero match failure, rejoin
+/// this barrier rather than terminating one lane's persistent loop.
+__global__ void match_kernel(const float* ratios, const std::uint8_t* accepted,
+                             const std::int32_t* count, const MarkerCode* codes, std::int32_t* ids,
+                             std::int32_t* rotations, std::int32_t* distances, MatchParams params) {
+#if ARUCO3CUDA_EXPERIMENT_PERSISTENT_CANDIDATES
+    const long long total = *count;
+    for (long long slot = static_cast<long long>(blockIdx.x); slot < total;
+         slot += static_cast<long long>(gridDim.x)) {
+        const int candidate = static_cast<int>(slot);
+        match_one_candidate(ratios, accepted, candidate, codes, ids, rotations, distances, params);
+        __syncthreads();
+    }
+#else
+    const int candidate = static_cast<int>(blockIdx.x);
+    if (candidate < *count) {
+        match_one_candidate(ratios, accepted, candidate, codes, ids, rotations, distances, params);
+    }
+#endif
 }
 
 }  // namespace
@@ -271,7 +291,7 @@ Status match_candidates_async(const CellRatioBuffers& ratios, const DeviceCandid
                                           config.error_correction_rate_);
     params.valid_bit_threshold_ = static_cast<float>(config.valid_bit_threshold_);
 
-    match_kernel<<<static_cast<unsigned int>(candidates.capacity_),
+    match_kernel<<<candidate_grid_blocks(candidates.capacity_),
                    static_cast<unsigned int>(kMatchThreads), 0, stream>>>(
             ratios.ratios_, ratios.accepted_, candidates.count_, dictionary.codes_, matches->ids_,
             matches->rotations_, matches->distances_, params);
