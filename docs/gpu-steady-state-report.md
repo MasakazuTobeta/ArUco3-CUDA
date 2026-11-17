@@ -49,7 +49,7 @@ The corrected build additionally passes the complete 2398-call audit and 182
 historical-image evaluations on each ARM host, including nondefault settings,
 all 17 Dictionaries, industrial photographs and annotated close-marker chains.
 Local follow-up records are `build/gpu-study/review-border-spark-full-matrix-complete/`
-and `build/gpu-study/review-border-v3-orin-matrix/`, with focused sanitizer and
+and `build/gpu-study/review-border-v3-orin-broad/`, with focused sanitizer and
 failure-reproduction records alongside them. This correction is not separately
 runtime-validated on RTX 4090; its earlier results below describe the pre-review build.
 The timing tables below describe the earlier frozen source export; they have
