@@ -291,6 +291,76 @@ TEST(ThresholdTest, result_is_independent_of_block_dim) {
     }
 }
 
+// Partial tiles, halos larger than the input, duplicate rounded windows, and
+// strided ROIs must produce the same isolated-image pixels on every launch shape.
+TEST(ThresholdTest, multiwindow_halos_and_roi_match_opencv) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "no CUDA device available; skipping";
+    }
+    struct WindowCase {
+        int minimum;
+        int maximum;
+        int step;
+    };
+    const WindowCase windows[] = {{3, 23, 10}, {4, 10, 1}, {31, 63, 16}, {62, 64, 1}, {65, 65, 1}};
+    const cv::Size shapes[] = {{1, 1}, {1, 37}, {39, 1}, {17, 19}, {65, 49}};
+    cv::RNG rng(20261117U);
+    for (const cv::Size shape : shapes) {
+        cv::Mat parent(shape.height + 4, shape.width + 7, CV_8UC1);
+        rng.fill(parent, cv::RNG::UNIFORM, 0, 256);
+        const cv::Mat image = parent(cv::Rect(3, 2, shape.width, shape.height));
+        const cv::Mat oracle = image.clone();
+        for (const WindowCase window : windows) {
+            for (const int block_side : {4, 8, 16, 32}) {
+                for (const double constant : {-7.1, 0.0, 7.9}) {
+                    DetectorConfig config;
+                    config.adaptive_thresh_win_size_min_px_ = window.minimum;
+                    config.adaptive_thresh_win_size_max_px_ = window.maximum;
+                    config.adaptive_thresh_win_size_step_px_ = window.step;
+                    config.cuda_block_dim_ = block_side;
+                    config.adaptive_thresh_constant_ = constant;
+                    ThresholdFixture fixture;
+                    ASSERT_TRUE(fixture.run(image, config));
+                    for (int i = 0; i < fixture.buffers_.window_count_; ++i) {
+                        cv::Mat expected;
+                        const int side = fixture.buffers_.window_sizes_px_[i];
+                        cv::adaptiveThreshold(oracle, expected, 255, cv::ADAPTIVE_THRESH_MEAN_C,
+                                              cv::THRESH_BINARY_INV, side, constant);
+                        EXPECT_DOUBLE_EQ(
+                                mismatch_ratio(expected, download(fixture.buffers_.binary_[i])),
+                                0.0)
+                                << "shape=" << shape << " window=" << side
+                                << " block=" << block_side << " constant=" << constant;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The allowed maximum is rounded from 4096 to 4097. Its replicated white sum
+// exceeds INT_MAX even for a tiny image; input area does not bound the halo sum.
+TEST(ThresholdTest, maximum_window_does_not_overflow_white_halo) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "no CUDA device available; skipping";
+    }
+    DetectorConfig config;
+    config.adaptive_thresh_win_size_min_px_ = 4096;
+    config.adaptive_thresh_win_size_max_px_ = 4096;
+    config.adaptive_thresh_constant_ = 0.0;
+    ASSERT_EQ(config.validate(nullptr), Status::kOk);
+    const cv::Mat image(2, 3, CV_8UC1, cv::Scalar(255));
+    ThresholdFixture fixture;
+    ASSERT_TRUE(fixture.run(image, config));
+    ASSERT_EQ(fixture.buffers_.window_sizes_px_[0], 4097);
+    const cv::Mat actual = download(fixture.buffers_.binary_[0]);
+    EXPECT_EQ(cv::countNonZero(actual), image.rows * image.cols);
+    cv::Mat expected;
+    cv::adaptiveThreshold(image, expected, 255, cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY_INV,
+                          4097, 0.0);
+    EXPECT_DOUBLE_EQ(mismatch_ratio(expected, actual), 0.0);
+}
+
 // Failure: invalid arguments are rejected.
 TEST(ThresholdTest, rejects_invalid_arguments) {
     const DetectorConfig config;
