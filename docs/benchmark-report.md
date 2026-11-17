@@ -2,7 +2,7 @@
 
 - Measurement date: 2026-08-29
 - Subject: an implementation that keeps everything from input image downscaling and thresholding through corner subpixel refinement resident on the GPU
-- Raw measurement results: `docs/measurements/`. That directory holds the 28-scene sweep, the startup measurement, the memory-mode comparison, and the accuracy evaluation. The 9-scene same-session set used in "Before and after optimization" and "Hybrid route breakdown", and the profiling runs behind the per-stage breakdowns, are **not** included in this repository, so the numbers taken from them cannot be re-derived by a reader. Each section below states which set it uses.
+- Local measurement results: `docs/measurements/`. Generated records are ignored by Git and are absent from a fresh checkout. The original measurement workspace retains the 28-scene sweep, startup measurement, memory-mode comparison and accuracy evaluation. The 9-scene same-session set used in "Before and after optimization" and "Hybrid route breakdown", and the profiling runs behind the per-stage breakdowns, are **not** included in this repository, so the numbers taken from them cannot be re-derived by a reader. Each section below states which set it uses.
 
 ## Purpose
 
@@ -160,7 +160,7 @@ The contour point count is a value derived from the corpus images by the followi
 
 These are the same settings the OpenCV detector uses internally, and they are read from `DetectorConfig` rather than repeated, so they cannot drift apart.
 
-**The procedure is now a tool: `tools/contourcount`.** Its output for the 28 sweep scenes is committed as `docs/measurements/2026-08-31-contour-points-aarch64.json` and `-x86_64.json`, one per corpus, so the regression input can be regenerated and the coefficients below can be checked. Two corpora because the same seed produces slightly different images on the two architectures; the counts nonetheless agree to 0.002% in total, and to the point on the two headline scenes.
+**The procedure is now a tool: `tools/contourcount`.** Its output for the 28 sweep scenes was saved locally as `docs/measurements/2026-08-31-contour-points-aarch64.json` and `-x86_64.json`, one per corpus, so the regression input can be regenerated and the coefficients below can be checked. Two corpora because the same seed produces slightly different images on the two architectures; the counts nonetheless agree to 0.002% in total, and to the point on the two headline scenes.
 
 Two details of the downscale decide whether the count comes out right, and both were found the hard way while writing the tool. The factor is computed in `float` and the size rounded with `lrint`, as `detail::plan_scales` does, because a `double` lands on the other side of a rounding boundary and gives a size one pixel different. And it is the **size** that is handed to `cv::resize`, not the factor: OpenCV recomputes the interpolation coefficients as `dst / src` when given a size, and uses the factor as given when given a factor, so the two produce different pixels at the same output size. The detector takes the first path, as `src/core/preprocess.cu` says where it computes `inverse_scale = dst / src`. Passing the factor instead inflates the count by up to a factor of three on a high-texture scene, while leaving it exactly right at 640x480 and 1920x1080, where the size divides evenly and the two agree.
 
@@ -177,7 +177,7 @@ We fit `time = b0 + b1 x segMpx + b2 x Mpx + b3 x [has detections] + b4 x detect
 | Jetson AGX Thor | 2.70 ms | 2.92 ms | **0.100 ms** | 27x |
 | GeForce RTX 5070 Ti | 1.64 ms | 1.67 ms | **0.027 ms** | 61x |
 
-The three machines that had coefficients before keep them: recomputing from the committed input reproduces 2.558, 2.696 and 0.077 for the DGX Spark against the published 2.56, 2.70 and 0.077, and likewise on the other two. The R2 values match as well. What is new is that the input is committed and the counting is a tool, so this can now be checked rather than taken on trust, and the Jetson AGX Thor could be added at all.
+The three machines that had coefficients before keep them: recomputing from the locally retained input reproduces 2.558, 2.696 and 0.077 for the DGX Spark against the published 2.56, 2.70 and 0.077, and likewise on the other two. The R2 values match as well. The counting tool makes the inputs reproducible; the original generated counts remain local rather than version-controlled. The Jetson AGX Thor results use the same procedure.
 
 **Hybrid's coefficient is nearly the same as the CPU's.** Hybrid runs only preprocessing and thresholding on the GPU and everything from contour extraction onward on the host. Only CUDA-Resident is 19 to 60 times smaller, and this is the essential difference between the three routes.
 
@@ -242,7 +242,7 @@ Hybrid is faster below 20,000 points only at the lower resolutions: on the DGX S
 
 ### Startup cost and break-even frames
 
-This is a cost that does not appear in the post-warmup percentiles. We measured it with one image per process (running several images in one process would let the second image onward use a warmed context, so the startup cost would not appear). 1280x720 with 4 markers, `M-Device`. This set is published as `docs/measurements/2026-08-29-*-startup.jsonl`, so the table below can be recomputed.
+This is a cost that does not appear in the post-warmup percentiles. We measured it with one image per process (running several images in one process would let the second image onward use a warmed context, so the startup cost would not appear). 1280x720 with 4 markers, `M-Device`. This set remains in local `docs/measurements/2026-08-29-*-startup.jsonl` files, from which the table below can be recomputed; these generated files are not distributed in Git.
 
 | Machine | Route | To the first image | Steady state | Break-even frames |
 | --- | --- | --- | --- | --- |
@@ -345,7 +345,7 @@ The GPU stage of the Jetson AGX Orin has a wide range of 0.64 to 2.54 ms; even a
 
 ### Before and after optimization
 
-The current implementation has been through the following three changes. The comparison uses a set of 9 scenes measured alternately within the same session, a different measurement set from the 28-scene sweep above. Even the same scene differs by a few percent. **This set is not included in `docs/measurements/`, and no measurement file for the state before optimization exists there at all, so none of the numbers in this section can be checked against the published data.** For reference, the 28-scene sweep gives an after-optimization ratio to CPU of 0.89 / 0.63 / 0.68 (DGX Spark / Jetson AGX Orin / GeForce RTX 5070 Ti) for 1280x720 with 4 markers, and it contains no 3840x2160 scene with detections.
+The current implementation has been through the following three changes. The comparison uses a set of 9 scenes measured alternately within the same session, a different measurement set from the 28-scene sweep above. Even the same scene differs by a few percent. **This set is not included in `docs/measurements/`, and no measurement file for the state before optimization exists there at all, so none of the numbers in this section can be checked against the locally retained data.** For reference, the 28-scene sweep gives an after-optimization ratio to CPU of 0.89 / 0.63 / 0.68 (DGX Spark / Jetson AGX Orin / GeForce RTX 5070 Ti) for 1280x720 with 4 markers, and it contains no 3840x2160 scene with detections.
 
 | Stage | Contents |
 | --- | --- |
@@ -394,7 +394,7 @@ The current implementation has been through the following three changes. The com
 
 #### What was targeted for optimization
 
-Before optimizing, we separated by stage the fixed cost that starts up at the first detection (DGX Spark, an increment of 783 us over the minimum). These figures, and the per-launch and issue-time figures below, come from profiling runs against the pre-optimization implementation. **Those runs are not included in `docs/measurements/`, so this breakdown cannot be re-derived from the published data either.**
+Before optimizing, we separated by stage the fixed cost that starts up at the first detection (DGX Spark, an increment of 783 us over the minimum). These figures, and the per-launch and issue-time figures below, come from profiling runs against the pre-optimization implementation. **Those runs are not included in `docs/measurements/`, so this breakdown cannot be re-derived from the locally retained data either.**
 
 | Stage | Measured | Share of the increment |
 | --- | --- | --- |
@@ -531,7 +531,12 @@ For applications where the contour point count cannot be known in advance, makin
 
 ## Reproducing the measurements
 
-The Jetson image changed on 2026-08-31, from `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` to `ubuntu:20.04` with the CUDA packages installed from the L4T apt repository. `nvcc` is the same build either way, and the sweep was run again on the new image to confirm that: the median ratio against the numbers below is 1.000 over 84 route and scene pairs, on inputs that hash identically. The comparison and the one scene that moved are in [the 2026-08-31 update to ADR-0002](adr/0002-toolchain-and-target-baseline.md#re-measurement), and the data is in [docs/measurements](measurements/2026-08-31-jetson-orin-sweep-after-image-change.jsonl). The figures in this report are unchanged and still come from the 2026-08-29 runs.
+The commands below generate new corpus images and measurements without requiring
+the historical logs. Recomputing the original tables instead requires the locally
+retained measurement files; a fresh checkout contains the procedure and reported
+results, but not those files.
+
+The Jetson image changed on 2026-08-31, from `nvcr.io/nvidia/l4t-cuda:11.4.19-devel` to `ubuntu:20.04` with the CUDA packages installed from the L4T apt repository. `nvcc` is the same build either way, and the sweep was run again on the new image to confirm that: the median ratio against the numbers below is 1.000 over 84 route and scene pairs, on inputs that hash identically. The comparison and the one scene that moved are in [the 2026-08-31 update to ADR-0002](adr/0002-toolchain-and-target-baseline.md#re-measurement), and the data remains local at `docs/measurements/2026-08-31-jetson-orin-sweep-after-image-change.jsonl` (repository-relative path). The figures in this report are unchanged and still come from the 2026-08-29 runs.
 
 
 ```

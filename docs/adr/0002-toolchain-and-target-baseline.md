@@ -218,10 +218,14 @@ which must not end up in this image.
 
 ### Re-measurement
 
+The generated records named below remain in local measurement storage and are
+ignored by Git. They are not included in a fresh checkout. Paths are relative to
+the repository root.
+
 The claim that this changes the packaging and not the compiler was checked by
 running the sweep again on the new image and comparing it against
-[2026-08-29](../measurements/2026-08-29-jetson-orin-sweep.jsonl). The result is
-[2026-08-31](../measurements/2026-08-31-jetson-orin-sweep-after-image-change.jsonl),
+the 2026-08-29 run (`docs/measurements/2026-08-29-jetson-orin-sweep.jsonl`). The result is
+the 2026-08-31 run (`docs/measurements/2026-08-31-jetson-orin-sweep-after-image-change.jsonl`),
 taken with the procedure in the [benchmark report](../benchmark-report.md): the
 same 28 scenes, 3 routes, 3 independent runs, 30 warm-up and 200 measured
 iterations, pinned to CPU 0, MAXN. All 28 corpus images hash identically to the
@@ -229,13 +233,13 @@ ones measured in August, so the inputs are the same bytes and not merely the sam
 generator settings.
 
 The environment the sweep ran in is recorded separately, in
-[2026-08-31-jetson-orin-environment.json](../measurements/2026-08-31-jetson-orin-environment.json),
+`docs/measurements/2026-08-31-jetson-orin-environment.json`,
 captured from the same image (`sha256:99e3b92dba23e8050859ac55c49c7588d809e4438fe62aeff9fe3b79045655b5`).
 It carries the CUDA provenance, so the repository and all eight package versions
 are on record with the numbers. The sweep file could not show that: at the time
 the benchmark harness recorded `cuda_toolkit` only to the minor version. **That
 was changed on 2026-08-31**; it records `11.4.315` since, though the sweep files
-on record here stay at the minor version.
+retained locally stay at the minor version.
 
 The conclusion holds either way for these two images. `nvcc` is `V11.4.315` build
 `cuda_11.4.r11.4/compiler.31964100_0` in the `l4t-cuda` image and in the apt-built

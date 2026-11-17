@@ -15,6 +15,10 @@ Route names follow the [benchmark summary](benchmark-report.md). `CPU` is OpenCV
 
 ## Current state
 
+Generated measurement files under `docs/measurements/` are local-only and ignored
+by Git. This report retains the measured conclusions and conditions; a fresh
+checkout does not contain the raw historical outputs.
+
 ### Overall
 
 These are the results with the ArUco3 detection strategy enabled. All three routes detect the same 88 markers. The columns of the table do not share one denominator, so each header names the division it belongs to. Precision, rotation match, corner RMSE, and corner max are over the 88 detections. Recall (overall) is over all 480 ground truth markers, and recall (at or above bound) is over the 90 ground truth markers at or above the ArUco3 bound. The evaluator does not define precision for the at-or-above-bound division, because a false positive has no ground truth marker to take a side length from.
@@ -239,11 +243,11 @@ $B --preset full --corpus-dir /tmp/c --use-aruco3 0 --output accuracy-noaruco3.j
 
 The corpus is generated from a seed by this tool, so no prior generation is required. The seed and preset used for generation are the same as `aruco3cuda_corpusgen`, producing the same images.
 
-The results are in `docs/measurements/2026-08-29-<machine>-accuracy{,-noaruco3}.{json,txt}`.
+The historical results remain in local `docs/measurements/2026-08-29-<machine>-accuracy{,-noaruco3}.{json,txt}` files (2026-08-31 for Jetson AGX Thor). These files are not distributed in Git. The commands above generate new results; they do not require the historical logs.
 
 ## Across the bundled dictionaries
 
-Every bundled dictionary was evaluated on all four machines with the same procedure as above: `aruco3cuda_evaluate --dictionary <name>`, the `full` preset, 91 scenes, seed 20260827. Seventeen runs per machine, about two minutes each machine. The data is in [docs/measurements](measurements/), one file per machine.
+Every bundled dictionary was evaluated on all four machines with the same procedure as above: `aruco3cuda_evaluate --dictionary <name>`, the `full` preset, 91 scenes, seed 20260827. Seventeen runs per machine, about two minutes each machine. The historical data remains local at `docs/measurements/2026-08-31-<machine>-accuracy-all-dictionaries.json`, one file per machine; these generated files are absent from a fresh checkout.
 
 The corpus is regenerated with the dictionary under test, because the markers themselves differ. That is the limit of this comparison: a difference in recall between two dictionaries mixes the dictionary with the images it produced, and cannot be attributed to either.
 

@@ -84,6 +84,7 @@ This file is the set of rules shared by the humans and agents who work in this r
 - Use the same inputs and detection conditions for CPU and CUDA.
 - Treat GPU-resident input and input including the transfer from the host as separate results.
 - Do not cherry-pick favorable results; include conditions where the CPU is faster and report the crossover point.
+- Keep raw measurement logs, generated environment snapshots, timing rows, aggregates, and validation output out of version control. Retain them locally under ignored measurement directories. Commit concise reports, evaluation conditions, reproduction scripts, and fixed source/input manifests needed by those scripts; reports must distinguish local output paths from files available in a fresh checkout. See the [measurement storage policy](docs/measurements/README.md).
 
 ## What CI Covers
 

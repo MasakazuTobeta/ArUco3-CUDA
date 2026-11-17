@@ -22,8 +22,8 @@ from collections import defaultdict
 # to something else, or make a table silently sparse.
 #
 # 4 and 5 satisfy it: no key was added or renamed and the intervals are
-# identical, only the precision of cuda_toolkit changed, so the committed
-# version-4 files aggregate together with anything measured from now on.
+# identical, only the precision of cuda_toolkit changed, so historical local
+# version-4 files can aggregate together with version-5 measurements.
 #
 # 3 does not, even though its intervals match 4: a version-3 measurement line
 # has no startup and no cuda_context_ms, so the startup table would silently

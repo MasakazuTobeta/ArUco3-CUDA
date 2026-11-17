@@ -172,7 +172,7 @@ For the synthetic corpus, the above are satisfied. Reproducibility on real image
 - Reproduction commands
 - The benchmark report and the accuracy evaluation results
 
-Large images and videos are not committed directly to the Git repository; we record their storage location and checksum in a manifest. The new CPU experiments keep generated measurement rows, logs, environment captures and machine-readable result summaries in local storage, while evaluation conditions, conclusions and reproduction sources remain in Git. Previously tracked GPU measurement records remain unchanged; their removal is a separate follow-up under [issue #23](https://github.com/MasakazuTobeta/ArUco3-CUDA/issues/23).
+Large images and videos are not committed directly to the Git repository; we record their storage location and checksum in a manifest. CPU, GPU and Hybrid experiments keep generated measurement rows, logs, environment captures and machine-readable result summaries in local storage, while evaluation conditions, conclusions and reproduction sources remain in Git. A fresh checkout does not include historical generated output; see the [measurement storage policy](measurements/README.md) for audit and reproduction prerequisites.
 
 ## Goals
 
