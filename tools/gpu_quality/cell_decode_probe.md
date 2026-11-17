@@ -46,6 +46,20 @@ one-level image is uniformly 127. Other intensities are deterministic evenly
 spaced levels selected by `(i * 37 + i / 13) % levels`, where `i` traverses the
 candidate buffer. They are synthetic histogram probes, not camera images.
 
+An optional second argument sets a fixed candidate capacity from 1 through
+16384. For example, `cell_decode_probe persistent 16384` crosses active counts
+0, 1, 8, 128, 512, 4096 and 16384 with the same twelve intensity levels
+(84 records). Smaller capacities omit larger counts and include the capacity
+itself exactly once. This separates empty-block dispatch cost from useful work
+and includes several waves of a bounded candidate grid. Use the same capacity
+and active counts for both variants; the default 48-case density sweep remains
+unchanged. The capacity limit bounds probe allocation, not the detector API. An optional
+third argument selects one intensity-level count from 1 through 256 instead
+of the twelve-level sweep: `cell_decode_probe persistent 16384 2` produces
+seven records for two-level images. This supports targeted paired comparisons
+of uniform (1), sparse (2) and dense (256) distributions without changing
+the warm-up or sample count. Record this selection with the results.
+
 Each case has 50 warm-up and 150 measured launches. All event samples are
 retained in microseconds, with the repository's nearest-rank p50/p95/p99.
 Allocations, upload, graph instantiation, output download and hashing are outside

@@ -2,6 +2,7 @@
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -84,14 +85,14 @@ void hash_values(aruco3cuda::util::Sha256& hash, const std::vector<T>& values) {
     hash.update(values.data(), values.size() * sizeof(T));
 }
 
-void run_case(int count, int levels, const std::string& label, const cudaDeviceProp& device,
-              int driver_version, int runtime_version) {
+void run_case(int count, int levels, int requested_capacity, const std::string& label,
+              const cudaDeviceProp& device, int driver_version, int runtime_version) {
     Handles handles;
     require(cudaStreamCreateWithFlags(&handles.stream_, cudaStreamNonBlocking), "create stream");
     require(cudaEventCreate(&handles.begin_), "create begin event");
     require(cudaEventCreate(&handles.end_), "create end event");
     aruco3cuda::DetectorConfig config;
-    config.max_candidates_ = std::max(count, 1);
+    config.max_candidates_ = requested_capacity == 0 ? std::max(count, 1) : requested_capacity;
     config.max_markers_ = config.max_candidates_;
     aruco3cuda::Workspace workspace;
     const std::size_t bytes = aruco3cuda::detail::candidate_workspace_bytes(config, 64, 64) +
@@ -196,10 +197,32 @@ void run_case(int count, int levels, const std::string& label, const cudaDeviceP
 
 int main(int argc, char** argv) {
     try {
-        if (argc > 2) {
-            throw std::invalid_argument("usage: cell_decode_probe [VARIANT_LABEL]");
+        if (argc > 4) {
+            throw std::invalid_argument(
+                    "usage: cell_decode_probe [VARIANT_LABEL [CAPACITY [LEVELS]]]");
         }
-        const std::string label = argc == 2 ? argv[1] : "unspecified";
+        const std::string label = argc >= 2 ? argv[1] : "unspecified";
+        int requested_capacity = 0;
+        if (argc >= 3) {
+            const std::string value = argv[2];
+            const auto parsed =
+                    std::from_chars(value.data(), value.data() + value.size(), requested_capacity);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+                requested_capacity < 1 || requested_capacity > 16384) {
+                throw std::invalid_argument("CAPACITY must be an integer from 1 to 16384");
+            }
+        }
+        std::vector<int> level_counts{1, 2, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256};
+        if (argc == 4) {
+            const std::string value = argv[3];
+            int levels = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), levels);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+                levels < 1 || levels > 256) {
+                throw std::invalid_argument("LEVELS must be an integer from 1 to 256");
+            }
+            level_counts = {levels};
+        }
         int ordinal = 0;
         require(cudaGetDevice(&ordinal), "get device");
         cudaDeviceProp device{};
@@ -208,9 +231,19 @@ int main(int argc, char** argv) {
         int runtime_version = 0;
         require(cudaDriverGetVersion(&driver_version), "get driver version");
         require(cudaRuntimeGetVersion(&runtime_version), "get runtime version");
-        for (int count : {0, 1, 8, 128}) {
-            for (int levels : {1, 2, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256}) {
-                run_case(count, levels, label, device, driver_version, runtime_version);
+        std::vector<int> counts{0, 1, 8, 128};
+        if (requested_capacity != 0) {
+            counts = {0, 1, 8, 128, 512, 4096, requested_capacity};
+            counts.erase(std::remove_if(counts.begin(), counts.end(),
+                                        [&](int count) { return count > requested_capacity; }),
+                         counts.end());
+            std::sort(counts.begin(), counts.end());
+            counts.erase(std::unique(counts.begin(), counts.end()), counts.end());
+        }
+        for (int count : counts) {
+            for (int levels : level_counts) {
+                run_case(count, levels, requested_capacity, label, device, driver_version,
+                         runtime_version);
             }
         }
         return 0;
