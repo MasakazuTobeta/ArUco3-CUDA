@@ -41,8 +41,15 @@ changed. See the [six-host report](cpu-multihost-report.md) for their scope.
 
 ### Detector and helper checks
 
-The fresh Release build passed all 46 existing C++ test cases. Additional local
-probes compare against the pinned OpenCV 4.14.0 public APIs:
+The fresh Release build passed all 46 existing C++ test cases. All 24 Python
+measurement-tool regression tests also passed and now run in CI and through the
+`cpu.measurement_tools` CTest entry. The fresh ASan/UBSan build passed all 47
+CTest entries (46 C++ cases and the Python suite) in randomized order with two
+parallel tests, in 760.27 seconds. No test timed out, and no sanitizer diagnostic
+occurred; the existing 600-second C++ timeout was retained. The full-suite log
+remains local at `build/adversarial/asan-tests.log`.
+
+Additional local probes compare against the pinned OpenCV 4.14.0 public APIs:
 
 | Probe | Checked cases |
 | --- | ---: |
