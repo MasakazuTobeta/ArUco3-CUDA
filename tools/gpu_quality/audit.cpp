@@ -182,6 +182,9 @@ int main(int argc, char** argv) {
     try {
         bool aruco3 = true;
         bool direct = false;
+        int width = 641;
+        int height = 479;
+        aruco3cuda::DetectorConfig config;
         std::string dictionary_name = "DICT_ARUCO_MIP_36h12";
         std::filesystem::path image_directory;
         for (int i = 1; i < argc; ++i) {
@@ -198,10 +201,51 @@ int main(int argc, char** argv) {
                     throw std::invalid_argument("--aruco3 requires 0 or 1");
                 }
                 aruco3 = value == "1";
+            } else if (i + 1 < argc &&
+                       (argument == "--width" || argument == "--height" ||
+                        argument == "--cell-size" || argument == "--min-canonical-side" ||
+                        argument == "--refine-iterations" || argument == "--max-candidates" ||
+                        argument == "--max-markers")) {
+                const std::string value = argv[++i];
+                std::size_t used = 0;
+                const int parsed = std::stoi(value, &used);
+                if (used != value.size() || parsed <= 0) {
+                    throw std::invalid_argument(argument + " requires a positive integer");
+                }
+                if (argument == "--width")
+                    width = parsed;
+                if (argument == "--height")
+                    height = parsed;
+                if (argument == "--cell-size")
+                    config.perspective_remove_pixel_per_cell_ = parsed;
+                if (argument == "--min-canonical-side")
+                    config.min_side_length_canonical_img_px_ = parsed;
+                if (argument == "--refine-iterations")
+                    config.corner_refinement_max_iterations_ = parsed;
+                if (argument == "--max-candidates")
+                    config.max_candidates_ = parsed;
+                if (argument == "--max-markers")
+                    config.max_markers_ = parsed;
+            } else if (i + 1 < argc &&
+                       (argument == "--min-marker-ratio" || argument == "--refine-accuracy")) {
+                const std::string value = argv[++i];
+                std::size_t used = 0;
+                const double parsed = std::stod(value, &used);
+                if (used != value.size() || !std::isfinite(parsed) || parsed < 0.0) {
+                    throw std::invalid_argument(argument + " requires a finite nonnegative number");
+                }
+                if (argument == "--min-marker-ratio")
+                    config.min_marker_length_ratio_original_img_ = parsed;
+                if (argument == "--refine-accuracy")
+                    config.corner_refinement_min_accuracy_px_ = parsed;
             } else {
                 throw std::invalid_argument(
                         "usage: gpu_quality [--aruco3 0|1] [--dictionary NAME] [--direct] "
-                        "[--images DIRECTORY]; without images, render 96 adversarial frames");
+                        "[--images DIRECTORY] [--width N] [--height N] [--cell-size N] "
+                        "[--min-canonical-side N] [--min-marker-ratio R] "
+                        "[--refine-iterations N] [--refine-accuracy R] "
+                        "[--max-candidates N] [--max-markers N]; "
+                        "without images, render 96 adversarial frames");
             }
         }
         cv::setNumThreads(1);
@@ -210,7 +254,7 @@ int main(int argc, char** argv) {
         std::vector<Frame> frames;
         if (image_directory.empty()) {
             for (const auto& spec : aruco3cuda::cpu_quality::make_adversarial_specs(
-                         cv::Size(641, 479), dictionary.bytesList.rows)) {
+                         cv::Size(width, height), dictionary.bytesList.rows)) {
                 frames.push_back({spec.name_, spec.family_,
                                   aruco3cuda::cpu_quality::render_frame(spec, dictionary),
                                   make_truth(spec), true, spec.require_detection_});
@@ -239,7 +283,6 @@ int main(int argc, char** argv) {
         if (frames.empty()) {
             throw std::invalid_argument("empty input set");
         }
-        aruco3cuda::DetectorConfig config;
         config.use_aruco3_detection_ = aruco3;
         config.corner_refine_method_ = aruco3 ? aruco3cuda::CornerRefineMethod::kSubpix
                                               : aruco3cuda::CornerRefineMethod::kNone;
@@ -255,6 +298,9 @@ int main(int argc, char** argv) {
         parameters.minMarkerLengthRatioOriginalImg = config.min_marker_length_ratio_original_img_;
         parameters.cornerRefinementMethod =
                 aruco3 ? cv::aruco::CORNER_REFINE_SUBPIX : cv::aruco::CORNER_REFINE_NONE;
+        parameters.perspectiveRemovePixelPerCell = config.perspective_remove_pixel_per_cell_;
+        parameters.cornerRefinementMaxIterations = config.corner_refinement_max_iterations_;
+        parameters.cornerRefinementMinAccuracy = config.corner_refinement_min_accuracy_px_;
         cv::aruco::ArucoDetector reference(dictionary, parameters);
         aruco3cuda::cpu::CpuDetector optimized;
         std::string message;
@@ -346,7 +392,27 @@ int main(int argc, char** argv) {
             writer.member_string("dictionary", dictionary_name);
             writer.member_bool("aruco3", aruco3);
             writer.member_bool("graph", !direct);
+            writer.key("configuration");
+            writer.begin_object();
+            writer.member_int("max_candidates", config.max_candidates_);
+            writer.member_int("max_markers", config.max_markers_);
+            writer.member_int("perspective_remove_pixel_per_cell",
+                              config.perspective_remove_pixel_per_cell_);
+            writer.member_int("min_side_length_canonical_img",
+                              config.min_side_length_canonical_img_px_);
+            writer.member_double("min_marker_length_ratio_original_img",
+                                 config.min_marker_length_ratio_original_img_, 17);
+            writer.member_int("corner_refinement_max_iterations",
+                              config.corner_refinement_max_iterations_);
+            writer.member_double("corner_refinement_min_accuracy",
+                                 config.corner_refinement_min_accuracy_px_, 17);
+            writer.end_object();
             writer.member_string("opencv_version", CV_VERSION);
+            writer.member_string("gpu_resize_profile", aruco3cuda::compiled_resize_profile());
+            writer.member_string("gpu_resize_backend", aruco3cuda::compiled_resize_backend());
+            writer.member_string("gpu_carotene_x_fma", aruco3cuda::compiled_carotene_x_fma());
+            writer.member_string("gpu_strategy_identity",
+                                 aruco3cuda::compiled_gpu_strategy_identity());
             writer.member_string("pixel_sha256", digest);
             writer.member_int("width", image.cols);
             writer.member_int("height", image.rows);

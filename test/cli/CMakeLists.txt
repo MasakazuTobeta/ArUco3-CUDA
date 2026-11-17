@@ -523,3 +523,10 @@ if(Python3_Interpreter_FOUND)
             "${CMAKE_COMMAND}" "${PROJECT_SOURCE_DIR}/cmake/ArUco3CudaStrategies.cmake")
   set_tests_properties(cli.cuda_strategies.selection PROPERTIES TIMEOUT 120)
 endif()
+
+# Synthetic logs only: no image data, OpenCV calls, or GPU work.
+if(Python3_Interpreter_FOUND)
+  add_test(NAME cli.bench.steady_validation
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_steady_benchmark.py")
+  set_tests_properties(cli.bench.steady_validation PROPERTIES TIMEOUT 60)
+endif()

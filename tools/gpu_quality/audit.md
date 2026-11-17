@@ -14,11 +14,28 @@ directory of unannotated grayscale inputs. It makes no latency claim.
 
 ## Current state
 
+The maintained [matrix runner and chain generator](run_matrix.md) reproduce the
+51-case broad matrix plus both historical 91-image evaluations. Generated inputs,
+source snapshots, per-frame observations and timing logs remain local ignored
+outputs; the source tools and evaluation conditions are versioned.
+
 The audit uses the pinned OpenCV 4.14.0 public API and the existing synthetic
 [quality renderer](../cpu_quality/quality_scenes.md). It does not use official
 ArUco GPLv3 sources or images. The dictionary, ArUco3 setting and corner-refinement
 mode are identical across the three routes. Other settings retain the common
 defaults. OpenCV uses one thread.
+
+Configuration probes can set `--width` and `--height` for rendered scenes,
+`--cell-size`, `--min-canonical-side`, `--min-marker-ratio`,
+`--refine-iterations`, and `--refine-accuracy`. Defaults reproduce the original
+audit. The detector settings are mapped explicitly to both CPU implementations
+and the GPU, and recorded in every frame's `configuration` object. Width and
+height do not resize supplied photographs. ArUco3 on uses subpixel refinement;
+ArUco3 off uses no refinement, matching the GPU's supported combinations.
+`--max-candidates` and `--max-markers` expose the device resource budgets and
+are recorded alongside the algorithm settings. A budget overflow is an explicit
+execution failure, not a detection-quality result. Keep that failure record
+when rerunning with a larger budget; do not omit the triggering image.
 
 The default sequence shuffles the 96 frames with a fixed seed, revisits eight,
 and inserts 14 blank cuts. The detector instances persist across all 118 calls.
@@ -168,3 +185,137 @@ an acceptance result.
 - Unannotated real images provide compatibility checks, not ground truth.
 - This initial audit does not replace the full 91-scene evaluator, all-dictionary
   rotation suite, boundary unit tests or Compute Sanitizer.
+
+### Contour and quad-perimeter audit checkpoint
+
+An intermediate DGX Spark build using exact contour paths and Euclidean
+quad-perimeter grouping completed the same 96-scene sequences. With an explicit
+16,384-candidate budget, both modes retained every CPU-detected truth and correct
+rotation, with no false positives:
+
+| ArUco3 | OpenCV true positives | GPU true positives | Common-truth CPU RMSE | Common-truth GPU RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| On | 113 | 118 | 2.424692 px | 2.357981 px |
+| Off | 124 | 127 | 1.698154 px | 1.698154 px |
+
+No common truth had a worse GPU corner maximum or squared-error sum. The 16
+factory photographs remained empty in both modes. The default 4,096-candidate
+off-mode run failed explicitly on `quality_negative_3`; the public CPU candidate
+oracle counts 1,820 quads per threshold window, or 5,460 before grouping. That
+resource failure is retained separately from the larger-budget quality result.
+
+The external 17-dictionary/two-mode matrix still failed: 278 CPU observations
+versus 250 GPU observations across 41 CPU-positive image/configuration pairs.
+Eight pairs lost `failmask9.png` ID 0, a regression against the frozen GPU
+baseline; four 5x5/off pairs each lost five observations in `regression_2492.png`.
+CPU instrumentation showed that all these missing observations decode only from
+eligible close contours after the largest representative fails. These findings
+motivate [device close-contour retries](../../src/core/candidate_retry.md); the
+checkpoint itself is not an accepted final quality result.
+
+Raw checkpoint results remain local in ignored
+`build/gpu-study/contour-group-quality-16384/`, including binary hash, full
+observations, per-truth corner comparisons, and completion records for all 936
+sequence calls. The original 4,096-candidate failure remains in
+`build/gpu-study/contour-group-quality/`. These paths are not checkout contents.
+
+### Close-contour and exact-resize checkpoint
+
+**Superseded descriptor check:** subsequent link-order review found that the
+audit/evaluator could resolve profile getters from the CPU library, producing a
+GENERIC/NEON runtime descriptor despite compiled ARM kernels. The observations
+below remain preserved diagnostic results, but are not acceptance evidence for
+the intended SVE128 profile. Primitive exact tests used the correct core getters.
+A core-only getter translation unit and CPU-first/core-first link tests now
+require a fresh audit with checked per-frame metadata.
+
+The next Spark checkpoint adds device close-contour retries and the
+`OPENCV_ARM_HAL` / `SVE128` / `SEPARATE` resize compatibility descriptor. The
+38-case matrix completed 936 sequence calls at the same explicit
+16,384-candidate budget. All 278 external CPU observations were recovered across
+17 Dictionaries and both modes, with no discrete differences or corner shifts
+above the existing 1 px compatibility threshold. All 16 factory photographs
+remained empty in both modes. Every one of the 304 revisited frames reproduced
+all three routes' complete observations exactly; annotated rotations agreed.
+
+On the 96 annotated scenes, CPU/GPU true positives were 113/118 with ArUco3 on
+and 124/127 with it off; every route had zero false positives. Common-truth
+corner RMSE was 2.424692 px for both CPU and GPU with ArUco3 on, and 1.698154 px
+for both with it off. No common truth had a worse GPU maximum or RMSE. The
+previous generic resize happened to improve some default-scene corners, but it
+also caused material regressions under nondefault settings. Exact resize is
+accepted against CPU quality, without claiming uniformly better corners than
+every earlier GPU implementation.
+
+Eleven additional 118-call variants cover 640×480 and 1280×721, canonical cell
+sizes 2 and 7, marker ratios 0 and 0.1, canonical minimum sides 16 and 48,
+100 refinement iterations with 0.01 accuracy, off-mode cell size 7, and direct
+execution. They have no discrete regressions or failed positive controls. The
+three previously material corner regressions at ratio 0.1 / sides 16 and 48
+are resolved. The largest remaining per-truth maximum/RMSE worsening is
+0.000003096 px. All raw deltas are retained; values at or below 0.001 px are
+reported separately as numerical variation, not erased or used to excuse a
+missed marker, wrong rotation or false positive.
+
+This checkpoint used the explicitly nonfused Spark Carotene horizontal
+arithmetic before its equivalent named CMake descriptor was integrated. Orin's
+pinned CPU build requires a separately verified fused descriptor. Cross-hardware
+validation and any later performance changes must retain their own source hashes
+and exact pixel gates. The ignored local records are
+`build/gpu-study/resize-arm-quality-16384/` (matrix, frozen core hashes and input
+identity checks) and `build/gpu-study/resize-arm-variants/` (all variant corner
+deltas). These raw outputs are not versioned or present in a fresh checkout.
+
+
+The corrected core-only getter checkpoint subsequently reran the eight focused
+resize/retry tests, all 38 matrix cases, all eleven variants, and both historical
+91-scene modes. All 2,588 audit frames (including the three critical variant
+reruns) explicitly reported `OPENCV_ARM_HAL`, `SVE128`, and `SEPARATE`. The counts
+and corner conclusions above were reproduced with the intended descriptor;
+304 revisits and the default/direct sequence remained exact. The 91-scene CPU/GPU
+true positives were 88 with ArUco3 on and 436 with it off, with zero false
+positives and identical aggregate corner errors. Valid direct-arithmetic control
+records now reside in ignored `build/gpu-study/resize-linked-quality-16384/`,
+`resize-linked-variants/`, and `resize-linked-history/`.
+
+A further 64 rendered two/three-marker chains vary gaps from −8 to 32 pixels,
+rotations, black/gray border connectors and overlapping outlines. Both modes
+completed 82 sequence calls each. These cases exercise the documented difference
+between transitive GPU grouping and CPU group formation; they have not
+established a new quality failure or justified a wider grouping change. Their
+rendered ID/corner truth and all raw observations are retained locally.
+
+### Final combined Spark quality gate
+
+The final combined checkpoint uses ordered contours with edge-aggregate counting,
+warp approximation/materialization and eligible-edge compaction; fused threshold,
+demand pyramid, density-selected fixed-point Otsu (96 occupied-bin limit), a
+512-block persistent candidate grid, and `KLEIDI_PRECOMPUTED`. The runtime profile
+is explicitly `OPENCV_ARM_HAL` / `SVE128` / `SEPARATE`; the optimized CPU library
+is built with `ARUCO3CPU_NATIVE=ON`.
+
+All 2,398 audit calls (936 matrix, 1,298 configuration variants, 164 close-chain
+sequence calls) assert that exact strategy/profile and the 16,384-candidate /
+1,024-marker budgets. Inputs, configuration, GPU observations and per-truth
+metrics are exactly equal to the validated direct-arithmetic checkpoint. The
+main 96-scene true-positive counts remain CPU/GPU 113/118 with ArUco3 on and
+124/127 with it off, with zero false positives. External observations remain
+278/278 across all 17 supported Dictionaries and both modes; all factory images
+remain empty. The 304 matrix revisits reproduce complete observations exactly.
+The largest variant corner worsening against CPU is 0.000003096 px; no per-truth
+maximum or RMSE worsens by more than 0.001 px.
+
+The historical 91-scene evaluator also passes both modes (182 images total),
+with CPU/GPU true positives of 88 and 436 respectively, zero false positives,
+correct rotations and identical aggregate corner errors. The rendered chain
+cases retain all 100 CPU observations in on-mode and all 93 in off-mode, with
+no unknown/duplicate IDs or material common-truth corner degradation.
+
+This is tested-scope quality acceptance, not proof for every possible image.
+External photographs remain unannotated compatibility inputs, the explicit
+candidate budget remains a resource condition, and the documented transitive
+GPU grouping difference remains. Cross-hardware final-combination validation and
+performance measurements are separate gates. The final local records are
+`build/gpu-study/final-steady-quality-16384/`, `final-steady-variants/`, and
+`final-steady-history/`; `final-acceptance.json` includes source-manifest and
+CMake-cache hashes. Raw outputs remain ignored rather than versioned.

@@ -1,0 +1,143 @@
+{
+  "inputs": [
+    {
+      "name": "clean_640x480_n4_s128.png",
+      "source_local_path": "data/cpu-experiment/clean_640x480_n4_s128.png",
+      "sha256": "71eac458e39ab48a65b9af681cdedc4fd6b31f82c84a6cb92e79996bbd56299b",
+      "family": "synthetic"
+    },
+    {
+      "name": "clean_1280x720_n4_s128.png",
+      "source_local_path": "data/cpu-experiment/clean_1280x720_n4_s128.png",
+      "sha256": "5e7c73390846fbe9ab54a84720b6aa5e70280614c564ce3be47d083d9d12811f",
+      "family": "synthetic"
+    },
+    {
+      "name": "cpu_1920x1080_n16_clean.png",
+      "source_local_path": "data/cpu-experiment/cpu_1920x1080_n16_clean.png",
+      "sha256": "a9cce66d747b846808d6f5a29a99182d3bb018f0f2d854fa84235536836d2d6c",
+      "family": "synthetic"
+    },
+    {
+      "name": "cpu_3840x2160_n4_clean.png",
+      "source_local_path": "data/cpu-experiment/cpu_3840x2160_n4_clean.png",
+      "sha256": "ac7a4feefab82800ccbcef233fe07988afd6849367057e2214aff5b15ee0649c",
+      "family": "synthetic"
+    },
+    {
+      "name": "clean_1920x1080_n0_s16.png",
+      "source_local_path": "data/cpu-experiment/clean_1920x1080_n0_s16.png",
+      "sha256": "f13d27b1bb0cd3447a3764a1b7b169e2d47eaad7b2254bfa1b017105154219c4",
+      "family": "synthetic"
+    },
+    {
+      "name": "noise_640x480.png",
+      "source_local_path": "data/cpu-experiment/noise_640x480.png",
+      "sha256": "6fe8a88fa13e40e3c19e0fcd5077abea630516cc7a6b99dff2a237d11b1c4cf4",
+      "family": "synthetic"
+    },
+    {
+      "name": "blur_1280x720.png",
+      "source_local_path": "data/cpu-experiment/blur_1280x720.png",
+      "sha256": "086640e42aed4053f0864412fc0245a5b5e438e17de140e4f50bad90d3c86a28",
+      "family": "synthetic"
+    },
+    {
+      "name": "01_warehouse_racks.png",
+      "source_local_path": "data/cpu-real-background/01_warehouse_racks.png",
+      "sha256": "5ecfe3545da2bc5b2e5d2b736a2e827b76e7bac2a86c0707e88d62ae6682d05f",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "02_warehouse_fema.png",
+      "source_local_path": "data/cpu-real-background/02_warehouse_fema.png",
+      "sha256": "6f3c54714876152449d677f90fff689ebf1ada49f03e29735ca6e14852cbacc9",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "03_distribution_sainsburys.png",
+      "source_local_path": "data/cpu-real-background/03_distribution_sainsburys.png",
+      "sha256": "c7e577ab690bf77c5992813b83683f86a1c56ef1a5c9f5c819edb92d8255d6a5",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "04_steel_pipe_storage.png",
+      "source_local_path": "data/cpu-real-background/04_steel_pipe_storage.png",
+      "sha256": "3922a442ebaa3a5b22f4b73e4853ea4dbdfe495c16e5cb8919023565d01580e1",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "05_warehouse_adamhall.png",
+      "source_local_path": "data/cpu-real-background/05_warehouse_adamhall.png",
+      "sha256": "7e2a172d3ac306696770e80195265afb618b043a3d031afc8333863a13755cff",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "06_robot_bakery.png",
+      "source_local_path": "data/cpu-real-background/06_robot_bakery.png",
+      "sha256": "54e8fcb7363903d777c84276b0bd5fe3aeccbce492badd7fe005a756a41e0f26",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "07_production_elevator.png",
+      "source_local_path": "data/cpu-real-background/07_production_elevator.png",
+      "sha256": "9a0a6b399c98387b7fcaf485a8085622002dafda61d21e66358459b33306dccc",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "08_can_manufacturing.png",
+      "source_local_path": "data/cpu-real-background/08_can_manufacturing.png",
+      "sha256": "64e2821dfb4a25801e3900453919ed735a8f1f17b1f654f2ec5c4becc3d118c0",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "09_tannery.png",
+      "source_local_path": "data/cpu-real-background/09_tannery.png",
+      "sha256": "fddeca4a0c1dd5b55d1af479bea451cb3c99adccf566fa6faa64cecbe9fc6b8d",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "10_yarn_production.png",
+      "source_local_path": "data/cpu-real-background/10_yarn_production.png",
+      "sha256": "8b8bb8cf92d2f58dd014e327fa1f4789c7e925bb3589d691797ac7d72f5b8024",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "11_cnc_facility.png",
+      "source_local_path": "data/cpu-real-background/11_cnc_facility.png",
+      "sha256": "162c79153b6b36466c217cdcc4fce12e167f6f5f2313ba308d9f16bc85c2d893",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "12_noirlab_workshop.png",
+      "source_local_path": "data/cpu-real-background/12_noirlab_workshop.png",
+      "sha256": "b6e27038d5be5d1ec4c76c5359adefc74a1fd5ccc7a9d0397e08a3eba24c8977",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "13_haas_lathes.png",
+      "source_local_path": "data/cpu-real-background/13_haas_lathes.png",
+      "sha256": "057034b6b98f858c1e7b638d919bd226b8e6695d401897cabc2e5eb305797e83",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "14_weir_machine_room.png",
+      "source_local_path": "data/cpu-real-background/14_weir_machine_room.png",
+      "sha256": "476bc631be0850257de0371a153e769666bd71dd50b56f62a051e8dc33d661d0",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "15_brewery_machine_room.png",
+      "source_local_path": "data/cpu-real-background/15_brewery_machine_room.png",
+      "sha256": "8d7d9c8e3b487fa4affee3cfc2f17970697d73a5a72d74e640c0e50c8a26de04",
+      "family": "industrial photograph"
+    },
+    {
+      "name": "16_tower_plant_room.png",
+      "source_local_path": "data/cpu-real-background/16_tower_plant_room.png",
+      "sha256": "ff3dbbeabd33d54558e516330d19b433dfe32fabf83aab6c6431956adbce01a7",
+      "family": "industrial photograph"
+    }
+  ],
+  "scope": "fixed prepared PNG bytes copied unchanged across benchmark hosts; not generated detection/timing output"
+}

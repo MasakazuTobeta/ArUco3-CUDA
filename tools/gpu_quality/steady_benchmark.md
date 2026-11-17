@@ -23,6 +23,16 @@ of `name`, `sha256`, and `family` objects; families are `synthetic` or
 `gpu_strategy_identity`, as selected by the build configuration. Metadata is
 checked against every new GPU timing row; it is not inferred from timing output.
 
+The study's [fixed input manifest](steady-inputs.json) contains file identities,
+not measurement output. Recreate synthetic images with the CPU benchmark's
+`--generate` route described in the [CPU report](../../docs/cpu-benchmark-report.md),
+and photographs with the [pinned fetch/preparation procedure](../../cpu/experiments/real_background.md).
+Copy the listed files from their `source_local_path` into a new input directory
+and copy this manifest there as `input-manifest.json`. File hashes must match;
+renderer, OpenCV or PNG-encoder differences are a reproduction failure, not
+permission to substitute pixels. Prepared images are not included in a fresh
+checkout.
+
 ```bash
 python3 tools/gpu_quality/steady_benchmark.py \
   --old-bench build/gpu-baseline-budget/bench/aruco3cuda_bench \
@@ -73,6 +83,21 @@ verifies that binaries and original inputs have not changed at completion.
 Partial records remain available on failure; only `complete.json` denotes a
 completed sweep. All generated records and copied inputs belong under ignored
 local storage.
+
+Summarize a completed sweep with:
+
+```bash
+python3 tools/gpu_quality/summarize_steady.py \
+  build/gpu-study/final-benchmark-spark \
+  --output build/gpu-study/final-benchmark-spark/summary.csv
+```
+
+The CSV retains one row per image, mode and route: the median of process p50,
+p95 and p99, each with its process minimum and maximum. It rechecks sample
+percentiles and rejects changing detection counts. These are summaries of
+process percentiles, not percentiles computed from pooled samples. Calculate
+speedups per image before summarizing across images; a ratio of median times
+answers a different question. Detection counts alone do not establish quality.
 
 ## Goals
 

@@ -29,7 +29,7 @@ def validate_percentiles(row, cpu, iterations):
     tolerance = 1e-8 if cpu else 0.00011
     for name, fraction in (("p50_ms", .50), ("p95_ms", .95), ("p99_ms", .99)):
         expected = ordered[math.ceil(len(ordered) * fraction) - 1]
-        if abs(statistics[name] - expected) > tolerance:
+        if not math.isfinite(statistics[name]) or abs(statistics[name] - expected) > tolerance:
             raise ValueError(f"{name} disagrees with retained samples")
 
 
