@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+# Pixel arithmetic is an explicit compatibility profile, independent of the GPU
+# architecture. GENERIC is the portable default: an externally linked OpenCV
+# build's contraction policy cannot be inferred from the core compiler or CPU.
+set(ARUCO3CUDA_RESIZE_PROFILE "GENERIC" CACHE STRING
+    "CUDA segmentation resize arithmetic: GENERIC or OPENCV_ARM_HAL")
+set_property(CACHE ARUCO3CUDA_RESIZE_PROFILE PROPERTY STRINGS GENERIC OPENCV_ARM_HAL)
+if(ARUCO3CUDA_RESIZE_PROFILE STREQUAL "OPENCV_ARM_HAL")
+  set(ARUCO3CUDA_RESIZE_PROFILE_OPENCV_ARM_HAL_VALUE 1)
+elseif(ARUCO3CUDA_RESIZE_PROFILE STREQUAL "GENERIC")
+  set(ARUCO3CUDA_RESIZE_PROFILE_OPENCV_ARM_HAL_VALUE 0)
+else()
+  message(FATAL_ERROR
+    "ARUCO3CUDA_RESIZE_PROFILE must be GENERIC or OPENCV_ARM_HAL; got '${ARUCO3CUDA_RESIZE_PROFILE}'")
+endif()
+message(STATUS "  CUDA resize profile: ${ARUCO3CUDA_RESIZE_PROFILE}")
+
+# The GPU arithmetic follows the pinned host HAL's vector/tail layout. Explicit
+# descriptors make that numerical choice reproducible across different hosts.
+set(ARUCO3CUDA_RESIZE_ARM_BACKEND "AUTO" CACHE STRING
+    "Host ARM HAL descriptor: AUTO, NEON, SVE128, SVE256, or SVE512")
+set_property(CACHE ARUCO3CUDA_RESIZE_ARM_BACKEND PROPERTY STRINGS AUTO NEON SVE128 SVE256 SVE512)
+if(ARUCO3CUDA_RESIZE_ARM_BACKEND STREQUAL "AUTO")
+  set(ARUCO3CUDA_RESIZE_ARM_SVE_BYTES_VALUE -1)
+elseif(ARUCO3CUDA_RESIZE_ARM_BACKEND STREQUAL "NEON")
+  set(ARUCO3CUDA_RESIZE_ARM_SVE_BYTES_VALUE 0)
+elseif(ARUCO3CUDA_RESIZE_ARM_BACKEND STREQUAL "SVE128")
+  set(ARUCO3CUDA_RESIZE_ARM_SVE_BYTES_VALUE 16)
+elseif(ARUCO3CUDA_RESIZE_ARM_BACKEND STREQUAL "SVE256")
+  set(ARUCO3CUDA_RESIZE_ARM_SVE_BYTES_VALUE 32)
+elseif(ARUCO3CUDA_RESIZE_ARM_BACKEND STREQUAL "SVE512")
+  set(ARUCO3CUDA_RESIZE_ARM_SVE_BYTES_VALUE 64)
+else()
+  message(FATAL_ERROR
+    "ARUCO3CUDA_RESIZE_ARM_BACKEND must be AUTO, NEON, SVE128, SVE256, or SVE512; got '${ARUCO3CUDA_RESIZE_ARM_BACKEND}'")
+endif()
+message(STATUS "  ARM resize backend: ${ARUCO3CUDA_RESIZE_ARM_BACKEND}")
+
+# FMA contraction depends on how OpenCV was compiled, not on host SVE support.
+# AUTO is intentionally unresolved for ARM HAL until an actual linked baseline
+# can be identified; the core compiler version cannot identify OpenCV's compiler.
+set(ARUCO3CUDA_CAROTENE_X_FMA "AUTO" CACHE STRING
+    "Carotene horizontal contraction: AUTO (GENERIC only), FUSED, or SEPARATE")
+set_property(CACHE ARUCO3CUDA_CAROTENE_X_FMA PROPERTY STRINGS AUTO FUSED SEPARATE)
+if(ARUCO3CUDA_CAROTENE_X_FMA STREQUAL "FUSED")
+  set(ARUCO3CUDA_CAROTENE_X_FMA_VALUE 1)
+elseif(ARUCO3CUDA_CAROTENE_X_FMA STREQUAL "SEPARATE")
+  set(ARUCO3CUDA_CAROTENE_X_FMA_VALUE 0)
+elseif(ARUCO3CUDA_CAROTENE_X_FMA STREQUAL "AUTO")
+  if(ARUCO3CUDA_RESIZE_PROFILE_OPENCV_ARM_HAL_VALUE)
+    message(FATAL_ERROR "OPENCV_ARM_HAL requires explicit ARUCO3CUDA_CAROTENE_X_FMA=FUSED or SEPARATE, validated against the linked OpenCV build")
+  endif()
+  set(ARUCO3CUDA_CAROTENE_X_FMA_VALUE 0)
+else()
+  message(FATAL_ERROR "ARUCO3CUDA_CAROTENE_X_FMA must be AUTO, FUSED, or SEPARATE; got '${ARUCO3CUDA_CAROTENE_X_FMA}'")
+endif()
+message(STATUS "  Carotene horizontal FMA: ${ARUCO3CUDA_CAROTENE_X_FMA}")

@@ -7,6 +7,17 @@
 
 namespace aruco3cuda {
 
+/// Device-reported failures. Any nonzero combination invalidates all detections.
+/// Read only on the producing stream or after its successful completion.
+enum class DeviceFailure : std::int32_t {
+    kNone = 0,
+    kInvalidContourCycle = 1,
+    kContourPointOverflow = 2,
+    kCandidateOverflow = 4,
+    kContourApproximationOverflow = 8,
+    kInvalidCandidateCounters = 16
+};
+
 /// Detection results that stay resident on the device.
 ///
 /// Purpose:
@@ -23,11 +34,14 @@ namespace aruco3cuda {
 ///
 /// Ownership: the Detector owns the memory behind every pointer here. This struct
 ///            only holds references; it neither copies nor frees them. They become
-///            invalid once the Detector is destroyed, or once detect_async() is
-///            called with input whose dimensions changed.
+///            invalid after destruction, reinitialization, or layout rebuilding.
+///            Every later submission can overwrite the result contents. The caller
+///            must finish or explicitly order downstream readers before reuse.
 /// Synchronization: this is only a set of references and holds no synchronization
 ///                  point. The contents are not final until the kernels already
-///                  issued have completed.
+///                  issued have completed. When failure_bits_ is non-null, a
+///                  consumer must check it on the same ordered stream or after
+///                  completion. Any nonzero value invalidates all detections.
 ///
 /// Example input: a Detector initialized with max_markers_ = 1024
 /// Example output: capacity_ = 1024 and corner_x_ holding 4096 elements
@@ -45,10 +59,17 @@ struct DeviceDetections {
     /// Detection count after truncation. One element, on the device, so the host
     /// cannot read it directly.
     std::int32_t* count_ = nullptr;
-    /// Detection count before truncation. One element. If it is larger than count_,
-    /// detections were dropped.
+    /// Diagnostic accepted count. With a zero failure word, a value larger than
+    /// count_ indicates marker truncation. Nonzero failure bits invalidate the result
+    /// regardless of either counter.
     std::int32_t* accepted_total_ = nullptr;
     int capacity_ = 0;
+    /// Device diagnostic scalar containing DeviceFailure bits. Rewritten on every
+    /// invocation, including blank frames. Zero means no reported failure; any
+    /// nonzero value invalidates the entire invocation and count_ is zero.
+    /// Marker-limit truncation is separate: accepted_total_ may exceed count_
+    /// while failure_bits_ is zero. The detector owns this scalar for both routes.
+    std::int32_t* failure_bits_ = nullptr;
 };
 
 /// Detection results pulled out to the host.

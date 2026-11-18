@@ -165,8 +165,19 @@ typedef struct Aruco3CudaDetectionBuffer {
     int truncated;
 } Aruco3CudaDetectionBuffer;
 
-/* Device pointers to the results, mirroring aruco3cuda::DeviceDetections. The
-   detector owns this memory; it is only borrowed here. */
+/* Device failure bits. Any nonzero combination invalidates all detections.
+   Marker-limit truncation remains a separate count/accepted_total condition. */
+typedef enum Aruco3CudaDeviceFailure {
+    ARUCO3CUDA_DEVICE_FAILURE_NONE = 0,
+    ARUCO3CUDA_DEVICE_FAILURE_INVALID_CONTOUR_CYCLE = 1,
+    ARUCO3CUDA_DEVICE_FAILURE_CONTOUR_POINT_OVERFLOW = 2,
+    ARUCO3CUDA_DEVICE_FAILURE_CANDIDATE_OVERFLOW = 4,
+    ARUCO3CUDA_DEVICE_FAILURE_CONTOUR_APPROXIMATION_OVERFLOW = 8,
+    ARUCO3CUDA_DEVICE_FAILURE_INVALID_CANDIDATE_COUNTERS = 16
+} Aruco3CudaDeviceFailure;
+
+/* Stable device-result layout. The detector owns the borrowed pointers.
+   Query the separate device_failure_bits getter for asynchronous diagnostics. */
 typedef struct Aruco3CudaDeviceDetections {
     void* ids;
     void* rotations;
@@ -341,8 +352,9 @@ ARUCO3CUDA_C_API Aruco3CudaDetector* aruco3cuda_detector_create(void);
 /// @param detector The handle to release. NULL is accepted and ignored.
 ///
 /// Ownership: the handle is invalid after this call.
-/// Synchronization: releases device memory, so it must not run while kernels
-///                  issued by this detector are still in flight.
+/// Synchronization: waits for this detector's submitted work before releasing memory.
+///                  The caller must finish external readers of borrowed result storage
+///                  before destruction; those readers are not tracked by the detector.
 ///
 /// Example input: a handle from aruco3cuda_detector_create
 /// Example output: no return value; the handle must not be used again
@@ -359,8 +371,11 @@ ARUCO3CUDA_C_API void aruco3cuda_detector_destroy(Aruco3CudaDetector* detector);
 ///         CUDA_ERROR.
 ///
 /// Ownership: the dictionary is copied to the device, so the name need not outlive
-///            the call.
-/// Synchronization: **synchronizes the whole device** at the end.
+///            the call. Reinitialization invalidates borrowed result views once resource
+///            replacement begins. Host validation failure preserves an existing detector;
+///            failure after resource replacement begins leaves it uninitialized.
+/// Synchronization: waits for prior detector work before reusing storage and
+///                  **synchronizes the whole device** at the end.
 ///
 /// Example input: "DICT_ARUCO_MIP_36h12" and the defaults
 /// Example output: OK
@@ -382,10 +397,16 @@ ARUCO3CUDA_C_API Aruco3CudaStatus aruco3cuda_detector_initialize(Aruco3CudaDetec
 /// @return ARUCO3CUDA_STATUS_OK, NOT_INITIALIZED, INVALID_IMAGE, INVALID_ARGUMENT,
 ///         INVALID_CONFIG, or CUDA_ERROR.
 ///
-/// Ownership: the image memory stays with the caller and must remain valid until
-///            the kernels have completed.
-/// Synchronization: **does not synchronize**, except once on a frame whose
-///                  dimensions or pitch differ from the previous one.
+/// Ownership: the caller owns the image and its write ordering. Keep the memory valid
+///            and unmodified while this invocation may read it, even if dispatch fails
+///            after queuing partial work. Caller uploads on another stream need explicit
+///            ordering against earlier invocations reading the same input buffer.
+/// Synchronization: unchanged-layout steady submissions are host-asynchronous, with
+///                  detector-owned work ordered across streams. Changed image pointers,
+///                  dimensions, or pitch wait for prior completion before rebuilding.
+///                  First or rebuilt layout preparation may synchronize when immutable
+///                  resize coefficients are enabled. Failed completion recording
+///                  invalidates the detector and requires successful reinitialization.
 ///
 /// Example input: a 1280x720 device image and a stream
 /// Example output: OK
@@ -405,7 +426,9 @@ ARUCO3CUDA_C_API Aruco3CudaStatus aruco3cuda_detector_detect(Aruco3CudaDetector*
 /// @return ARUCO3CUDA_STATUS_OK. MARKER_OVERFLOW if the detector truncated the
 ///         results, in which case the buffer is still filled. INVALID_ARGUMENT if
 ///         the buffer is too small for the detections found, NOT_INITIALIZED, or
-///         CUDA_ERROR.
+///         CUDA_ERROR. CANDIDATE_OVERFLOW or INVALID_CONFIG when a device budget
+///         is exceeded; CUDA_ERROR for inconsistent device topology/counters.
+///         On those failures the buffer and its arrays remain unchanged.
 ///
 /// Ownership: the arrays stay with the caller.
 /// Synchronization: **synchronizes the stream.**
@@ -427,15 +450,37 @@ ARUCO3CUDA_C_API Aruco3CudaStatus aruco3cuda_detector_download(Aruco3CudaDetecto
 /// @return ARUCO3CUDA_STATUS_OK, INVALID_ARGUMENT, or NOT_INITIALIZED if detect
 ///         has never been called.
 ///
-/// Ownership: the detector owns the memory. The pointers become invalid when the
-///            detector is destroyed or the input dimensions change.
+/// Ownership: the detector owns the memory. Reinitialization, destruction, or layout
+///            rebuilding invalidates these borrowed views. The next detection overwrites
+///            their contents. Order external readers before the next detection or any
+///            operation that invalidates storage; the detector does not track readers.
 /// Synchronization: **does not synchronize.** The contents are not final until
-///                  the kernels already issued have completed.
+///                  the kernels already issued have completed. Check the separate
+///                  device_failure_bits word on the same ordered stream or after
+///                  completion before consuming any result.
 ///
 /// Example input: called right after detect
 /// Example output: OK, with out->capacity equal to max_markers
 ARUCO3CUDA_C_API Aruco3CudaStatus aruco3cuda_detector_device_detections(
         const Aruco3CudaDetector* detector, Aruco3CudaDeviceDetections* out);
+
+/// Borrows the device failure word for the most recent detect without waiting.
+///
+/// @param detector The handle. Must not be NULL.
+/// @param out Receives one device int32_t pointer. Must not be NULL. Unchanged on failure.
+/// @return OK, INVALID_ARGUMENT, or NOT_INITIALIZED if detect has not been called.
+///
+/// Ownership: the detector owns the scalar; its lifetime matches device_detections.
+/// Synchronization: no synchronization or host read. Check *out on the producing
+///                  stream or after successful completion. Zero means no reported
+///                  failure; any nonzero Aruco3CudaDeviceFailure combination
+///                  invalidates all detections and the published count is zero.
+///                  Every invocation overwrites the word, including blank frames.
+///
+/// Example input: called immediately after detect
+/// Example output: OK, with *out a device address whose completed value is zero
+ARUCO3CUDA_C_API Aruco3CudaStatus
+aruco3cuda_detector_device_failure_bits(const Aruco3CudaDetector* detector, const int32_t** out);
 
 /// Reports how the device workspace is being used.
 ///

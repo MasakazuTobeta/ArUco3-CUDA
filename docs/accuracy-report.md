@@ -1,5 +1,10 @@
 # Accuracy Evaluation Results
 
+This report records the historical component/extrema GPU route. Its 91-image
+corpus did not expose the connected-marker failures found by the expanded
+audit. The [steady-state evaluation](gpu-steady-state-report.md) records the
+new contour route, broader quality matrix and remaining limits separately.
+
 ## Purpose
 
 This document measures the three routes, CPU reference, Hybrid, and CUDA-Resident, against the ground truth of the synthetic corpus, and presents the accuracy metrics defined by the [evaluation plan](evaluation-plan.md) broken down by condition. Comparison of end-to-end times is handled by the [benchmark summary](benchmark-report.md).

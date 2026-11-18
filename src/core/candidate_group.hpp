@@ -23,7 +23,9 @@ namespace aruco3cuda::detail {
 /// Example input: reserve_candidate_groups with a candidate limit of 4096
 /// Example output: capacity_ = 4096 with a pointer in every array
 struct CandidateGroupBuffers {
-    /// Rank in descending perimeter order. Indexed by candidate index.
+    /// Euclidean quad perimeter for grouping, distinct from contour point count.
+    float* quad_perimeter_ = nullptr;
+    /// Rank in descending Euclidean quad perimeter order. Indexed by candidate index.
     std::int32_t* rank_ = nullptr;
     /// Map from rank back to candidate index. The inverse of rank_.
     std::int32_t* order_ = nullptr;
@@ -74,8 +76,9 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 ///
 /// Changing the binarization window yields slightly different candidates from
 /// the same marker. Candidates whose mean corner distance is closer than a
-/// ratio of the perimeter form one group, and the candidate with the largest
-/// perimeter in the group is kept. Keeping a smaller one pulls the corners
+/// ratio of the Euclidean quad perimeter form one group, and the candidate with the largest
+/// quad perimeter in the group is kept. Contour point counts remain unchanged for
+/// canonical level selection. Keeping a smaller one pulls the corners
 /// inward.
 ///
 /// There is one difference from the CPU reference. When two nearby candidates
@@ -90,6 +93,9 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 /// @param buffers The scratch space returned by reserve_candidate_groups. Must not be nullptr.
 /// @param grouped The output region returned by reserve_candidate_groups. Must not be nullptr.
 /// @param stream Stream to submit to. Pass nullptr to use the default stream.
+/// @param width_px Actual segmentation width for post-group border rejection.
+///                 Pass zero with height_px zero for already-filtered legacy input.
+/// @param height_px Actual segmentation height; zero only when width_px is zero.
 /// @return kOk, or kInvalidArgument, kCudaError.
 ///
 /// Ownership: the regions the arguments point to stay owned by the workspace.
@@ -99,7 +105,7 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 /// Example output: count_ = 1, keeping only the candidate with the largest perimeter
 Status build_candidate_groups_async(const DeviceCandidates& input, const DetectorConfig& config,
                                     CandidateGroupBuffers* buffers, DeviceCandidates* grouped,
-                                    cudaStream_t stream);
+                                    cudaStream_t stream, int width_px = 0, int height_px = 0);
 
 }  // namespace aruco3cuda::detail
 

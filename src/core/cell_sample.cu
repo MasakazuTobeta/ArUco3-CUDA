@@ -11,8 +11,10 @@
 #include "aruco3cuda/status.hpp"
 #include "aruco3cuda/workspace.hpp"
 #include "candidate_filter.hpp"
+#include "candidate_grid.hpp"
 #include "cuda_check.hpp"
 #include "preprocess.hpp"
+#include "pyramid_sampling.cuh"
 #include "quad_extract.hpp"
 
 namespace aruco3cuda::detail {
@@ -117,39 +119,11 @@ __device__ int round_to_nearest_even(double value) {
     return __double2int_rn(clamped);
 }
 
-/// Chooses the pyramid level used for identification, from a candidate's perimeter.
-///
-/// Same rule as the CPU path's _findOptPyrImageForCanonicalImg: consider only
-/// positive distances and take the level with the smallest one. The comparison
-/// is done in single precision.
-__device__ int choose_level(const PyramidRef& pyramid, int segmentation_width, int perimeter,
-                            int min_perimeter) {
-    int optimal = 0;
-    float distance = 3.402823466e+38F;
-    for (int i = 0; i < pyramid.level_count_; ++i) {
-        const float scale =
-                static_cast<float>(pyramid.width_[i]) / static_cast<float>(segmentation_width);
-        const float scaled = static_cast<float>(perimeter) * scale;
-        const float value = scaled - static_cast<float>(min_perimeter);
-        if (value < distance && value > 0.0F) {
-            distance = value;
-            optimal = i;
-        }
-    }
-    return optimal;
-}
-
 /// Builds the canonical image per candidate. One block handles one candidate.
-__global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* corner_x,
-                                      const std::int32_t* corner_y, const std::int32_t* perimeter,
-                                      int candidate_capacity, const std::int32_t* count,
-                                      std::uint8_t* images, int side, int segmentation_width,
-                                      int min_perimeter, bool use_aruco3) {
-    const int candidate = static_cast<int>(blockIdx.x);
-    if (candidate >= *count) {
-        return;
-    }
-
+__device__ __forceinline__ void warp_one_candidate(
+        PyramidRef pyramid, const std::int32_t* corner_x, const std::int32_t* corner_y,
+        const std::int32_t* perimeter, int candidate_capacity, int candidate, std::uint8_t* images,
+        int side, int segmentation_width, int min_perimeter, bool use_aruco3) {
     __shared__ double matrix[9];
     __shared__ const std::uint8_t* level_data;
     __shared__ int level_width;
@@ -157,8 +131,8 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
     __shared__ std::size_t level_pitch;
 
     if (threadIdx.x == 0U) {
-        const int level = use_aruco3 ? choose_level(pyramid, segmentation_width,
-                                                    perimeter[candidate], min_perimeter)
+        const int level = use_aruco3 ? choose_canonical_level(pyramid, segmentation_width,
+                                                              perimeter[candidate], min_perimeter)
                                      : 0;
         level_data = pyramid.data_[level];
         level_width = pyramid.width_[level];
@@ -262,6 +236,32 @@ __global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* co
     }
 }
 
+/// A block reuses shared scratch only after every lane finishes the prior
+/// candidate. Device-helper returns, including lane-zero match failure, rejoin
+/// this barrier rather than terminating one lane's persistent loop.
+__global__ void warp_canonical_kernel(PyramidRef pyramid, const std::int32_t* corner_x,
+                                      const std::int32_t* corner_y, const std::int32_t* perimeter,
+                                      int candidate_capacity, const std::int32_t* count,
+                                      std::uint8_t* images, int side, int segmentation_width,
+                                      int min_perimeter, bool use_aruco3) {
+#if ARUCO3CUDA_EXPERIMENT_PERSISTENT_CANDIDATES
+    const long long total = *count;
+    for (long long slot = static_cast<long long>(blockIdx.x); slot < total;
+         slot += static_cast<long long>(gridDim.x)) {
+        const int candidate = static_cast<int>(slot);
+        warp_one_candidate(pyramid, corner_x, corner_y, perimeter, candidate_capacity, candidate,
+                           images, side, segmentation_width, min_perimeter, use_aruco3);
+        __syncthreads();
+    }
+#else
+    const int candidate = static_cast<int>(blockIdx.x);
+    if (candidate < *count) {
+        warp_one_candidate(pyramid, corner_x, corner_y, perimeter, candidate_capacity, candidate,
+                           images, side, segmentation_width, min_perimeter, use_aruco3);
+    }
+#endif
+}
+
 }  // namespace
 
 int canonical_side_px(const DetectorConfig& config, int marker_size) {
@@ -342,7 +342,7 @@ Status build_canonical_async(const PreprocessBuffers& preprocess, const ScalePla
     }
 
     const int min_perimeter = 4 * config.min_side_length_canonical_img_px_;
-    warp_canonical_kernel<<<static_cast<unsigned int>(candidates.capacity_),
+    warp_canonical_kernel<<<candidate_grid_blocks(candidates.capacity_),
                             static_cast<unsigned int>(kCanonicalThreads), 0, stream>>>(
             pyramid, candidates.corner_x_, candidates.corner_y_, candidates.perimeter_,
             candidates.capacity_, candidates.count_, canonical->images_, canonical->side_px_,

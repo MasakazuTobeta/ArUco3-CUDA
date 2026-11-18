@@ -14,6 +14,8 @@
 
 namespace aruco3cuda::detail {
 
+struct DeviceCandidates;
+
 /// Upper bound on the number of pyramid levels.
 ///
 /// The level count is determined by log2, so even a 65536x65536 input fits
@@ -83,6 +85,18 @@ struct PyramidRef {
     int level_count_ = 0;
 };
 
+/// Immutable interpolation indices and integer weights for one output axis position.
+/// Ownership: stored in the caller's device workspace.
+/// Synchronization: prepared before capture and read-only during frame processing.
+/// Example input: an output x coordinate during resize layout preparation.
+/// Example output: two clamped source columns and their fixed-point weights.
+struct alignas(16) ResizeAxisCoefficients {
+    int source0_ = 0;
+    int source1_ = 0;
+    int weight0_ = 0;
+    int weight1_ = 0;
+};
+
 /// The full set of buffers used by preprocessing.
 ///
 /// Level 0 points at the input itself and is not copied. A copy would cost a
@@ -102,6 +116,28 @@ struct PreprocessBuffers {
     ImagePlaneU8 levels_[kMaxPyramidLevels];
     int level_count_ = 1;
     ImagePlaneU8 segmentation_;
+    /// Pinned CPU HAL descriptor, resolved once when reserving the image layout.
+    /// Zero selects NEON tail arithmetic; 16/32/64 selects the SVE2 vector width.
+    int resize_sve_vector_bytes_ = 0;
+    /// Pinned Carotene horizontal multiply/add contraction descriptor.
+    bool resize_carotene_x_fma_ = false;
+    ResizeAxisCoefficients* resize_x_ = nullptr;
+    ResizeAxisCoefficients* resize_y_ = nullptr;
+    int resize_x_capacity_ = 0;
+    int resize_y_capacity_ = 0;
+    /// Internal correctness ablation; production caches only KleidiCV coordinates.
+    bool resize_all_modes_ = false;
+    bool resize_coefficients_ready_ = false;
+    int resize_cached_source_width_ = 0;
+    int resize_cached_source_height_ = 0;
+    int resize_cached_width_ = 0;
+    int resize_cached_height_ = 0;
+    int resize_cached_mode_ = 0;
+    int resize_cached_sve_bytes_ = 0;
+    bool resize_cached_carotene_x_fma_ = false;
+    /// Highest level requested by current-frame candidates; overwritten on every multilevel demand
+    /// call.
+    std::int32_t* required_level_ = nullptr;
 };
 
 /// Computes the downscaling ratio and the pyramid level count.
@@ -142,6 +178,7 @@ std::size_t preprocess_workspace_bytes(const ScalePlan& plan, int width_px, int 
 /// @param input Input image. Referenced as level 0.
 /// @param workspace Source of the carve-out. Owned by the caller.
 /// @param out Receives the full set of buffers on success. Must not be nullptr.
+/// @param all_resize_modes Internal ablation: also reserve Carotene tables when true.
 /// @return kOk. kInvalidConfig when the capacity is insufficient,
 ///         kInvalidArgument when an argument is invalid.
 ///
@@ -153,7 +190,23 @@ std::size_t preprocess_workspace_bytes(const ScalePlan& plan, int width_px, int 
 /// Example input: a 1280x720 input and a workspace with sufficient capacity
 /// Example output: levels_ and segmentation_ receive pointers into the workspace
 Status reserve_preprocess(const ScalePlan& plan, const ImageViewU8& input, Workspace& workspace,
-                          PreprocessBuffers* out);
+                          PreprocessBuffers* out, bool all_resize_modes = false);
+
+/// Prepare immutable KleidiCV resize coefficients once for the reserved layout.
+/// The internal all_resize_modes reservation flag also enables Carotene ablation.
+/// No image pixels are read or retained. GENERIC/copy layouts need no tables.
+/// @param buffers Reserved preprocessing layout; must not be null.
+/// @param config Launch configuration.
+/// @param stream Stream used for initialization and its startup synchronization.
+/// @return kOk, kInvalidArgument for invalid storage, or a CUDA error.
+/// Ownership: tables stay in the caller's device workspace.
+/// Synchronization: synchronizes this stream during layout setup, before graph capture.
+/// The ready flag is published only after successful completion. Steady-frame
+/// build_segmentation_async never invokes this initialization or synchronization.
+/// Example input: a newly reserved ARM HAL layout for a 641x479 image.
+/// Example output: read-only axis tables ready for any current-frame pixels.
+Status prepare_segmentation_resize(PreprocessBuffers* buffers, const DetectorConfig& config,
+                                   cudaStream_t stream);
 
 /// Builds the image pyramid.
 ///
@@ -176,6 +229,28 @@ Status reserve_preprocess(const ScalePlan& plan, const ImageViewU8& input, Works
 /// Example output: levels_[0] through levels_[2] are generated
 Status build_pyramid_async(PreprocessBuffers* buffers, const DetectorConfig& config,
                            cudaStream_t stream);
+
+/// Builds only the pyramid prefix required by current-frame candidates.
+///
+/// The demand reduction uses exactly the canonical sampler's level selection and
+/// includes all levels that corner refinement could consume. No pixel content is
+/// reused across frames. Empty candidate sets request no generated levels.
+///
+/// @param buffers The reserved preprocessing regions; must not be nullptr.
+/// @param plan Scale plan with the segmentation width and refinement start level.
+/// @param candidates Current-frame grouped candidates and device count.
+/// @param config Detection configuration. Determines canonical and refinement demand.
+/// @param stream Stream on which grouping has already been submitted.
+/// @return kOk, kInvalidArgument, kInvalidConfig or kCudaError.
+///
+/// Ownership: retains no new regions; all scratch remains workspace-owned.
+/// Synchronization: only submits kernels, with no host readback or synchronization.
+///
+/// Example input: zero grouped candidates at the same input address as the last frame
+/// Example output: required_level_ is overwritten with zero and no pyramid pixels are written
+Status build_demanded_pyramid_async(PreprocessBuffers* buffers, const ScalePlan& plan,
+                                    const DeviceCandidates& candidates,
+                                    const DetectorConfig& config, cudaStream_t stream);
 
 /// Builds the segmentation image.
 ///

@@ -1,0 +1,83 @@
+--- a/bench/main.cpp
++++ b/bench/main.cpp
+@@ -38,6 +38,8 @@
+         << "                                 per-frame transfer in it\n"
+         << "                                 CUDA-Resident supports only M-Device, and\n"
+         << "                                 CUDA-EndToEnd only M-Pageable and M-Pinned\n"
++        << "  --max-candidates <n>           Allocated candidate capacity\n"
++        << "  --max-markers <n>              Allocated marker capacity\n"
+         << "  --warmup <n>                   Number of preparatory runs. Default 20\n"
+         << "  --latency-iterations <n>       Number of latency measurements. Default 200\n"
+         << "  --throughput-frames <n>        Frames for the throughput measurement.\n"
+@@ -144,6 +146,8 @@
+ 
+ int main(int argc, char** argv) {
+     BenchmarkConfig config;
++    int candidate_budget = config.cuda_detector_.max_candidates_;
++    int marker_budget = config.cuda_detector_.max_markers_;
+     // When no memory kind is given, the default follows the route. The CPU route
+     // has no memory kind, and hybrid is measured with device-resident input as
+     // its upper bound.
+@@ -182,6 +186,17 @@
+                     return EXIT_FAILURE;
+                 }
+                 memory_mode_given = true;
++            } else if (option == "--max-candidates" || option == "--max-markers") {
++                std::size_t consumed = 0;
++                const int parsed = std::stoi(value, &consumed);
++                if (consumed != value.size() || !check_range(option, parsed, 1, 2147483647)) {
++                    return EXIT_FAILURE;
++                }
++                if (option == "--max-candidates") {
++                    candidate_budget = parsed;
++                } else {
++                    marker_budget = parsed;
++                }
+             } else if (option == "--warmup") {
+                 const int parsed = std::stoi(value);
+                 if (!check_range(option, parsed, 0, 100000)) {
+@@ -256,6 +271,13 @@
+     // whether ArUco3 is enabled diverge, so that two different conditions were
+     // being compared.
+     config.cuda_detector_ = aruco3cuda::bench::cuda_config_from_reference(config.detector_);
++    config.cuda_detector_.max_candidates_ = candidate_budget;
++    config.cuda_detector_.max_markers_ = marker_budget;
++    std::string configuration_error;
++    if (config.cuda_detector_.validate(&configuration_error) != aruco3cuda::Status::kOk) {
++        std::cerr << configuration_error << '\n';
++        return EXIT_FAILURE;
++    }
+     if (!memory_mode_given) {
+         // For each route, default to a kind that route supports. CUDA-EndToEnd is
+         // a route that includes the transfer in the measured interval, so
+--- a/bench/benchmark_harness.cpp
++++ b/bench/benchmark_harness.cpp
+@@ -981,8 +981,7 @@
+         }
+         // download synchronizes the stream.
+         const aruco3cuda::Status downloaded = detector.download(&detections, stream, &message);
+-        if (downloaded != aruco3cuda::Status::kOk &&
+-            downloaded != aruco3cuda::Status::kMarkerOverflow) {
++        if (downloaded != aruco3cuda::Status::kOk) {
+             *out_error = "cannot retrieve the results: " + message;
+             return false;
+         }
+@@ -1002,7 +1001,7 @@
+     // The detection count is read once, outside the measured interval. It is
+     // needed even on the device-resident route.
+     const aruco3cuda::Status counted = detector.download(&detections, stream, &message);
+-    if (counted != aruco3cuda::Status::kOk && counted != aruco3cuda::Status::kMarkerOverflow) {
++    if (counted != aruco3cuda::Status::kOk) {
+         *out_error = "cannot read the detection count: " + message;
+         return false;
+     }
+@@ -1164,6 +1163,9 @@
+             static_cast<double>(config.detector_.min_marker_length_ratio_original_img_), 6);
+     writer.member_double("fxfy_effective", record.fxfy_effective_, 6);
+     writer.member_string("dictionary", config.detector_.dictionary_name_);
++    writer.member_int("max_candidates", config.cuda_detector_.max_candidates_);
++    writer.member_int("max_markers", config.cuda_detector_.max_markers_);
++    writer.member_string("baseline_adapter", "badb673 benchmark budgets only");
+     writer.end_object();
+ 
+     write_statistics(writer, "end_to_end", record.end_to_end_ms_);

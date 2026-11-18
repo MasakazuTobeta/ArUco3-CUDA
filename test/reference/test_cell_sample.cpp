@@ -263,6 +263,36 @@ std::size_t compare(const cv::Mat& expected, const cv::Mat& actual) {
 }
 
 // Happy path: matches OpenCV byte for byte on rotated squares.
+TEST(CellSampleTest, many_candidate_waves_preserve_independent_canonical_images) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+    const cv::Mat source = make_pattern(320, 240, 2026111702U);
+    std::vector<std::vector<cv::Point2f>> quads;
+    for (int index = 0; index < 515; ++index) {
+        const float x = static_cast<float>((index * 37) % 380 - 30);
+        const float y = static_cast<float>((index * 19) % 300 - 30);
+        quads.push_back({{x, y}, {x + 31.0F, y}, {x + 31.0F, y + 31.0F}, {x, y + 31.0F}});
+    }
+    CanonicalRun run;
+    ASSERT_TRUE(run.run(source, quads, 6));
+    ASSERT_EQ(run.images().size(), quads.size());
+    for (std::size_t index = 0; index < quads.size(); ++index) {
+        cv::Mat expected(32, 32, CV_8UC1, cv::Scalar(0));
+        const int left = static_cast<int>(quads[index][0].x);
+        const int top = static_cast<int>(quads[index][0].y);
+        for (int y = 0; y < 32; ++y) {
+            for (int x = 0; x < 32; ++x) {
+                if (left + x >= 0 && left + x < source.cols && top + y >= 0 &&
+                    top + y < source.rows) {
+                    expected.at<std::uint8_t>(y, x) = source.at<std::uint8_t>(top + y, left + x);
+                }
+            }
+        }
+        EXPECT_EQ(cv::countNonZero(expected != run.images()[index]), 0) << index;
+    }
+}
+
 TEST(CellSampleTest, matches_opencv_for_rotated_squares) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "skipping: no CUDA device available in this environment";
@@ -360,6 +390,247 @@ TEST(CellSampleTest, matches_opencv_for_other_marker_sizes) {
     }
 }
 
+/// Owns the explicit stream and captured sequence used by the frame-switch test.
+class DemandGraph {
+public:
+    DemandGraph() {
+        static_cast<void>(cudaStreamCreateWithFlags(&this->stream_, cudaStreamNonBlocking));
+    }
+    ~DemandGraph() {
+        if (this->execution_ != nullptr) {
+            static_cast<void>(cudaGraphExecDestroy(this->execution_));
+        }
+        if (this->graph_ != nullptr) {
+            static_cast<void>(cudaGraphDestroy(this->graph_));
+        }
+        if (this->stream_ != nullptr) {
+            static_cast<void>(cudaStreamDestroy(this->stream_));
+        }
+    }
+    DemandGraph(const DemandGraph&) = delete;
+    DemandGraph& operator=(const DemandGraph&) = delete;
+    cudaStream_t stream() const { return this->stream_; }
+    bool capture(aruco3cuda::detail::PreprocessBuffers* buffers,
+                 const aruco3cuda::detail::ScalePlan& plan,
+                 const aruco3cuda::detail::DeviceCandidates& candidates,
+                 const DetectorConfig& config, aruco3cuda::detail::CanonicalBuffers* canonical) {
+        if (this->stream_ == nullptr ||
+            cudaStreamBeginCapture(this->stream_, cudaStreamCaptureModeThreadLocal) !=
+                    cudaSuccess) {
+            return false;
+        }
+        const Status pyramid = aruco3cuda::detail::build_demanded_pyramid_async(
+                buffers, plan, candidates, config, this->stream_);
+        const Status sampled = aruco3cuda::detail::build_canonical_async(
+                *buffers, plan, candidates, config, canonical, this->stream_);
+        const cudaError_t ended = cudaStreamEndCapture(this->stream_, &this->graph_);
+        if (pyramid != Status::kOk || sampled != Status::kOk || ended != cudaSuccess) {
+            return false;
+        }
+#if CUDART_VERSION >= 12000
+        return cudaGraphInstantiate(&this->execution_, this->graph_, 0U) == cudaSuccess;
+#else
+        return cudaGraphInstantiate(&this->execution_, this->graph_, nullptr, nullptr, 0U) ==
+               cudaSuccess;
+#endif
+    }
+    bool launch() { return cudaGraphLaunch(this->execution_, this->stream_) == cudaSuccess; }
+
+private:
+    cudaStream_t stream_ = nullptr;
+    cudaGraph_t graph_ = nullptr;
+    cudaGraphExec_t execution_ = nullptr;
+};
+
+struct DemandCase {
+    std::vector<std::int32_t> perimeters_;
+    int expected_level_ = 0;
+};
+
+/// Compares demanded pixels/canonical bytes with full generation while repeatedly
+/// replacing image bytes and candidate demand at the same device addresses.
+void check_demanded_pyramid(const cv::Size& size, DetectorConfig config,
+                            const std::vector<DemandCase>& frames, bool graph_mode) {
+    constexpr int kCapacity = 4;
+    constexpr int kMarkerSize = 6;
+    config.max_candidates_ = kCapacity;
+    aruco3cuda::detail::ScalePlan plan;
+    ASSERT_EQ(aruco3cuda::detail::plan_scales(config, size.width, size.height, &plan), Status::kOk);
+    ASSERT_GT(plan.level_count_, 1);
+    const std::size_t pitch =
+            aruco3cuda::align_up(static_cast<std::size_t>(size.width) + 31U, 256U);
+    const std::size_t input_bytes = pitch * static_cast<std::size_t>(size.height);
+    const std::size_t bytes =
+            input_bytes +
+            2U * aruco3cuda::detail::preprocess_workspace_bytes(plan, size.width, size.height) +
+            aruco3cuda::detail::candidate_workspace_bytes(config, 64, 64) +
+            2U * aruco3cuda::detail::canonical_workspace_bytes(config, kMarkerSize);
+    Workspace workspace;
+    ASSERT_EQ(workspace.ensure_capacity(bytes, MemorySpace::kDevice, nullptr), Status::kOk);
+    void* device_image = nullptr;
+    ASSERT_EQ(workspace.allocate(input_bytes, 256U, &device_image), Status::kOk);
+    aruco3cuda::ImageViewU8 input;
+    input.data_ = static_cast<std::uint8_t*>(device_image);
+    input.width_px_ = size.width;
+    input.height_px_ = size.height;
+    input.pitch_bytes_ = pitch;
+    input.space_ = MemorySpace::kDevice;
+    aruco3cuda::detail::PreprocessBuffers full;
+    aruco3cuda::detail::PreprocessBuffers demanded;
+    ASSERT_EQ(aruco3cuda::detail::reserve_preprocess(plan, input, workspace, &full), Status::kOk);
+    ASSERT_EQ(aruco3cuda::detail::reserve_preprocess(plan, input, workspace, &demanded),
+              Status::kOk);
+    aruco3cuda::detail::DeviceCandidates candidates;
+    aruco3cuda::detail::CandidateFilterBuffers filter;
+    ASSERT_EQ(
+            aruco3cuda::detail::reserve_candidates(config, 64, 64, workspace, &filter, &candidates),
+            Status::kOk);
+    aruco3cuda::detail::CanonicalBuffers full_canonical;
+    aruco3cuda::detail::CanonicalBuffers demanded_canonical;
+    ASSERT_EQ(
+            aruco3cuda::detail::reserve_canonical(config, kMarkerSize, workspace, &full_canonical),
+            Status::kOk);
+    ASSERT_EQ(aruco3cuda::detail::reserve_canonical(config, kMarkerSize, workspace,
+                                                    &demanded_canonical),
+              Status::kOk);
+    std::vector<std::int32_t> corner_x(kCapacity * kQuadCornerCount);
+    std::vector<std::int32_t> corner_y(kCapacity * kQuadCornerCount);
+    for (int i = 0; i < kCapacity; ++i) {
+        for (int c = 0; c < kQuadCornerCount; ++c) {
+            corner_x[c * kCapacity + i] =
+                    ((c == 0 || c == 3) ? -1 : plan.segmentation_width_px_ - 2) + i;
+            corner_y[c * kCapacity + i] =
+                    ((c == 0 || c == 1) ? 1 : plan.segmentation_height_px_ - 1) - i;
+        }
+    }
+    ASSERT_EQ(cudaMemcpy(candidates.corner_x_, corner_x.data(),
+                         corner_x.size() * sizeof(std::int32_t), cudaMemcpyHostToDevice),
+              cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(candidates.corner_y_, corner_y.data(),
+                         corner_y.size() * sizeof(std::int32_t), cudaMemcpyHostToDevice),
+              cudaSuccess);
+    DemandGraph graph;
+    ASSERT_NE(graph.stream(), nullptr);
+    const cudaStream_t execution_stream = graph_mode ? graph.stream() : nullptr;
+    if (graph_mode) {
+        ASSERT_TRUE(graph.capture(&demanded, plan, candidates, config, &demanded_canonical));
+    }
+    for (std::size_t frame = 0; frame < frames.size(); ++frame) {
+        SCOPED_TRACE(frame);
+        const DemandCase& demand = frames[frame];
+        ASSERT_LE(demand.perimeters_.size(), static_cast<std::size_t>(kCapacity));
+        const int count = static_cast<int>(demand.perimeters_.size());
+        const int poison = (frame % 2U == 0U) ? 0x35 : 0xC7;
+        const cv::Mat image = make_pattern(size.width, size.height, 900U + frame);
+        ASSERT_EQ(cudaMemcpy2D(device_image, pitch, image.data, image.step,
+                               static_cast<std::size_t>(size.width),
+                               static_cast<std::size_t>(size.height), cudaMemcpyHostToDevice),
+                  cudaSuccess);
+        ASSERT_EQ(cudaMemcpy(candidates.count_, &count, sizeof(count), cudaMemcpyHostToDevice),
+                  cudaSuccess);
+        if (count > 0) {
+            ASSERT_EQ(cudaMemcpy(candidates.perimeter_, demand.perimeters_.data(),
+                                 demand.perimeters_.size() * sizeof(std::int32_t),
+                                 cudaMemcpyHostToDevice),
+                      cudaSuccess);
+        }
+        for (int level = 1; level < plan.level_count_; ++level) {
+            const aruco3cuda::detail::ImagePlaneU8& plane = demanded.levels_[level - 1];
+            ASSERT_EQ(cudaMemset(plane.data_, poison,
+                                 plane.pitch_bytes_ * static_cast<std::size_t>(plane.height_px_)),
+                      cudaSuccess);
+        }
+        ASSERT_EQ(aruco3cuda::detail::build_pyramid_async(&full, config, execution_stream),
+                  Status::kOk);
+        ASSERT_EQ(aruco3cuda::detail::build_canonical_async(full, plan, candidates, config,
+                                                            &full_canonical, execution_stream),
+                  Status::kOk);
+        if (graph_mode) {
+            ASSERT_TRUE(graph.launch());
+        } else {
+            ASSERT_EQ(aruco3cuda::detail::build_demanded_pyramid_async(&demanded, plan, candidates,
+                                                                       config, execution_stream),
+                      Status::kOk);
+            ASSERT_EQ(aruco3cuda::detail::build_canonical_async(demanded, plan, candidates, config,
+                                                                &demanded_canonical,
+                                                                execution_stream),
+                      Status::kOk);
+        }
+        ASSERT_EQ(cudaStreamSynchronize(execution_stream), cudaSuccess);
+        int actual_level = -1;
+        ASSERT_EQ(cudaMemcpy(&actual_level, demanded.required_level_, sizeof(actual_level),
+                             cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        EXPECT_EQ(actual_level, demand.expected_level_);
+        std::vector<cv::Mat> reference;
+        cv::buildPyramid(image, reference, plan.level_count_ - 1);
+        for (int level = 1; level < plan.level_count_; ++level) {
+            SCOPED_TRACE(level);
+            const aruco3cuda::detail::ImagePlaneU8& plane = demanded.levels_[level - 1];
+            cv::Mat downloaded(plane.height_px_, plane.width_px_, CV_8UC1);
+            ASSERT_EQ(cudaMemcpy2D(downloaded.data, downloaded.step, plane.data_,
+                                   plane.pitch_bytes_, static_cast<std::size_t>(plane.width_px_),
+                                   static_cast<std::size_t>(plane.height_px_),
+                                   cudaMemcpyDeviceToHost),
+                      cudaSuccess);
+            if (level <= demand.expected_level_) {
+                EXPECT_EQ(compare(reference[static_cast<std::size_t>(level)], downloaded), 0U);
+            } else {
+                EXPECT_EQ(cv::countNonZero(downloaded != poison), 0);
+            }
+        }
+        const std::size_t canonical_bytes = static_cast<std::size_t>(count) *
+                                            static_cast<std::size_t>(full_canonical.side_px_) *
+                                            static_cast<std::size_t>(full_canonical.side_px_);
+        if (canonical_bytes > 0U) {
+            std::vector<std::uint8_t> expected(canonical_bytes);
+            std::vector<std::uint8_t> actual(canonical_bytes);
+            ASSERT_EQ(cudaMemcpy(expected.data(), full_canonical.images_, canonical_bytes,
+                                 cudaMemcpyDeviceToHost),
+                      cudaSuccess);
+            ASSERT_EQ(cudaMemcpy(actual.data(), demanded_canonical.images_, canonical_bytes,
+                                 cudaMemcpyDeviceToHost),
+                      cudaSuccess);
+            EXPECT_EQ(expected, actual);
+        }
+    }
+}
+
+TEST(CellSampleTest, demanded_pyramid_matches_full_levels_and_canonical_bytes) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
+    }
+    DetectorConfig config;
+    config.min_marker_length_ratio_original_img_ = 0.0F;
+    const std::vector<DemandCase> frames = {{{129, 257, 513, 1025}, 3},
+                                            {{}, 0},
+                                            {{256}, 0},
+                                            {{257}, 1},
+                                            {{512}, 1},
+                                            {{513}, 2},
+                                            {{1024}, 2},
+                                            {{1025}, 3},
+                                            {{}, 0}};
+    for (const int pixels_per_cell : {2, 4, 5}) {
+        config.perspective_remove_pixel_per_cell_ = pixels_per_cell;
+        check_demanded_pyramid(cv::Size(1024, 769), config, frames, false);
+    }
+}
+
+TEST(CellSampleTest, demanded_pyramid_graph_replay_replaces_same_address_frame_demand) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "skipping: no CUDA device available in this environment";
+    }
+    DetectorConfig config;
+    config.min_marker_length_ratio_original_img_ = 0.0F;
+    check_demanded_pyramid(cv::Size(1024, 769), config,
+                           {{{1025}, 3}, {{}, 0}, {{257}, 1}, {{513}, 2}, {{}, 0}}, true);
+    config.min_marker_length_ratio_original_img_ = 0.2F;
+    // Canonical demand is level zero; refinement starts at three and reads two,
+    // one and zero. An empty candidate set must clear that refinement demand.
+    check_demanded_pyramid(cv::Size(1024, 769), config, {{{0}, 2}, {{}, 0}, {{0}, 2}}, true);
+}
+
 // Failure path: invalid arguments perform no work.
 TEST(CellSampleTest, rejects_invalid_arguments) {
     Workspace workspace;
@@ -376,6 +647,13 @@ TEST(CellSampleTest, rejects_invalid_arguments) {
     aruco3cuda::detail::DeviceCandidates candidates;
     EXPECT_EQ(aruco3cuda::detail::build_canonical_async(preprocess, plan, candidates, config,
                                                         nullptr, nullptr),
+              Status::kInvalidArgument);
+
+    EXPECT_EQ(aruco3cuda::detail::build_demanded_pyramid_async(nullptr, plan, candidates, config,
+                                                               nullptr),
+              Status::kInvalidArgument);
+    EXPECT_EQ(aruco3cuda::detail::build_demanded_pyramid_async(&preprocess, plan, candidates,
+                                                               config, nullptr),
               Status::kInvalidArgument);
 
     EXPECT_EQ(aruco3cuda::detail::canonical_side_px(config, 0), 0);

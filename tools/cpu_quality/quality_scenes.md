@@ -46,6 +46,15 @@ vertical occluder's width as a fraction of the projected bounding box; it is
 not an independently measured occluded-marker area. All parameters describe
 generation conditions, not a promise that every placed marker is detectable.
 
+The occluder bounding box passes the existing corner array directly to public
+`boundingRect`. Constructing a temporary vector triggered eight
+`-Wnull-dereference` diagnostics under GCC 9.4 at `-O3` on Jetson Orin; the direct
+array compiles with the same warnings treated as errors. Comparing both Release
+implementations on that host produced identical pixels for all 288 frames at
+641x479, 1280x720 and 320x321. Only the diagnostic baseline comparison downgraded
+that specific warning; production builds retain `-Werror`. The local comparison
+record is `build/gpu-study/quality-renderer-orin.log`.
+
 The maintained CPU tests compare IDs, oriented float corners, and rejected
 counts exactly against the pinned OpenCV detector. Clean positive cases must
 actually decode; the sequence also requires a substantial positive-frame

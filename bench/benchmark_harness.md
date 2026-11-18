@@ -18,6 +18,39 @@ Covers latency and throughput measurement, statistics computation, environment i
 
 ## Design decisions
 
+### GPU resource budgets are explicit measurement conditions
+
+`--max-candidates` and `--max-markers` override the full CUDA detector's resource
+limits. Defaults remain 4096 and 1024. The shared detector configuration validator
+checks their ranges and requires `max_markers <= max_candidates` before any input
+or CUDA work. These settings survive the copy of shared CPU/GPU quality parameters.
+For example, `--max-candidates 16384 --max-markers 1024` permits a larger raw
+candidate pool without changing the threshold, geometry, or dictionary settings.
+
+Each JSON measurement records both limits in `conditions`, plus
+`gpu_resource_limits_applied`. This flag is true for CUDA-Resident/CUDA-E2E and
+false for CPU/Hybrid, whose CPU contour stages do not use these GPU budgets.
+Pass identical budget options to paired route commands so the recorded conditions
+remain aligned. The aggregator keeps different budgets separate; older records
+without these fields remain explicitly unknown and are not merged with known
+limits. These additive fields do not move any timing boundary or change defaults.
+
+Exceeding either budget is an error, not a valid fast zero-detection or truncated
+sample. Marker overflow reports the configured budget, detected total and retained
+count. The public detector API still exposes its documented partial marker list;
+the benchmark rejects that status so it cannot publish incomplete results as a
+quality-valid measurement. The benchmark never silently increases either budget.
+
+### Resize arithmetic is recorded independently of GPU architecture
+
+The environment and each measurement record `gpu_resize_profile` and
+`gpu_resize_backend` from the linked core API. The audit records the same fields.
+`ARUCO3CUDA_RESIZE_PROFILE` selects generic or pinned ARM-HAL arithmetic, and
+`ARUCO3CUDA_RESIZE_ARM_BACKEND` selects AUTO/NEON/SVE128/SVE256/SVE512. AUTO is
+resolved once and the effective descriptor is recorded. Aggregation never merges
+different or unknown profile identities. See the [profile selection
+record](../cmake/ArUco3CudaResizeProfile.md) for current defaults and scope.
+
 ### Image loading is not included in the measured interval
 
 The `CPU` route repeats detection alone on an already loaded image. If `cv::imread` and `sha256_file` were called once per iteration, PNG decoding would account for 58% to 85% of the measured interval for the 1280x720 PNGs of the synthetic corpus. Real-time processing does not decode PNGs, so this would not be a valid comparison of detection time.
@@ -152,3 +185,19 @@ The GPU name, Compute Capability, and whether the GPU is integrated are obtained
 - [Evaluation plan](../docs/evaluation-plan.md)
 - [Implementation plan](../docs/implementation-plan.md)
 - [reference_runner](../reference/reference_runner.md)
+
+## Open questions
+
+- Which explicit candidate budget provides sufficient headroom for each evaluated
+  corpus without distorting workspace and capacity-dependent execution costs?
+
+The `gpu_carotene_x_fma` metadata records the independent horizontal contraction
+choice (`FUSED`, `SEPARATE`, or `NOT_APPLICABLE`). Aggregation never merges
+different contraction choices or unknown historical values. ARM HAL benchmark
+builds must explicitly choose the setting validated against their linked OpenCV.
+
+`gpu_strategy_identity` records contour, threshold, pyramid, Otsu, and candidate
+grid choices plus the Otsu density cutoff and persistent block limit. Values come
+from the actual core build, not the caller's guessed CMake settings. Aggregation
+keeps differing or unknown identities separate; see the maintained
+[strategy options](../cmake/ArUco3CudaStrategies.md).

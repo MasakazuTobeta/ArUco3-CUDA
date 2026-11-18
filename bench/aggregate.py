@@ -71,7 +71,7 @@ def environment_key(environment):
     """
     toolkit = ".".join((environment.get("cuda_toolkit") or "").split(".")[:2])
     return (environment.get("hostname"), environment.get("gpu_name"), toolkit,
-            environment.get("power_mode"))
+            environment.get("power_mode"), environment.get("gpu_resize_profile"), environment.get("gpu_resize_backend"), environment.get("gpu_carotene_x_fma"), environment.get("gpu_strategy_identity"))
 
 
 def load_records(paths):
@@ -158,6 +158,12 @@ def measurement_rows(measurements):
                 "markers": record.get("detection_count"),
                 "fxfy": (record.get("conditions") or {}).get("fxfy_effective"),
                 "aruco3": (record.get("conditions") or {}).get("use_aruco3_detection"),
+                "gpu_resize_profile": (record.get("conditions") or {}).get("gpu_resize_profile"),
+                "gpu_resize_backend": (record.get("conditions") or {}).get("gpu_resize_backend"),
+                "gpu_carotene_x_fma": (record.get("conditions") or {}).get("gpu_carotene_x_fma"),
+                "gpu_strategy_identity": (record.get("conditions") or {}).get("gpu_strategy_identity"),
+                "max_candidates": (record.get("conditions") or {}).get("max_candidates"),
+                "max_markers": (record.get("conditions") or {}).get("max_markers"),
                 "p50_ms": end_to_end.get("p50_ms"),
                 "p95_ms": end_to_end.get("p95_ms"),
                 "p99_ms": end_to_end.get("p99_ms"),
@@ -176,7 +182,7 @@ def measurement_rows(measurements):
 
 def print_table(rows):
     header = [
-        "machine", "route", "memory", "resolution", "markers", "fxfy",
+        "machine", "route", "memory", "resolution", "markers", "fxfy", "max_candidates", "max_markers", "resize_profile", "resize_backend", "carotene_x_fma", "strategies",
         "p50_ms", "p95_ms", "p99_ms", "gpu_p50", "cpu_p50", "fps",
     ]
     widths = {name: len(name) for name in header}
@@ -188,6 +194,12 @@ def print_table(rows):
             "memory": str(row["memory_mode"]),
             "resolution": str(row["resolution"]),
             "markers": str(row["markers"]),
+            "resize_profile": str(row.get("gpu_resize_profile") or "-"),
+            "resize_backend": str(row.get("gpu_resize_backend") or "-"),
+            "carotene_x_fma": str(row.get("gpu_carotene_x_fma") or "-"),
+            "strategies": str(row.get("gpu_strategy_identity") or "-"),
+            "max_candidates": str(row.get("max_candidates") or "-"),
+            "max_markers": str(row.get("max_markers") or "-"),
             "fxfy": f"{row['fxfy']:.4f}" if row["fxfy"] is not None else "-",
             "p50_ms": f"{row['p50_ms']:.3f}" if row["p50_ms"] is not None else "-",
             "p95_ms": f"{row['p95_ms']:.3f}" if row["p95_ms"] is not None else "-",
@@ -216,7 +228,8 @@ def print_crossover(rows):
     for row in rows:
         # Comparing routes across machines means something different, so the
         # machine is part of the key.
-        key = (row["machine"], row["image"], row["resolution"], row["markers"], row["fxfy"])
+        key = (row["machine"], row["image"], row["resolution"], row["markers"], row["fxfy"],
+               row.get("max_candidates"), row.get("max_markers"), row.get("gpu_resize_profile"), row.get("gpu_resize_backend"), row.get("gpu_carotene_x_fma"), row.get("gpu_strategy_identity"))
         grouped[key][(row["route"], row["memory_mode"])] = row
 
     comparable = {key: value for key, value in grouped.items() if len(value) > 1}
@@ -259,7 +272,8 @@ def print_startup(rows):
     """
     grouped = defaultdict(dict)
     for row in rows:
-        key = (row["machine"], row["image"], row["resolution"], row["markers"])
+        key = (row["machine"], row["image"], row["resolution"], row["markers"],
+               row.get("max_candidates"), row.get("max_markers"), row.get("gpu_resize_profile"), row.get("gpu_resize_backend"), row.get("gpu_carotene_x_fma"), row.get("gpu_strategy_identity"))
         entry = grouped[key].setdefault((row["route"], row["memory_mode"]), [])
         if row["first_result_ms"] is not None:
             entry.append(row)
@@ -316,7 +330,8 @@ def print_run_variance(rows):
         # the same resolution and marker count would land in the same group and
         # make the run-to-run spread look larger than it is.
         key = (row["machine"], row["route"], row["memory_mode"], row["image"],
-               row["resolution"], row["markers"], row["fxfy"], row["aruco3"])
+               row["resolution"], row["markers"], row["fxfy"], row["aruco3"],
+               row.get("max_candidates"), row.get("max_markers"), row.get("gpu_resize_profile"), row.get("gpu_resize_backend"), row.get("gpu_carotene_x_fma"), row.get("gpu_strategy_identity"))
         if row["p50_ms"] is not None:
             grouped[key].append(row["p50_ms"])
 
@@ -343,7 +358,8 @@ def print_machine_comparison(rows):
     """
     grouped = defaultdict(dict)
     for row in rows:
-        key = (row["route"], row["resolution"], row["markers"], row["fxfy"])
+        key = (row["route"], row["resolution"], row["markers"], row["fxfy"],
+               row.get("max_candidates"), row.get("max_markers"), row.get("gpu_resize_profile"), row.get("gpu_resize_backend"), row.get("gpu_carotene_x_fma"), row.get("gpu_strategy_identity"))
         grouped[key][row["machine"]] = row
 
     comparable = {key: value for key, value in grouped.items() if len(value) > 1}

@@ -14,6 +14,15 @@
 #include "aruco3cuda/workspace.hpp"
 #include "cuda_check.hpp"
 
+// Experimental ablation switches. The default remains the measured separable
+// implementation until end-to-end and multi-device validation is complete.
+#ifndef ARUCO3CUDA_ENABLE_FUSED_THRESHOLD
+#define ARUCO3CUDA_ENABLE_FUSED_THRESHOLD 0
+#endif
+#ifndef ARUCO3CUDA_FUSED_THRESHOLD_MAX_WINDOW_PX
+#define ARUCO3CUDA_FUSED_THRESHOLD_MAX_WINDOW_PX 63
+#endif
+
 namespace aruco3cuda::detail {
 namespace {
 
@@ -68,11 +77,12 @@ __global__ void row_sum_kernel(const std::uint8_t* __restrict__ src, std::size_t
 /// Boundary conditions:
 ///   Threads outside the output extent do nothing. Reads down the column repeat
 ///   the edge row with BORDER_REPLICATE. The sum is at most 255 * 4096 * 4096,
-///   which can exceed the range of an int, so it is held in check by the upper
-///   bounds on the window count and on the image dimensions.
+///   which can exceed the range of an int. The launcher chooses a 64-bit sum
+///   when 255 * window * window exceeds INT_MAX; small windows keep 32-bit sums.
 /// Rounding:
 ///   OpenCV boxFilter rounds the normalized value with saturate_cast<uchar>.
 ///   That rounds half to even, so __double2int_rn is used here.
+template <typename Sum>
 __global__ void column_threshold_kernel(const std::uint8_t* __restrict__ src, std::size_t src_pitch,
                                         const std::int32_t* __restrict__ row_sums,
                                         std::size_t row_sums_pitch, std::uint8_t* __restrict__ dst,
@@ -83,13 +93,13 @@ __global__ void column_threshold_kernel(const std::uint8_t* __restrict__ src, st
     if (x >= width || y >= height) {
         return;
     }
-    int sum = 0;
+    Sum sum = 0;
     for (int offset = -radius; offset <= radius; ++offset) {
         const int sy = replicate(y + offset, height);
         const auto* row = reinterpret_cast<const std::int32_t*>(
                 reinterpret_cast<const std::uint8_t*>(row_sums) +
                 static_cast<std::size_t>(sy) * row_sums_pitch);
-        sum += row[x];
+        sum += static_cast<Sum>(row[x]);
     }
     int mean = __double2int_rn(static_cast<double>(sum) * inverse_area);
     mean = mean < 0 ? 0 : (mean > 255 ? 255 : mean);
@@ -100,6 +110,100 @@ __global__ void column_threshold_kernel(const std::uint8_t* __restrict__ src, st
     const std::uint8_t output = ((value - mean) <= -idelta) ? 255U : 0U;
     dst[static_cast<std::size_t>(y) * dst_pitch + static_cast<std::size_t>(x)] = output;
 }
+
+#if ARUCO3CUDA_ENABLE_FUSED_THRESHOLD
+/// Captured launch arguments for all windows; these contain no frame-derived state.
+struct FusedThresholdParams {
+    std::uint8_t* output_[kMaxAdaptiveThresholdWindows] = {};
+    std::size_t pitch_[kMaxAdaptiveThresholdWindows] = {};
+    int radius_[kMaxAdaptiveThresholdWindows] = {};
+    double inverse_area_[kMaxAdaptiveThresholdWindows] = {};
+    int window_count_ = 0;
+    int max_radius_ = 0;
+    int idelta_ = 0;
+};
+
+/// Builds a shared-memory integral tile once, then emits every threshold window.
+///
+/// Each block owns blockDim.x by blockDim.y output pixels. Threads cooperatively
+/// load an isolated BORDER_REPLICATE halo plus a zero top row/left column. Row
+/// prefix workers own disjoint rows; after a barrier, column workers own disjoint
+/// columns. A final barrier publishes the completed integral image before each
+/// thread reads four sums per window and writes its unique output pixel. Threads
+/// outside the image still take part in every barrier, avoiding divergent waits
+/// on partial tiles. No block reads another block's scratch or output.
+///
+/// The launcher limits the tile footprint so 255 * tile area fits in int and
+/// shared memory stays below the portable 48 KiB per-block budget. Larger windows
+/// use the separable route; tile sums are exact and normalization retains the
+/// same double operation and nearest-even rounding as that route.
+__global__ void fused_threshold_kernel(const std::uint8_t* __restrict__ src, std::size_t src_pitch,
+                                       int width, int height, FusedThresholdParams params) {
+    extern __shared__ int prefix[];
+    const int block_width = static_cast<int>(blockDim.x);
+    const int block_height = static_cast<int>(blockDim.y);
+    const int thread = static_cast<int>(threadIdx.y) * block_width + static_cast<int>(threadIdx.x);
+    const int threads = block_width * block_height;
+    const int tile_width = block_width + 2 * params.max_radius_;
+    const int tile_height = block_height + 2 * params.max_radius_;
+    const int stride = tile_width + 1;
+    const int origin_x = static_cast<int>(blockIdx.x) * block_width - params.max_radius_;
+    const int origin_y = static_cast<int>(blockIdx.y) * block_height - params.max_radius_;
+
+    for (int index = thread; index < stride * (tile_height + 1); index += threads) {
+        const int row = index / stride;
+        const int col = index - row * stride;
+        int value = 0;
+        if (row > 0 && col > 0) {
+            const int sy = replicate(origin_y + row - 1, height);
+            const int sx = replicate(origin_x + col - 1, width);
+            value = src[static_cast<std::size_t>(sy) * src_pitch + static_cast<std::size_t>(sx)];
+        }
+        prefix[index] = value;
+    }
+    __syncthreads();
+
+    for (int row = thread + 1; row <= tile_height; row += threads) {
+        int sum = 0;
+        for (int col = 1; col <= tile_width; ++col) {
+            sum += prefix[row * stride + col];
+            prefix[row * stride + col] = sum;
+        }
+    }
+    __syncthreads();
+
+    for (int col = thread + 1; col <= tile_width; col += threads) {
+        int sum = 0;
+        for (int row = 1; row <= tile_height; ++row) {
+            sum += prefix[row * stride + col];
+            prefix[row * stride + col] = sum;
+        }
+    }
+    __syncthreads();
+
+    const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+    if (x >= width || y >= height) {
+        return;
+    }
+    const int local_x = static_cast<int>(threadIdx.x) + params.max_radius_;
+    const int local_y = static_cast<int>(threadIdx.y) + params.max_radius_;
+    const int value = src[static_cast<std::size_t>(y) * src_pitch + static_cast<std::size_t>(x)];
+    for (int i = 0; i < params.window_count_; ++i) {
+        const int x0 = local_x - params.radius_[i];
+        const int x1 = local_x + params.radius_[i] + 1;
+        const int y0 = local_y - params.radius_[i];
+        const int y1 = local_y + params.radius_[i] + 1;
+        const int sum = prefix[y1 * stride + x1] - prefix[y0 * stride + x1] -
+                        prefix[y1 * stride + x0] + prefix[y0 * stride + x0];
+        int mean = __double2int_rn(static_cast<double>(sum) * params.inverse_area_[i]);
+        mean = mean < 0 ? 0 : (mean > 255 ? 255 : mean);
+        params.output_[i][static_cast<std::size_t>(y) * params.pitch_[i] +
+                          static_cast<std::size_t>(x)] =
+                ((value - mean) <= -params.idelta_) ? 255U : 0U;
+    }
+}
+#endif
 
 std::size_t plane_bytes_u8(int width_px, int height_px) {
     if (width_px <= 0 || height_px <= 0) {
@@ -251,6 +355,30 @@ Status build_threshold_async(const ImageViewU8& segmentation, ThresholdBuffers* 
     const dim3 block = block_dim_of(config);
     const dim3 grid = grid_dim_for(buffers->width_px_, buffers->height_px_, block);
 
+#if ARUCO3CUDA_ENABLE_FUSED_THRESHOLD
+    const int largest_window = buffers->window_sizes_px_[buffers->window_count_ - 1];
+    const std::size_t shared_width = static_cast<std::size_t>(block.x) + largest_window;
+    const std::size_t shared_height = static_cast<std::size_t>(block.y) + largest_window;
+    const std::size_t shared_bytes = shared_width * shared_height * sizeof(int);
+    if (largest_window <= ARUCO3CUDA_FUSED_THRESHOLD_MAX_WINDOW_PX && shared_bytes <= 48U * 1024U) {
+        FusedThresholdParams params;
+        params.window_count_ = buffers->window_count_;
+        params.max_radius_ = largest_window / 2;
+        params.idelta_ = idelta;
+        for (int i = 0; i < buffers->window_count_; ++i) {
+            const int window = buffers->window_sizes_px_[i];
+            params.output_[i] = buffers->binary_[i].data_;
+            params.pitch_[i] = buffers->binary_[i].pitch_bytes_;
+            params.radius_[i] = window / 2;
+            params.inverse_area_[i] = 1.0 / (static_cast<double>(window) * window);
+        }
+        fused_threshold_kernel<<<grid, block, shared_bytes, stream>>>(
+                segmentation.data_, segmentation.pitch_bytes_, buffers->width_px_,
+                buffers->height_px_, params);
+        return detail::check_kernel_launch("threshold.fused_threshold_kernel", -1, false, stream);
+    }
+#endif
+
     for (int i = 0; i < buffers->window_count_; ++i) {
         const int window = buffers->window_sizes_px_[i];
         const int radius = window / 2;
@@ -267,11 +395,20 @@ Status build_threshold_async(const ImageViewU8& segmentation, ThresholdBuffers* 
         // The row-sum scratch space is reused across windows, so the windows run in
         // order on the same stream. Splitting them across streams would overwrite
         // the previous window's results.
-        column_threshold_kernel<<<grid, block, 0, stream>>>(
-                segmentation.data_, segmentation.pitch_bytes_, buffers->row_sums_,
-                buffers->row_sums_pitch_bytes_, buffers->binary_[i].data_,
-                buffers->binary_[i].pitch_bytes_, buffers->width_px_, buffers->height_px_, radius,
-                inverse_area, idelta);
+        const std::int64_t max_sum = 255LL * window * window;
+        if (max_sum <= std::numeric_limits<std::int32_t>::max()) {
+            column_threshold_kernel<std::int32_t><<<grid, block, 0, stream>>>(
+                    segmentation.data_, segmentation.pitch_bytes_, buffers->row_sums_,
+                    buffers->row_sums_pitch_bytes_, buffers->binary_[i].data_,
+                    buffers->binary_[i].pitch_bytes_, buffers->width_px_, buffers->height_px_,
+                    radius, inverse_area, idelta);
+        } else {
+            column_threshold_kernel<std::int64_t><<<grid, block, 0, stream>>>(
+                    segmentation.data_, segmentation.pitch_bytes_, buffers->row_sums_,
+                    buffers->row_sums_pitch_bytes_, buffers->binary_[i].data_,
+                    buffers->binary_[i].pitch_bytes_, buffers->width_px_, buffers->height_px_,
+                    radius, inverse_area, idelta);
+        }
         status =
                 detail::check_kernel_launch("threshold.column_threshold_kernel", -1, false, stream);
         if (status != Status::kOk) {

@@ -1,5 +1,10 @@
 # Benchmark Report: CPU / Hybrid / CUDA-Resident Comparison
 
+This is the historical component/extrema GPU evaluation. The expanded
+[quality audit](../tools/gpu_quality/audit.md) found additional CPU-detectable
+markers this route misses. The [steady-state study](gpu-steady-optimization-plan.md)
+evaluates a different contour route; historical timings are not its results.
+
 - Measurement date: 2026-08-29
 - Subject: an implementation that keeps everything from input image downscaling and thresholding through corner subpixel refinement resident on the GPU
 - Local measurement results: `docs/measurements/`. Generated records are ignored by Git and are absent from a fresh checkout. The original measurement workspace retains the 28-scene sweep, startup measurement, memory-mode comparison and accuracy evaluation. The 9-scene same-session set used in "Before and after optimization" and "Hybrid route breakdown", and the profiling runs behind the per-stage breakdowns, are **not** included in this repository, so the numbers taken from them cannot be re-derived by a reader. Each section below states which set it uses.

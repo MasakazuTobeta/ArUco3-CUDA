@@ -28,9 +28,11 @@ constexpr int kLinearThreads = 256;
 constexpr int kPairBlocks = 1024;
 
 /// Walks to the root of the union-find over rank space.
-__device__ std::int32_t find_root(const std::int32_t* parent, std::int32_t index) {
-    while (parent[index] != index) {
-        index = parent[index];
+__device__ std::int32_t find_root(std::int32_t* parent, std::int32_t index) {
+    std::int32_t next = atomicAdd(&parent[index], 0);
+    while (next != index) {
+        index = next;
+        next = atomicAdd(&parent[index], 0);
     }
     return index;
 }
@@ -84,7 +86,8 @@ __device__ float average_quad_distance(const std::int32_t* corner_x, const std::
 }
 
 /// Initializes the scratch space.
-__global__ void reset_group_kernel(CandidateGroupBuffers buffers, int capacity) {
+__global__ void reset_group_kernel(CandidateGroupBuffers buffers, DeviceCandidates input,
+                                   int capacity) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= capacity) {
         return;
@@ -94,23 +97,36 @@ __global__ void reset_group_kernel(CandidateGroupBuffers buffers, int capacity) 
     buffers.offsets_[index] = 0;
     buffers.rank_[index] = 0;
     buffers.order_[index] = 0;
+    float perimeter = 0.0F;
+    if (index < *input.count_) {
+        for (int corner = 0; corner < kQuadCornerCount; ++corner) {
+            const int next = (corner + 1) % kQuadCornerCount;
+            const float dx = static_cast<float>(input.corner_x_[corner * input.capacity_ + index] -
+                                                input.corner_x_[next * input.capacity_ + index]);
+            const float dy = static_cast<float>(input.corner_y_[corner * input.capacity_ + index] -
+                                                input.corner_y_[next * input.capacity_ + index]);
+            // Keep the CPU float sum/sqrt order; contour length is a different quantity.
+            perimeter += sqrtf(__fadd_rn(__fmul_rn(dx, dx), __fmul_rn(dy, dy)));
+        }
+    }
+    buffers.quad_perimeter_[index] = perimeter;
 }
 
 /// Assigns ranks in descending perimeter order.
 ///
 /// Ties are broken by the smaller candidate index. This matches the order of
 /// the CPU path's stable_sort and does not vary from run to run.
-__global__ void rank_kernel(const std::int32_t* perimeter, std::int32_t* rank, std::int32_t* order,
+__global__ void rank_kernel(const float* perimeter, std::int32_t* rank, std::int32_t* order,
                             const std::int32_t* count) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     const int total = *count;
     if (index >= total) {
         return;
     }
-    const std::int32_t own = perimeter[index];
+    const float own = perimeter[index];
     int position = 0;
     for (int other = 0; other < total; ++other) {
-        const std::int32_t value = perimeter[other];
+        const float value = perimeter[other];
         if (value > own || (value == own && other < index)) {
             ++position;
         }
@@ -121,7 +137,7 @@ __global__ void rank_kernel(const std::int32_t* perimeter, std::int32_t* rank, s
 
 /// Merges nearby pairs into the same group.
 __global__ void merge_pairs_kernel(const std::int32_t* corner_x, const std::int32_t* corner_y,
-                                   const std::int32_t* perimeter, const std::int32_t* order,
+                                   const float* perimeter, const std::int32_t* order,
                                    std::int32_t* parent, int capacity, float distance_rate,
                                    const std::int32_t* count) {
     const long long total = *count;
@@ -148,14 +164,29 @@ __global__ void merge_pairs_kernel(const std::int32_t* corner_x, const std::int3
 
 /// Resolves the roots to pick the representatives.
 __global__ void select_kernel(std::int32_t* parent, std::int32_t* selected, std::int32_t* offsets,
-                              const std::int32_t* count) {
+                              const std::int32_t* count, DeviceCandidates input,
+                              const std::int32_t* order, int width_px, int height_px, int margin) {
     const int index = static_cast<int>((blockIdx.x * blockDim.x) + threadIdx.x);
     if (index >= *count) {
         return;
     }
     const std::int32_t root = find_root(parent, index);
-    parent[index] = root;
-    const std::int32_t is_root = (root == index) ? 1 : 0;
+    atomicExch(&parent[index], root);
+    std::int32_t is_root = (root == index) ? 1 : 0;
+    // Check only the chosen representative: rejecting before grouping would
+    // incorrectly promote an interior alternative from the same marker.
+    if (is_root != 0 && width_px > 0) {
+        const int source = order[index];
+        for (int corner = 0; corner < kQuadCornerCount; ++corner) {
+            const int x = input.corner_x_[corner * input.capacity_ + source];
+            const int y = input.corner_y_[corner * input.capacity_ + source];
+            if (x < margin || y < margin || x > width_px - 1 - margin ||
+                y > height_px - 1 - margin) {
+                is_root = 0;
+                break;
+            }
+        }
+    }
     selected[index] = is_root;
     offsets[index] = is_root;
 }
@@ -215,7 +246,8 @@ std::size_t candidate_group_workspace_bytes(const DetectorConfig& config) {
     if (capacity > std::numeric_limits<std::size_t>::max() / kQuadCornerCount) {
         return 0U;
     }
-    const std::size_t work = array_bytes_i32(capacity) * 5U;
+    static_assert(sizeof(float) == sizeof(std::int32_t));
+    const std::size_t work = array_bytes_i32(capacity) * 6U;
     const std::size_t scan_bytes =
             align_up(scan_workspace_bytes(config.max_candidates_), kPlaneAlignment);
     const std::size_t corner_arrays = array_bytes_i32(capacity * kQuadCornerCount) * 2U;
@@ -250,6 +282,15 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
             return status;
         }
         *target = static_cast<std::int32_t*>(pointer);
+    }
+    {
+        void* pointer = nullptr;
+        const Status status =
+                workspace.allocate(capacity * sizeof(float), kPlaneAlignment, &pointer);
+        if (status != Status::kOk) {
+            return status;
+        }
+        buffers.quad_perimeter_ = static_cast<float*>(pointer);
     }
     Status status = reserve_scan(config.max_candidates_, workspace, &buffers.scan_);
     if (status != Status::kOk) {
@@ -288,9 +329,14 @@ Status reserve_candidate_groups(const DetectorConfig& config, Workspace& workspa
 
 Status build_candidate_groups_async(const DeviceCandidates& input, const DetectorConfig& config,
                                     CandidateGroupBuffers* buffers, DeviceCandidates* grouped,
-                                    cudaStream_t stream) {
+                                    cudaStream_t stream, int width_px, int height_px) {
+    if (width_px < 0 || height_px < 0 || (width_px == 0) != (height_px == 0) ||
+        config.min_distance_to_border_px_ < 0) {
+        return Status::kInvalidArgument;
+    }
     if (buffers == nullptr || grouped == nullptr || buffers->parent_ == nullptr ||
-        grouped->corner_x_ == nullptr || input.corner_x_ == nullptr || input.count_ == nullptr) {
+        buffers->quad_perimeter_ == nullptr || grouped->corner_x_ == nullptr ||
+        input.corner_x_ == nullptr || input.corner_y_ == nullptr || input.count_ == nullptr) {
         return Status::kInvalidArgument;
     }
     if (buffers->capacity_ < input.capacity_ || grouped->capacity_ < input.capacity_) {
@@ -302,26 +348,28 @@ Status build_candidate_groups_async(const DeviceCandidates& input, const Detecto
     const auto linear_grid = static_cast<unsigned int>(linear_blocks);
     const auto linear_block = static_cast<unsigned int>(kLinearThreads);
 
-    reset_group_kernel<<<linear_grid, linear_block, 0, stream>>>(*buffers, capacity);
+    reset_group_kernel<<<linear_grid, linear_block, 0, stream>>>(*buffers, input, capacity);
     Status status = check_kernel_launch("group.reset_group_kernel", -1, false, stream);
     if (status != Status::kOk) {
         return status;
     }
-    rank_kernel<<<linear_grid, linear_block, 0, stream>>>(input.perimeter_, buffers->rank_,
+    rank_kernel<<<linear_grid, linear_block, 0, stream>>>(buffers->quad_perimeter_, buffers->rank_,
                                                           buffers->order_, input.count_);
     status = check_kernel_launch("group.rank_kernel", -1, false, stream);
     if (status != Status::kOk) {
         return status;
     }
     merge_pairs_kernel<<<static_cast<unsigned int>(kPairBlocks), linear_block, 0, stream>>>(
-            input.corner_x_, input.corner_y_, input.perimeter_, buffers->order_, buffers->parent_,
-            input.capacity_, static_cast<float>(config.min_marker_distance_rate_), input.count_);
+            input.corner_x_, input.corner_y_, buffers->quad_perimeter_, buffers->order_,
+            buffers->parent_, input.capacity_, static_cast<float>(config.min_marker_distance_rate_),
+            input.count_);
     status = check_kernel_launch("group.merge_pairs_kernel", -1, false, stream);
     if (status != Status::kOk) {
         return status;
     }
-    select_kernel<<<linear_grid, linear_block, 0, stream>>>(buffers->parent_, buffers->selected_,
-                                                            buffers->offsets_, input.count_);
+    select_kernel<<<linear_grid, linear_block, 0, stream>>>(
+            buffers->parent_, buffers->selected_, buffers->offsets_, input.count_, input,
+            buffers->order_, width_px, height_px, config.min_distance_to_border_px_);
     status = check_kernel_launch("group.select_kernel", -1, false, stream);
     if (status != Status::kOk) {
         return status;

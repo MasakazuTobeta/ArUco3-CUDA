@@ -98,6 +98,72 @@
         "ARUCO3CUDA_ENABLE_CLANG_TIDY": "ON",
         "CMAKE_CUDA_ARCHITECTURES": "native"
       }
+    },
+    {
+      "name": "dgx-spark-opencv-arm",
+      "inherits": "dgx-spark",
+      "displayName": "dgx-spark pinned OpenCV 4.14 ARM resize compatibility",
+      "description": "Validated host HAL descriptor; override when the linked OpenCV build or host vector layout differs. Does not enable experimental GPU routes.",
+      "cacheVariables": {
+        "ARUCO3CUDA_RESIZE_PROFILE": "OPENCV_ARM_HAL",
+        "ARUCO3CUDA_RESIZE_ARM_BACKEND": "SVE128",
+        "ARUCO3CUDA_CAROTENE_X_FMA": "SEPARATE"
+      }
+    },
+    {
+      "name": "jetson-orin-opencv-arm",
+      "inherits": "jetson-orin",
+      "displayName": "jetson-orin pinned OpenCV 4.14 ARM resize compatibility",
+      "description": "Validated host HAL descriptor; override when the linked OpenCV build or host vector layout differs. Does not enable experimental GPU routes.",
+      "cacheVariables": {
+        "ARUCO3CUDA_RESIZE_PROFILE": "OPENCV_ARM_HAL",
+        "ARUCO3CUDA_RESIZE_ARM_BACKEND": "NEON",
+        "ARUCO3CUDA_CAROTENE_X_FMA": "FUSED"
+      }
+    },
+    {
+      "name": "dgx-spark-steady",
+      "inherits": "dgx-spark-opencv-arm",
+      "displayName": "dgx-spark explicit steady-state CUDA candidate",
+      "description": "Common algorithm choices with validated host resize descriptor; persistent512 is overridable for dense workloads. Runtime candidate/marker budgets remain explicit.",
+      "cacheVariables": {
+        "ARUCO3CPU_NATIVE": "ON",
+        "ARUCO3CUDA_BUILD_CPU_EXPERIMENT": "ON",
+        "ARUCO3CUDA_CONTOUR_STRATEGY": "ORDERED_CONTOURS",
+        "ARUCO3CUDA_THRESHOLD_STRATEGY": "FUSED_AUTO",
+        "ARUCO3CUDA_PYRAMID_STRATEGY": "DEMAND",
+        "ARUCO3CUDA_OTSU_STRATEGY": "DENSITY_FIXED_POINT",
+        "ARUCO3CUDA_OTSU_MAX_OCCUPIED_BINS": "96",
+        "ARUCO3CUDA_CANDIDATE_GRID_STRATEGY": "PERSISTENT",
+        "ARUCO3CUDA_CANDIDATE_GRID_BLOCKS": "512",
+        "ARUCO3CUDA_CONTOUR_COUNT_STRATEGY": "EDGE_AGGREGATE",
+        "ARUCO3CUDA_CONTOUR_RDP_STRATEGY": "WARP",
+        "ARUCO3CUDA_CONTOUR_MATERIALIZE_STRATEGY": "WARP",
+        "ARUCO3CUDA_CONTOUR_MATERIALIZE_COMPACTION_STRATEGY": "ELIGIBLE_EDGES",
+        "ARUCO3CUDA_RESIZE_COEFFICIENT_STRATEGY": "KLEIDI_PRECOMPUTED"
+      }
+    },
+    {
+      "name": "jetson-orin-steady",
+      "inherits": "jetson-orin-opencv-arm",
+      "displayName": "jetson-orin explicit steady-state CUDA candidate",
+      "description": "Common algorithm choices with validated host resize descriptor; persistent512 is overridable for dense workloads. Runtime candidate/marker budgets remain explicit.",
+      "cacheVariables": {
+        "ARUCO3CPU_NATIVE": "ON",
+        "ARUCO3CUDA_BUILD_CPU_EXPERIMENT": "ON",
+        "ARUCO3CUDA_CONTOUR_STRATEGY": "ORDERED_CONTOURS",
+        "ARUCO3CUDA_THRESHOLD_STRATEGY": "FUSED_AUTO",
+        "ARUCO3CUDA_PYRAMID_STRATEGY": "DEMAND",
+        "ARUCO3CUDA_OTSU_STRATEGY": "DENSITY_FIXED_POINT",
+        "ARUCO3CUDA_OTSU_MAX_OCCUPIED_BINS": "96",
+        "ARUCO3CUDA_CANDIDATE_GRID_STRATEGY": "PERSISTENT",
+        "ARUCO3CUDA_CANDIDATE_GRID_BLOCKS": "512",
+        "ARUCO3CUDA_CONTOUR_COUNT_STRATEGY": "EDGE_AGGREGATE",
+        "ARUCO3CUDA_CONTOUR_RDP_STRATEGY": "WARP",
+        "ARUCO3CUDA_CONTOUR_MATERIALIZE_STRATEGY": "WARP",
+        "ARUCO3CUDA_CONTOUR_MATERIALIZE_COMPACTION_STRATEGY": "ELIGIBLE_EDGES",
+        "ARUCO3CUDA_RESIZE_COEFFICIENT_STRATEGY": "KLEIDI_PRECOMPUTED"
+      }
     }
   ],
   "buildPresets": [
@@ -136,6 +202,22 @@
     {
       "name": "coverage",
       "configurePreset": "coverage"
+    },
+    {
+      "name": "dgx-spark-opencv-arm",
+      "configurePreset": "dgx-spark-opencv-arm"
+    },
+    {
+      "name": "jetson-orin-opencv-arm",
+      "configurePreset": "jetson-orin-opencv-arm"
+    },
+    {
+      "name": "dgx-spark-steady",
+      "configurePreset": "dgx-spark-steady"
+    },
+    {
+      "name": "jetson-orin-steady",
+      "configurePreset": "jetson-orin-steady"
     }
   ],
   "testPresets": [
@@ -222,6 +304,46 @@
     {
       "name": "coverage",
       "configurePreset": "coverage",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "dgx-spark-opencv-arm",
+      "configurePreset": "dgx-spark-opencv-arm",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "jetson-orin-opencv-arm",
+      "configurePreset": "jetson-orin-opencv-arm",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "dgx-spark-steady",
+      "configurePreset": "dgx-spark-steady",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "jetson-orin-steady",
+      "configurePreset": "jetson-orin-steady",
       "output": {
         "outputOnFailure": true
       },

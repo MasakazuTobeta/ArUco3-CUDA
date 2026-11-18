@@ -41,7 +41,15 @@ Files carrying a 3-clause BSD header, with the copyright holders they name:
       Copyright (C) 2014-2015, Itseez Inc., all rights reserved.
       Copyright (C) 2026, Advanced Micro Devices, all rights reserved.
 
+  modules/imgproc/src/resize.cpp
+      Copyright (C) 2000-2008, 2017, Intel Corporation, all rights reserved.
+      Copyright (C) 2009, Willow Garage Inc., all rights reserved.
+      Copyright (C) 2014-2015, Itseez Inc., all rights reserved.
+
   modules/imgproc/src/geometry.cpp
+      Copyright (C) 2000, Intel Corporation, all rights reserved.
+
+  modules/imgproc/src/approx.cpp
       Copyright (C) 2000, Intel Corporation, all rights reserved.
 
   Third party copyrights are property of their respective owners.
@@ -97,6 +105,63 @@ Apache License 2.0 for the 4.x branch:
 The predefined dictionary data in src/dictionary/generated/ was converted from
 OpenCV's getPredefinedDictionary() output. It was not extracted from any GPLv3
 distribution of ArUco.
+
+--------------------------------------------------------------------------------
+ARM resize compatibility arithmetic
+--------------------------------------------------------------------------------
+
+src/core/preprocess.cu derives scalar coordinate and interpolation arithmetic
+from OpenCV hal/carotene/src/resize.cpp at the commit above and KleidiCV 26.03.
+The Carotene file carries the following notice:
+
+
+By downloading, copying, installing or using the software you agree to this license.
+If you do not agree to this license, do not download, install,
+copy or use the software.
+
+
+                          License Agreement
+               For Open Source Computer Vision Library
+                       (3-clause BSD License)
+
+Copyright (C) 2015, NVIDIA Corporation, all rights reserved.
+Third party copyrights are property of their respective owners.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+
+  * Neither the names of the copyright holders nor the names of the contributors
+    may be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+This software is provided by the copyright holders and contributors "as is" and
+any express or implied warranties, including, but not limited to, the implied
+warranties of merchantability and fitness for a particular purpose are disclaimed.
+In no event shall copyright holders or contributors be liable for any direct,
+indirect, incidental, special, exemplary, or consequential damages
+(including, but not limited to, procurement of substitute goods or services;
+loss of use, data, or profits; or business interruption) however caused
+and on any theory of liability, whether in contract, strict liability,
+or tort (including negligence or otherwise) arising in any way out of
+the use of this software, even if advised of the possibility of such damage.
+
+
+KleidiCV 26.03 resize_linear_generic_u8_neon.h, resize_linear_generic_sc.h,
+resize_linear_api.cpp, and adapters/opencv/kleidicv_hal.cpp:
+
+Copyright 2023-2026 Arm Limited and/or its affiliates.
+SPDX-License-Identifier: Apache-2.0
+
+The Apache License 2.0 is reproduced in this repository's LICENSE file.
+The scalar CUDA implementation preserves the documented rounding and coordinate
+schedule; it does not copy the SIMD implementation.
 
 --------------------------------------------------------------------------------
 Trademarks

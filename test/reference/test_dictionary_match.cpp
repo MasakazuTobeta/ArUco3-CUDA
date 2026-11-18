@@ -191,6 +191,50 @@ private:
 
 // Happy path: every ID at all four rotations agrees with the CPU reference and
 // with OpenCV.
+TEST(DictionaryMatchTest, many_candidate_waves_reset_border_and_match_failure_state) {
+    if (!has_cuda_device()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+    const cv::aruco::Dictionary dictionary = opencv_dictionary();
+    const auto& table = generated_table();
+    const DetectorConfig config;
+    std::vector<RatioGrid> grids;
+    std::vector<std::uint8_t> accepted;
+    for (int index = 0; index < 515; ++index) {
+        const int id = index % table.code_count_;
+        const cv::Mat bits = cv::aruco::Dictionary::getBitsFromByteList(
+                dictionary.bytesList.rowRange(id, id + 1), dictionary.markerSize, 0);
+        RatioGrid grid = grid_from_bits(bits, config.marker_border_bits_);
+        if (index % 3 == 2) {
+            std::fill(grid.values_.begin(), grid.values_.end(), 0.5F);
+        }
+        grids.push_back(grid);
+        accepted.push_back(index % 3 == 0 ? 0U : 1U);
+    }
+    MatchRun run;
+    ASSERT_TRUE(run.run(grids, accepted, table, config));
+    for (std::size_t index = 0; index < grids.size(); ++index) {
+        if (accepted[index] == 0U) {
+            EXPECT_EQ(run.ids()[index], -1) << index;
+            EXPECT_EQ(run.rotations()[index], 0) << index;
+            continue;
+        }
+        const auto ratios = grids[index].inner(config.marker_border_bits_, table.marker_size_);
+        aruco3cuda::CellMasks masks;
+        ASSERT_EQ(aruco3cuda::build_cell_masks(ratios.data(), table.marker_size_,
+                                               static_cast<float>(config.valid_bit_threshold_),
+                                               &masks),
+                  Status::kOk);
+        aruco3cuda::DictionaryMatch expected;
+        ASSERT_EQ(
+                aruco3cuda::identify_marker(table, masks, config.error_correction_rate_, &expected),
+                Status::kOk);
+        EXPECT_EQ(run.ids()[index], expected.id_) << index;
+        EXPECT_EQ(run.rotations()[index], expected.rotation_) << index;
+        EXPECT_EQ(run.distances()[index], expected.distance_) << index;
+    }
+}
+
 TEST(DictionaryMatchTest, matches_all_ids_and_rotations) {
     if (!has_cuda_device()) {
         GTEST_SKIP() << "skipping: no CUDA device available in this environment";

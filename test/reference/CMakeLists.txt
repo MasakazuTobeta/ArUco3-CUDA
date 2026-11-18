@@ -14,6 +14,8 @@ add_executable(aruco3cuda_reference_tests
   test_candidate_filter.cpp
   test_candidate_group.cpp
   test_candidate_comparison.cpp
+  test_contour_candidates.cpp
+  test_contour_approx.cu
   test_cell_sample.cpp
   test_cell_decode.cpp
   test_dictionary_match.cpp
@@ -68,3 +70,25 @@ aruco3cuda_add_sanitizer_tests(aruco3cuda_reference_tests)
 # comparable. Compilers are allowed to fuse by default.
 set_source_files_properties(test_corner_refine.cpp
   PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+
+# The serial, warp, and public OpenCV polygon oracles compare split/cleanup
+# boundaries exactly, so CUDA multiply-add contraction must remain disabled.
+set_source_files_properties(test_contour_approx.cu
+  PROPERTIES COMPILE_OPTIONS "-fmad=false")
+
+# Keep injected API failures isolated from production objects and the normal
+# reference executable. These tests deliberately return CUDA errors and are not
+# registered as Compute Sanitizer cases; ordinary ordering tests cover device work.
+if(UNIX AND NOT APPLE)
+  add_executable(aruco3cuda_detector_fault_tests
+    test_detector_faults.cpp test_detector_probe.cu)
+  target_link_libraries(aruco3cuda_detector_fault_tests PRIVATE
+    aruco3cuda::core aruco3cuda::dictionary aruco3cuda::warnings aruco3cuda::coverage
+    GTest::gtest GTest::gtest_main CUDA::cudart)
+  target_link_options(aruco3cuda_detector_fault_tests PRIVATE
+    "LINKER:--wrap=cudaMalloc" "LINKER:--wrap=cudaEventRecord"
+    "LINKER:--wrap=cudaGetLastError" "LINKER:--wrap=cudaMemcpyAsync")
+  target_include_directories(aruco3cuda_detector_fault_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/core)
+  gtest_discover_tests(aruco3cuda_detector_fault_tests
+    DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
+endif()

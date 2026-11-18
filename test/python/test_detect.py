@@ -9,6 +9,7 @@ The marker is rendered here rather than read from a fixture, so the round trip
 covers the same ground as the C++ one: a break in the bit order, the border
 polarity, or the corner ordering shows up as a missing id.
 """
+import ctypes
 import unittest
 
 import aruco3cuda
@@ -121,8 +122,46 @@ class DetectTest(unittest.TestCase):
                     device = detector.device_detections()
                     detector.download(stream)
         self.assertEqual(device.capacity, config.max_markers)
-        for name in ("ids", "rotations", "corner_x", "corner_y", "count", "accepted_total"):
+        for name in ("ids", "rotations", "corner_x", "corner_y", "count", "accepted_total", "failure_bits"):
             self.assertIsNotNone(getattr(device, name), name)
+
+    def test_device_candidate_failure_and_blank_frame_recovery(self):
+        from aruco3cuda import _cudart
+
+        width, height = 960, 480
+        side, marker = render(42, 160, 0)
+        pixels = bytearray([235]) * (width * height)
+        for left in (30, 330, 630):
+            for y in range(side):
+                start = (150 + y) * width + left
+                pixels[start:start + side] = marker[y * side:(y + 1) * side]
+        config = aruco3cuda.Config(max_width_px=width, max_height_px=height,
+                                  max_candidates=1, max_markers=1)
+
+        def read_int(pointer):
+            value = ctypes.c_int32()
+            self.assertEqual(_cudart.cudaMemcpy2D(ctypes.byref(value), 4, pointer,
+                                                 4, 4, 1, 2), 0)
+            return value.value
+
+        with aruco3cuda.Detector() as detector, aruco3cuda.Stream() as stream:
+            detector.initialize(kDictionary, config)
+            with aruco3cuda.DeviceImage.from_host(pixels, width, height) as image:
+                detector.detect(image, stream)
+                device = detector.device_detections()
+                self.assertIsNotNone(device.failure_bits)
+                with self.assertRaises(aruco3cuda.Error) as raised:
+                    detector.download(stream)
+                self.assertEqual(raised.exception.status, aruco3cuda.Status.CANDIDATE_OVERFLOW)
+                self.assertEqual(read_int(device.count), 0)
+                self.assertTrue(read_int(device.failure_bits) &
+                                aruco3cuda.DeviceFailure.CANDIDATE_OVERFLOW)
+            with aruco3cuda.DeviceImage.from_host(bytes([235]) * (width * height),
+                                                  width, height) as blank:
+                detector.detect(blank, stream)
+                result = detector.download(stream)
+                self.assertEqual(len(result), 0)
+                self.assertEqual(read_int(detector.device_detections().failure_bits), 0)
 
     def test_marker_below_the_aruco3_lower_bound_is_missed(self):
         # The most common reason a first run reports nothing. Pinned down from

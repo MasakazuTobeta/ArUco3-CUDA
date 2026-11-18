@@ -40,11 +40,13 @@ namespace aruco3cuda {
 ///   device inside initialize(), so it may be destroyed once that call returns.
 ///   **This ownership applies to all public member functions.**
 /// Synchronization:
-///   Only initialize() and download() involve host synchronization. detect_async()
-///   merely issues kernels and does not synchronize. That said, on a frame whose input
-///   dimensions or pitch differ from the previous one, the stream is synchronized once
-///   before the buffer layout is rebuilt.
-///   A single instance must not be used from several threads at once.
+///   initialize(), download(), and destruction wait for prior detector work. An owned
+///   completion event orders submissions even across nonblocking streams or destroyed
+///   caller streams; unchanged-layout detect_async() remains host-asynchronous. A changed
+///   input pointer, dimensions, or pitch waits before rebuilding the layout. KLEIDI_PRECOMPUTED
+///   resize coefficients additionally synchronize during first-layout/rebuilt-layout preparation,
+///   before graph capture. This startup work stores no pixels or prior detections. A single
+///   instance must not be used from several threads at once.
 ///
 /// Folding the issue sequence:
 ///   When an explicit stream is given, one frame worth of the issue sequence is
@@ -80,6 +82,10 @@ public:
     ///         kInvalidConfig if the settings are invalid or if allocation failed, and
     ///         kCudaError if a CUDA API call failed.
     ///
+    /// Host validation failure preserves an existing initialized detector. Once resource
+    /// replacement begins, any failure leaves initialized() false and invalidates result
+    /// views, including when dictionary growth succeeds but frame allocation fails.
+    ///
     /// Synchronization: synchronizes the whole device at the end, so that the dictionary
     ///                  transfer is complete as seen from any stream afterwards.
     ///
@@ -91,26 +97,40 @@ public:
     /// Issues a detection onto the stream.
     ///
     /// **A return value of kOk does not mean nothing was truncated at a limit.**
-    /// Whether truncation happened can be seen by comparing accepted_total_ and count_
-    /// on the device. To learn it from the host, call download().
+    /// First inspect failure_bits_ after stream completion: any nonzero value invalidates
+    /// the invocation. Only with zero failure bits does accepted_total_ > count_ indicate
+    /// marker-limit truncation. To learn these conditions from the host, call download().
     ///
     /// @param image The input image. It must live in device or managed space. The
-    ///              caller owns the memory, and it must stay valid until the kernels
-    ///              have completed.
+    ///              caller owns the memory and its write ordering. Keep it valid and
+    ///              unmodified while this invocation may read it. Uploads queued before
+    ///              this call on another stream need caller-provided ordering against
+    ///              earlier invocations that read the same buffer; the detector cannot
+    ///              retroactively order work the caller already submitted.
     /// @param stream The stream the kernels are issued on. nullptr means the default
     ///               stream. **Passing an explicit stream folds the issue sequence into
     ///               a CUDA Graph, so every subsequent frame is issued in a single
     ///               launch.** CUDA does not permit capture on the default stream, so
     ///               that takes the path issuing one step at a time.
     /// @param out_message On failure, receives the reason. May be nullptr.
+    /// A failed dispatch can already have queued partial work. Keep its input alive and
+    /// order input reuse after the supplied stream completes, even when this call fails.
+    /// The detector tracks that partial work before reusing its own storage.
+    ///
+    /// If recording completion fails after work was queued, the invocation and detector
+    /// are invalidated; a successful initialize() is required before further detection.
+    ///
     /// @return kOk. kNotInitialized before initialize(), kInvalidImage if the image is
     ///         invalid, kInvalidArgument if its dimensions exceed the limits,
     ///         kInvalidConfig if allocation failed, and kCudaError if a kernel launch
     ///         failed.
     ///
-    /// Synchronization: issues the kernels asynchronously on the stream. Only on a frame
-    ///                  whose input dimensions or pitch differ from the previous one is
-    ///                  cudaStreamSynchronize called once, before the layout is rebuilt.
+    /// Synchronization: unchanged-layout steady submissions are host-asynchronous and
+    ///                  ordered with an owned event, independent of stream handle lifetime.
+    ///                  A changed pointer, dimensions, or pitch waits for prior completion
+    ///                  before layout rebuilding.
+    ///                  KLEIDI_PRECOMPUTED resize coefficients may also synchronize during first
+    ///                  layout or rebuilt-layout preparation, before graph capture.
     ///
     /// Example input: a 1280x720 device image
     /// Example output: kOk; the results are written into the memory device_detections()
@@ -123,7 +143,12 @@ public:
     /// No synchronization takes place. The contents of the memory pointed at are not
     /// final until the kernels already issued have completed. Call this again after
     /// every detect_async(): when the input dimensions change, the layout changes and
-    /// so do the pointers.
+    /// so do the pointers. kOk here means that references were returned, not that
+    /// asynchronous detection succeeded. Inspect the non-null failure_bits_
+    /// device scalar after stream completion (or in an ordered downstream kernel);
+    /// nonzero invalidates the entire result. No host download is required to do so. The
+    /// caller must order downstream readers before the next detector submission can
+    /// overwrite these borrowed buffers; the detector does not track caller kernels.
     ///
     /// @param out On success, receives the references. The caller owns the storage.
     /// @return kOk. kInvalidArgument if out is nullptr, and kNotInitialized if
@@ -143,13 +168,15 @@ public:
     /// @return kOk. kMarkerOverflow if the results were truncated at the limit (out is
     ///         still filled in). kInvalidArgument if out is nullptr, kNotInitialized if
     ///         detect_async() has never been called, and kCudaError if a CUDA API call
-    ///         failed.
+    ///         or GPU topology/counter consistency check failed. kCandidateOverflow when the
+    ///         candidate pool was exceeded; kInvalidConfig when experimental contour
+    ///         point/approximation storage was exceeded. These failures preserve out.
     ///
     /// Synchronization: **synchronizes the stream.** In steady state this is the only
     ///                  place in this class that synchronizes, but it is not the only one
     ///                  overall: initialize() synchronizes the whole device, and
-    ///                  detect_async() synchronizes the stream once on a frame whose
-    ///                  input dimensions or pitch changed.
+    ///                  detect_async() may synchronize during layout changes and immutable
+    ///                  resize-coefficient preparation; see its synchronization contract.
     ///
     /// Example input: a stream that wrote two detections
     /// Example output: kOk; out->ids_ has 2 elements and out->corners_ has 16

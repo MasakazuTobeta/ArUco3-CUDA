@@ -208,6 +208,27 @@ transform and attribution. Photos remain under ignored local data storage,
 with their individual public-domain/CC BY/CC BY-SA terms. They are evaluation
 inputs, not implementation sources, and are not licensed as repository code.
 
+### PR-007: Device contour and polygon-approximation experiment
+
+The GPU quality investigation adds an independently written directed pixel-edge
+contour representation. Its topology is checked against the pinned OpenCV
+public `findContours` API; it does not adapt official ArUco code.
+
+Closed-contour polygon approximation in `src/core/contour_approx.cuh` adapts
+initialization, splitting and final cleanup from OpenCV
+`modules/imgproc/src/approx.cpp` at commit
+`0654a42e19215ef25b1d367d822f3c630447e7c7`. That file carries the Intel (2000)
+BSD-3-Clause notice, not the repository-wide Apache license. Its SHA-256 is
+`d2b9fa2419c9eb6f880676e862d5b5fb38cd250b2db26da3638efc64181d4bcb`.
+The complete source notice is retained in the adapted header and `NOTICE`
+identifies the source and copyright holder. Modifications replace dynamically
+allocated host vectors and stacks with explicitly bounded device storage and
+report capacity failures instead of silently dropping paths.
+
+This record describes an experimental implementation; validation and selection
+of the final GPU route remain governed by the
+[GPU optimization plan](gpu-steady-optimization-plan.md).
+
 ## Goals
 
 - Add at least one line of record per implementation PR, keeping the basis explainable after the fact.
@@ -223,3 +244,14 @@ inputs, not implementation sources, and are not licensed as repository code.
 
 - [Intellectual Property and Licensing Policy](ip-and-licensing.md)
 - [Dictionary policy](dictionaries.md)
+
+### ARM HAL segmentation resize compatibility
+
+The scalar CUDA resize profile in `src/core/preprocess.cu` derives coordinate
+quantization, interpolation rounding and dispatch predicates from pinned OpenCV
+Carotene (BSD-3-Clause, NVIDIA 2015) and its KleidiCV 26.03 dependency
+(Apache-2.0, Arm 2023–2026). The NEON tail and SVE block-coordinate schedules are
+observable compatibility requirements. No SIMD code or official ArUco GPL code
+was copied. Exact source paths, commit, influence, profile selection and oracle
+conditions are recorded in the [preprocessing sidecar](../src/core/preprocess.md);
+the file-level notices are preserved in [NOTICE](../NOTICE).

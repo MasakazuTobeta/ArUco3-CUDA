@@ -62,3 +62,14 @@ The runner does not protect against unrelated processes replacing a binary or
 input after preflight, or intentionally modifying an active result directory.
 Use immutable binaries and inputs while measuring. Successful process exit is
 not an independent proof of detector accuracy or complete result validation.
+
+### Retaining individual benchmark samples
+
+The standalone `aruco3cuda_cpu_benchmark --save-samples` option adds
+`latency_samples_ms` to each measurement row and records the option in the
+environment row. Samples preserve execution order and exclude warm-up, image
+loading, validation and output serialization. The default output remains
+aggregate-only. This option does not change the alternating measurement loop
+or the repository's nearest-rank percentile definition; it allows independent
+p50/p95/p99 recomputation for cross-route studies. Keep the generated JSONL
+under ignored local measurement directories.
