@@ -58,6 +58,8 @@ build/cpu/cpu/aruco3cuda_cpu_benchmark --input-dir build/cpu-scenes --generate \
 
 ## Performance and detection quality
 
+### ArUco
+
 Steady detector-call latency in **milliseconds** on 16 industrial photographs
 with ArUco3 enabled. The table gives the median across images of their
 three-process median p50. All routes returned zero markers.
@@ -73,7 +75,28 @@ three-process median p50. All routes returned zero markers.
 
 Host GPU times include upload and download. On 32 changing 4K frames,
 host GPU p50 ranged from 1.31 to 4.23 ms across these machines.
-[Six-host report, 1080p and 4K sequences, native photographs and detection quality](docs/measurements/2026-11-19-performance-refresh/README.md)
+[ArUco benchmark details](docs/measurements/2026-11-19-performance-refresh/README.md#aruco-changing-frames)
+
+### AprilTag
+
+Median detector-call latency (p50) on 32 changing 3840×2160 `tag36h11`
+frames, from host grayscale input to host detections. Both GPU timings
+include input preparation, upload, and result retrieval.
+
+| GPU | NVIDIA cuAprilTags (ms) | Project CUDA (ms) | p50 speedup |
+| --- | ---: | ---: | ---: |
+| DGX Spark GB10 | 10.304 | 1.280 | 8.05× |
+| Jetson AGX Orin | 35.428 | 3.108 | 11.40× |
+| Jetson AGX Thor | 19.427 | 1.016 | 19.12× |
+| RTX PRO 6000 | 7.436 | 1.215 | 6.12× |
+| RTX 4090 | 8.903 | 1.130 | 7.88× |
+| RTX 5070 Ti | 8.208 | 0.860 | 9.54× |
+
+On these 4K frames, the project detected 35 of 48 annotated tags, including
+all 18 cuAprilTags detections. On a separate 4K sequence, the four-thread CPU
+detector achieved 2.38–4.71× the throughput of OpenCV.
+[CUDA latency and detection quality](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cuda-latency) ·
+[CPU benchmarks](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cpu-at-4k)
 
 ## Documentation
 
