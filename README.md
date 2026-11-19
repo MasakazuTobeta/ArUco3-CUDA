@@ -79,6 +79,26 @@ host GPU p50 ranged from 1.31 to 4.23 ms across these machines.
 
 ### AprilTag
 
+#### CPU
+
+Four-thread results on a 16-frame 3840×2160 `tag36h11` sequence with
+0, 1, 4, or 12 tags per frame. The reference is OpenCV 4.14.0 with
+`CORNER_REFINE_APRILTAG`. Both detectors process host grayscale images and
+return host detections.
+
+| CPU host | OpenCV p50 (ms) | Project CPU p50 (ms) | Throughput, OpenCV → project (frames/s) |
+| --- | ---: | ---: | ---: |
+| DGX Spark | 95.214 | 37.735 | 10.49 → 26.44 |
+| Jetson AGX Orin | 154.667 | 39.367 | 6.47 → 25.31 |
+| Jetson AGX Thor | 107.938 | 22.105 | 9.22 → 43.40 |
+| Xeon w7-3565X | 106.559 | 44.614 | 9.37 → 22.35 |
+| Core i9-12900KS | 86.658 | 34.550 | 11.53 → 28.98 |
+| Core Ultra 7 265 | 189.049 | 42.561 | 5.31 → 23.48 |
+
+[CPU benchmark details, including one-thread results](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cpu-at-4k)
+
+#### CUDA
+
 Median detector-call latency (p50) on 32 changing 3840×2160 `tag36h11`
 frames, from host grayscale input to host detections. Both GPU timings
 include input preparation, upload, and result retrieval.
@@ -93,10 +113,8 @@ include input preparation, upload, and result retrieval.
 | RTX 5070 Ti | 8.208 | 0.860 | 9.54× |
 
 On these 4K frames, the project detected 35 of 48 annotated tags, including
-all 18 cuAprilTags detections. On a separate 4K sequence, the four-thread CPU
-detector achieved 2.38–4.71× the throughput of OpenCV.
-[CUDA latency and detection quality](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cuda-latency) ·
-[CPU benchmarks](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cpu-at-4k)
+all 18 cuAprilTags detections.
+[CUDA latency and detection quality](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cuda-latency)
 
 ## Documentation
 
