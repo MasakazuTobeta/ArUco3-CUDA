@@ -18,3 +18,9 @@ add_executable(aruco3cuda_render_close_chains render_close_chains.cpp)
 target_link_libraries(aruco3cuda_render_close_chains PRIVATE
   aruco3cuda::warnings ${OpenCV_LIBS})
 target_include_directories(aruco3cuda_render_close_chains SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+add_executable(aruco3cuda_gpu_sequence sequence_benchmark.cpp)
+target_link_libraries(aruco3cuda_gpu_sequence PRIVATE
+  aruco3cuda::core aruco3cuda::dictionary
+  aruco3cuda::warnings CUDA::cudart ${OpenCV_LIBS})
+target_include_directories(aruco3cuda_gpu_sequence SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})

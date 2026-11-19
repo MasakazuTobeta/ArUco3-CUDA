@@ -13,7 +13,7 @@ This document defines the compatibility, generation method, data provenance, and
 
 ## Current state
 
-Seventeen Dictionaries are bundled: the sixteen `DICT_NxN_*` of OpenCV 4.x, and `DICT_ARUCO_MIP_36h12`. The Dictionary is a parameter of `Detector::initialize`, so which one is used is chosen by the caller.
+The ArUco registry bundles seventeen Dictionaries: the sixteen `DICT_NxN_*` of OpenCV 4.x, and `DICT_ARUCO_MIP_36h12`. The Dictionary is a parameter of `Detector::initialize`, so which one is used is chosen by the caller.
 
 | Dictionary | Bits | Codes | `maxCorrectionBits` |
 | --- | --- | --- | --- |
@@ -23,13 +23,18 @@ Seventeen Dictionaries are bundled: the sixteen `DICT_NxN_*` of OpenCV 4.x, and 
 | `DICT_7X7_50` / `_100` / `_250` / `_1000` | 7 | 50 / 100 / 250 / 1000 | 9 / 8 / 8 / 6 |
 | `DICT_ARUCO_MIP_36h12` | 6 | 250 | 5 |
 
-Measured on OpenCV 4.14.0. The packed tables come to 708 KB of generated source.
+Measured on OpenCV 4.14.0. The packed ArUco tables come to 708 KB of generated source.
+
+### AprilTag families
+
+The AprilTag lookup accepts `DICT_APRILTAG_16h5`, `DICT_APRILTAG_25h9`,
+`DICT_APRILTAG_36h10` and `DICT_APRILTAG_36h11`. These tables have a separate
+lookup so programs that enumerate the 17 ArUco dictionaries retain their original
+ordering. [AprilTag dictionary API](../include/aruco3cuda/apriltag_dictionary.hpp)
 
 ### What is deliberately not bundled
 
 **`DICT_ARUCO_ORIGINAL`.** It contains markers that are unchanged by a 180 degree rotation, so their orientation cannot be recovered: decoding a marker rotated by 2 reports rotation 0, and by 3 reports rotation 1. Its minimum Hamming distance over all ids and rotations is also 1, meaning two of its markers differ by a single bit, while OpenCV declares one correctable bit for it. Every other bundled Dictionary satisfies `maxCorrectionBits = (minimum distance - 1) / 2`; this one does not. Bundling a Dictionary whose orientation is ambiguous would put a defect into every pose a caller computes from it.
-
-**The four AprilTag families.** OpenCV lists `DICT_APRILTAG_16h5`, `_25h9`, `_36h10`, and `_36h11` in the same enumeration and `cv::aruco` detects them, but they are AprilTag rather than ArUco and are out of scope here. Nothing in the implementation prevents them: `tools/dictgen` generates the same packed form for them.
 
 **The other MIP families.** `DICT_ARUCO_MIP_36h12` is the only MIP Dictionary OpenCV ships. `ARUCO_MIP_16h3` and `ARUCO_MIP_25h7` exist solely in the GPLv3 ArUco distribution, which the [code provenance rules](../CONTRIBUTING.md) rule out as a source. They cannot be reconstructed from the paper either: the codewords are the output of a search, not a formula. A Dictionary generated with `extendDictionary()` to the same parameters is a different Dictionary, and must be identified as one.
 

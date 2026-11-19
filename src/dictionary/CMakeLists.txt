@@ -6,6 +6,11 @@
 add_library(aruco3cuda_dictionary
   dictionary.cpp
   registry.cpp
+  apriltag_registry.cpp
+  generated/dict_apriltag_16h5.cpp
+  generated/dict_apriltag_25h9.cpp
+  generated/dict_apriltag_36h10.cpp
+  generated/dict_apriltag_36h11.cpp
   generated/dict_4x4_50.cpp
   generated/dict_4x4_100.cpp
   generated/dict_4x4_250.cpp
@@ -29,7 +34,7 @@ add_library(aruco3cuda::dictionary ALIAS aruco3cuda_dictionary)
 target_include_directories(aruco3cuda_dictionary
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 target_link_libraries(aruco3cuda_dictionary PRIVATE aruco3cuda::warnings aruco3cuda::coverage)
 

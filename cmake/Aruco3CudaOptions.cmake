@@ -5,6 +5,7 @@
 #   one place. Thresholds and target architectures stay out of the source as hard
 #   coded values so that they can be overridden from the configuration.
 include_guard(GLOBAL)
+include(GNUInstallDirs)
 
 option(ARUCO3CUDA_BUILD_TESTS "Build the automated tests" ON)
 option(ARUCO3CUDA_BUILD_REFERENCE "Build the OpenCV based CPU baseline runner" ON)

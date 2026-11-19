@@ -24,7 +24,7 @@ fi
 # regeneration check performed by dictgen --check.
 mapfile -t kSources < <(
   find "${kRoot}/include" "${kRoot}/src" "${kRoot}/reference" "${kRoot}/tools" "${kRoot}/test" \
-       "${kRoot}/examples" "${kRoot}/cpu" \
+       "${kRoot}/examples" "${kRoot}/cpu" "${kRoot}/apriltag" \
        \( -name '*.hpp' -o -name '*.h' -o -name '*.cpp' -o -name '*.cu' \) -type f 2>/dev/null \
     | grep -v '/generated/' | sort
 )

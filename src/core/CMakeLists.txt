@@ -65,7 +65,7 @@ target_compile_definitions(aruco3cuda_core PRIVATE
 target_include_directories(aruco3cuda_core
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR})
 

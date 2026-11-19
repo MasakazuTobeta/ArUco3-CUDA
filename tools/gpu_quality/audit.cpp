@@ -347,6 +347,13 @@ int main(int argc, char** argv) {
             require(device.reserve(image.cols, image.rows, &message), message);
             require(device.upload(image.data, image.cols, image.rows, image.step, &message),
                     message);
+            // The pageable upload can return before default-stream DMA has completed.
+            // The detector's nonblocking stream does not wait for that transfer.
+            const cudaError_t uploaded = cudaStreamSynchronize(nullptr);
+            if (uploaded != cudaSuccess) {
+                throw std::runtime_error(std::string("input upload: ") +
+                                         cudaGetErrorString(uploaded));
+            }
             require(gpu.detect_async(device.view(), stream.get(), &message), message);
             aruco3cuda::HostDetections result;
             require(gpu.download(&result, stream.get(), &message), message);

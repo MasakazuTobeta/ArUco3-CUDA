@@ -10,7 +10,7 @@ add_library(aruco3cuda::c ALIAS aruco3cuda_c)
 target_include_directories(aruco3cuda_c
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 # PRIVATE, so that a consumer of the C ABI links one shared object and nothing
 # else. The C header exposes no C++ type, so none of this has to propagate.

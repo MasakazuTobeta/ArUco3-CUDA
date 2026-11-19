@@ -7,9 +7,9 @@
 // enumeration, so that builtin_dictionary_at() walks them as OpenCV declares
 // them.
 //
-// Two of the OpenCV predefined dictionaries are deliberately left out.
+// The ArUco registry deliberately omits the following OpenCV dictionaries.
 //
-//   The four AprilTag families are not ArUco.
+//   The four AprilTag families have a separate registry in apriltag_registry.cpp.
 //
 //   DICT_ARUCO_ORIGINAL contains markers that are unchanged by a 180 degree
 //   rotation, so their orientation cannot be recovered: rotation 2 decodes as

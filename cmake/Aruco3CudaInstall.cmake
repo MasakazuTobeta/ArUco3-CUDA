@@ -29,7 +29,16 @@ function(aruco3cuda_add_install_rules)
   # linking them PRIVATE into a STATIC library leaves them on the interface as
   # $<LINK_ONLY:>, so install(EXPORT) fails unless they are part of the export
   # set.
-  install(TARGETS aruco3cuda_core aruco3cuda_dictionary aruco3cuda_util aruco3cuda_c
+  set(kAprilTagTargets)
+  if(TARGET aruco3cuda_apriltag_gpu)
+    set_target_properties(aruco3cuda_apriltag_gpu PROPERTIES EXPORT_NAME apriltag_gpu)
+    list(APPEND kAprilTagTargets aruco3cuda_apriltag_gpu)
+  endif()
+  if(TARGET aruco3_apriltag_cpu)
+    set_target_properties(aruco3_apriltag_cpu PROPERTIES EXPORT_NAME apriltag_cpu)
+    list(APPEND kAprilTagTargets aruco3_apriltag_cpu)
+  endif()
+  install(TARGETS ${kAprilTagTargets} aruco3cuda_core aruco3cuda_dictionary aruco3cuda_util aruco3cuda_c
                   aruco3cuda_warnings aruco3cuda_coverage
     EXPORT aruco3cudaTargets
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -38,7 +47,14 @@ function(aruco3cuda_add_install_rules)
 
   install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/aruco3cuda"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-    FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h")
+    FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h" PATTERN "apriltag" EXCLUDE)
+  foreach(kRoute IN ITEMS cpu gpu)
+    string(TOUPPER "${kRoute}" kRouteOption)
+    if(ARUCO3CUDA_BUILD_APRILTAG_${kRouteOption})
+      install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/aruco3cuda/apriltag/${kRoute}"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/aruco3cuda/apriltag")
+    endif()
+  endforeach()
 
   install(EXPORT aruco3cudaTargets
     FILE aruco3cudaTargets.cmake

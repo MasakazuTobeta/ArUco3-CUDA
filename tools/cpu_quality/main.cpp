@@ -27,18 +27,33 @@ int integer(const char* text) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 2 && argc != 4) {
+        if (argc != 2 && argc != 4 && argc != 5) {
             throw std::invalid_argument(
-                    "usage: aruco3cuda_cpu_quality_corpus OUTPUT_DIR [WIDTH HEIGHT]");
+                    "usage: aruco3cuda_cpu_quality_corpus OUTPUT_DIR [WIDTH HEIGHT "
+                    "[APRILTAG_FAMILY]]");
         }
         const std::filesystem::path directory(argv[1]);
         if (std::filesystem::exists(directory) && !std::filesystem::is_empty(directory)) {
             throw std::invalid_argument("quality output directory must be empty");
         }
         const cv::Size size =
-                argc == 4 ? cv::Size(integer(argv[2]), integer(argv[3])) : cv::Size(641, 479);
-        const cv::aruco::Dictionary dictionary =
-                cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12);
+                argc >= 4 ? cv::Size(integer(argv[2]), integer(argv[3])) : cv::Size(641, 479);
+        const std::string family = argc == 5 ? argv[4] : "DICT_ARUCO_MIP_36h12";
+        cv::aruco::PredefinedDictionaryType type = cv::aruco::DICT_ARUCO_MIP_36h12;
+        if (argc == 5) {
+            if (family == "DICT_APRILTAG_16h5") {
+                type = cv::aruco::DICT_APRILTAG_16h5;
+            } else if (family == "DICT_APRILTAG_25h9") {
+                type = cv::aruco::DICT_APRILTAG_25h9;
+            } else if (family == "DICT_APRILTAG_36h10") {
+                type = cv::aruco::DICT_APRILTAG_36h10;
+            } else if (family == "DICT_APRILTAG_36h11") {
+                type = cv::aruco::DICT_APRILTAG_36h11;
+            } else {
+                throw std::invalid_argument("unknown AprilTag family: " + family);
+            }
+        }
+        const cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(type);
         const auto specs =
                 aruco3cuda::cpu_quality::make_adversarial_specs(size, dictionary.bytesList.rows);
         std::filesystem::create_directories(directory);
@@ -51,7 +66,7 @@ int main(int argc, char** argv) {
         writer.member_int("schema_version", 1);
         writer.member_string("generator", "cpu-quality-adversarial-v1");
         writer.member_string("opencv_version", CV_VERSION);
-        writer.member_string("dictionary", "DICT_ARUCO_MIP_36h12");
+        writer.member_string("dictionary", family);
         writer.member_string("source_kind", "synthetic; not real camera images");
         writer.member_string("corner_convention",
                              "oriented outer pixel boundaries; canonical -0.5 through 255.5");
@@ -59,7 +74,8 @@ int main(int argc, char** argv) {
         writer.begin_array();
         for (const auto& spec : specs) {
             const cv::Mat image = aruco3cuda::cpu_quality::render_frame(spec, dictionary);
-            const std::filesystem::path path = directory / (spec.name_ + ".png");
+            const std::filesystem::path path =
+                    directory / (spec.name_ + (argc == 5 ? ".pgm" : ".png"));
             if (!cv::imwrite(path.string(), image)) {
                 throw std::runtime_error("cannot write quality image");
             }

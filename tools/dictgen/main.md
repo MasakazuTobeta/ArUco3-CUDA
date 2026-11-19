@@ -10,7 +10,7 @@ Covers reading predefined Dictionaries, converting bit arrays to the packed repr
 
 ## Current state
 
-- 18 predefined Dictionaries are supported.
+- 22 predefined dictionaries are supported, including four AprilTag families.
 - One run generates one Dictionary.
 - The generated files are placed in `src/dictionary/generated/` and committed to the repository.
 

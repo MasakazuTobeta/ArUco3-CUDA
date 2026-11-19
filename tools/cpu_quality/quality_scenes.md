@@ -11,8 +11,11 @@ mean reusing prior-frame pixels or detections.
 
 `quality_scenes.{hpp,cpp}` provides an in-memory renderer and a 96-frame preset.
 `aruco3cuda_cpu_quality_corpus` writes those frames as PNGs with a JSON manifest,
-so the same inputs can be used by the benchmark. The CLI uses OpenCV's
-`DICT_ARUCO_MIP_36h12`; the in-memory renderer accepts a supplied OpenCV Dictionary.
+so the same inputs can be used by the benchmark. The default CLI output is PNG using `DICT_ARUCO_MIP_36h12`. For an AprilTag corpus,
+pass the width, height and family, for example
+`aruco3cuda_cpu_quality_corpus build/corpus-36h11 640 480 DICT_APRILTAG_36h11`.
+This writes grayscale PGM frames and the same manifest schema, so the NVIDIA, GPU
+and CPU adapters can consume identical pixels. Each directory must be empty before generation.
 
 All generated inputs are synthetic. They do not establish performance or
 accuracy on camera photographs. Existing real-image fixtures belong to a

@@ -80,7 +80,12 @@ When a failure that could recur or an environment-specific caveat comes to light
 
 ### Container scripts supplied on standard input
 
-- Use `docker exec -i` when passing a Python or shell script through a heredoc. Without `-i`, the interpreter can receive empty input and exit successfully without executing the checks. Verify expected output files or record counts as well as the exit status.
+- Use `docker exec -i` or `docker run -i` when passing a Python or shell script through a heredoc. Without `-i`, the interpreter can receive empty input and exit successfully without executing the checks. Verify expected output files or record counts as well as the exit status.
+
+### CUDA benchmark input ordering
+
+- Pageable host-to-device copies via `cudaMemcpy2D` can return before default-stream DMA finishes. A nonblocking detector stream can then read the previous frame. Queue the copy on the detector stream or complete the default-stream transfer explicitly before submitting the detector. Keep recurring upload in the timed interval for host input.
+- Build `aruco3cuda_bench_cli` to produce `bench/aruco3cuda_bench`. The `aruco3cuda_bench` build target produces the harness library.
 
 ### Instrumented CPU test timeouts
 
@@ -93,6 +98,7 @@ When a failure that could recur or an environment-specific caveat comes to light
 ### CUDA runtime and driver checks on optional benchmark hosts
 
 - An installed toolkit does not establish runtime compatibility. On the RTX 4090 host, the mounted CUDA 13 build compiled but GPU tests skipped because device discovery failed with the existing 575.64.03 driver (reported CUDA 12.9 capability). Rebuilding in a separate CUDA 12.6 container executed the same tests and all four sanitizer tools successfully. Keep failed/skipped logs, never count skipped device tests as a pass, and use a toolkit compatible with the existing driver rather than changing a shared host's driver for a benchmark.
+- The Spark toolkit's `nsys` launcher can report a missing Nsight Systems install even when the profiler is installed separately on the host. Mount the actual profiler into the container and invoke its executable. Verify the CUDA trace and the expected input-copy events before reporting kernel duration.
 
 ### Affinity tests in restricted containers
 
