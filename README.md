@@ -58,24 +58,22 @@ build/cpu/cpu/aruco3cuda_cpu_benchmark --input-dir build/cpu-scenes --generate \
 
 ## Performance and detection quality
 
-Detector-call latency in **milliseconds** on 16 industrial photographs with ArUco3 enabled.
-Each process ran 20 warm-ups and 200 timed detections on each still image. The table gives
-the median across images of their three-process median p50. All routes returned zero markers.
+Steady detector-call latency in **milliseconds** on 16 industrial photographs
+with ArUco3 enabled. The table gives the median across images of their
+three-process median p50. All routes returned zero markers.
 
 | Machine | OpenCV CPU (1T) | Optimized CPU (1T) | OpenCV CPU (4T) | Optimized CPU (4T) | Steady GPU (device) | Steady GPU (host) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| DGX Spark GB10 | 2.984 | 1.882 | 1.395 | **0.817** | 3.405 | 3.464 |
-| Jetson AGX Orin | 6.892 | 4.518 | 2.928 | **2.080** | 3.037 | 3.723 |
+| DGX Spark GB10 | 2.934 | 1.843 | 1.368 | **0.790** | 1.340 | 1.553 |
+| Jetson AGX Orin | 6.853 | 4.469 | 2.936 | **2.076** | 3.034 | 3.956 |
+| Jetson AGX Thor | 5.086 | 3.110 | 2.211 | **1.333** | 1.956 | 2.098 |
+| Xeon w7-3565X / RTX PRO 6000 | 3.573 | 2.318 | 1.415 | **1.060** | 1.207 | 1.404 |
+| Core i9-12900KS / RTX 4090 | 2.974 | 1.944 | 1.143 | **0.807** | 0.828 | 1.106 |
+| Core Ultra 7 265 / RTX 5070 Ti | 2.724 | 1.861 | 1.110 | **0.761** | 1.046 | 1.209 |
 
-On Orin the device-resident GPU beat both single-thread CPU detectors on all 16 images.
-The four-thread optimized CPU beat it on 15. Spark had substantial concurrent GPU work.
-CPU times include host results. Device-to-device GPU times include stream synchronization.
-Host-to-host GPU times also include upload and download. These timings predate the border-margin
-correction. GPU throughput on changing video frames has yet to be measured.
-[GPU latency, memory and measurement protocol](docs/gpu-steady-state-report.md)
-
-- **CPU across six hosts.** With ArUco3 enabled, median per-image speedups over official OpenCV ranged from 1.45× to 1.63× with one thread and 1.33× to 1.67× with four. [Six-host comparison and absolute timings](docs/cpu-multihost-report.md#current-state)
-- **Accuracy on annotated scenes.** On Spark and Orin, the corrected steady GPU and CPU each detected 113 of 136 markers with ArUco3 enabled and 124 with it disabled, with zero false positives. Recall on real photographs with visible markers remains unmeasured. [Quality evaluation](docs/gpu-steady-state-report.md#current-state)
+Host GPU times include upload and download. On 32 changing 4K frames,
+host GPU p50 ranged from 1.31 to 4.23 ms across these machines.
+[Six-host report, 1080p and 4K sequences, native photographs and detection quality](docs/measurements/2026-11-19-performance-refresh/README.md)
 
 ## Documentation
 

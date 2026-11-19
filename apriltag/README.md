@@ -70,13 +70,10 @@ orientation errors. Corner RMSE on their common detections was 1.515 px for
 cuAprilTags and 0.183 px for the CUDA detector. In a separate comparison across
 all four families, the CUDA detector missed two OpenCV CPU detections per family.
 
-| GPU, 640×480 changing frames | cuAprilTags calls/s | CUDA detector calls/s | Throughput gain |
-| --- | ---: | ---: | ---: |
-| Jetson AGX Orin | 577 | 2,148 | 3.73× |
-| GeForce RTX 4090, shared GPU | 635 | 1,418 | 2.23× |
-
-Rates use device-resident input and the sum of synchronized call durations.
-On three outdoor photos with small tags, RTX throughput was 565 calls/s for
-cuAprilTags, 521 with the adaptive default and 953 with full-resolution sampling
-(`decimate_ = 1`). Both project settings retained every cuAprilTags detection.
-[GPU performance and accuracy](benchmark/README.md) · [CUDA implementation](gpu/README.md)
+On the November 19 refresh, host-input 4K median latency improved by
+6.12–19.12× across six CUDA hosts. On the 32 annotated 4K frames the
+project found 35 of 48 tags, including all 18 cuAprilTags detections.
+On the 96 annotated 1080p frames it found 100 of 136 and missed one
+cuAprilTags detection.
+[Current comparison and tail latency](../docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cuda-latency) ·
+[Earlier GPU measurements](benchmark/README.md)

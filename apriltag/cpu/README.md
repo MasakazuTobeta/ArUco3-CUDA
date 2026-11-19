@@ -125,6 +125,11 @@ python3 apriltag/cpu/measure.py build/april-host/apriltag_cpu_compare \
   /path/to/prepared/photos build/april-timing --cores 5,6,7,8
 ```
 
+For the 3840×2160 sequence, run `apriltag_cpu_compare --stream 2160p --warmup 16
+--samples 192`. It uses the same marker sizes in pixels as the 720p and 1080p
+sequences. Repeat in fresh processes with the same core and thread settings,
+using `--cpu-first` to reverse the detector order on the second run.
+
 Use the [fixed photograph identities](../../tools/gpu_quality/steady-inputs.json)
 and select four available physical cores on the target. The measurement runner writes
 local CSV files, input hashes and resolved binary hashes.
