@@ -255,3 +255,25 @@ observable compatibility requirements. No SIMD code or official ArUco GPL code
 was copied. Exact source paths, commit, influence, profile selection and oracle
 conditions are recorded in the [preprocessing sidecar](../src/core/preprocess.md);
 the file-level notices are preserved in [NOTICE](../NOTICE).
+
+## AprilTag family codewords
+
+The source is OpenCV 4.14.0's Apache-2.0
+[AprilTag dictionary header](https://github.com/opencv/opencv/blob/0654a42e19215ef25b1d367d822f3c630447e7c7/modules/objdetect/src/aruco/apriltag/predefined_dictionaries_apriltag.hpp)
+(SHA-256 `cf0e7d383b7194225ddc9a51b3b8eef780671862caa1ea3cf026f9a357fb1940`).
+For each family, `aruco3cuda_dictgen --dictionary DICT_APRILTAG_<family> --output <file>`
+packs each ID at all four rotations using OpenCV's accessor and checks the rotation
+convention. The generated source hashes below cover the complete files.
+
+| Family | SHA-256 |
+| --- | --- |
+| 16h5 | `2506b6c1a2cfc37710a67ccc0a199dd5daf7822961cd81aa2081d8a3a73c838e` |
+| 25h9 | `22f87b07610eb5c42736ff76f7fb6c5206b75e296d372f9f9299ae09e0880585` |
+| 36h10 | `e97a30f122c336d009729e14d1effaf59d55581bce054a99d930e09fbc83d6bc` |
+| 36h11 | `0784a03c3c8e13a9962426a3a77849f7c15a8b12ece371c30d9b1cb1e06975db` |
+
+The CPU detector links the BSD-licensed AprilRobotics implementation at commit
+`efa633d9dc6f4ee33bb79b0592250f4aa71e90a8`. Its wrapper and the original
+CUDA detector are documented with their respective implementation sources.
+The separate benchmark links the user's installation of NVIDIA cuAprilTags.
+[CPU implementation](../apriltag/cpu/README.md) · [CUDA implementation](../apriltag/gpu/README.md) · [NVIDIA baseline](../apriltag/benchmark/README.md)

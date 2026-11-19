@@ -22,6 +22,7 @@ Supported marker families are listed in the [dictionary policy](dictionaries.md)
 | Integrate it into a GPU pipeline | [C++ API](design/public-api.md), [C ABI and Python](design/c-abi-and-python.md), [memory transfers](design/memory-transfer.md) |
 | Understand or configure the detector | [Architecture](architecture.md), [detection stages](design/detector-pipeline.md), [build strategies](../cmake/ArUco3CudaStrategies.md) |
 | Compare optimized CPU and steady GPU | [GPU latency, memory and corrected accuracy on Spark and Orin](gpu-steady-state-report.md), [CPU latency on six hosts](cpu-multihost-report.md) |
+| Detect AprilTags | [CPU and GPU detectors](../apriltag/README.md), [AprilTag evaluation](../apriltag/evaluation/README.md) |
 | Evaluate a host-only workload | [CPU algorithm](design/cpu-optimization.md), [independent-frame throughput](cpu-steady-state-report.md), [industrial backgrounds](cpu-real-background-report.md) |
 | Interpret the original GPU and Hybrid results | [Four-host synthetic benchmark](benchmark-report.md), [accuracy against ground truth](accuracy-report.md) |
 | Reproduce an evaluation | [Evaluation plan](evaluation-plan.md), [benchmark runner](../tools/gpu_quality/steady_benchmark.md), [measurement storage](measurements/README.md) |

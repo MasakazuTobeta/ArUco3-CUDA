@@ -9,6 +9,7 @@ for the next stage or be downloaded to the host.
 
 The CUDA library has C++, C and Python interfaces and supports 17 predefined dictionaries.
 An experimental host-only detector is available for applications with CPU input.
+For AprilTag families, see the separate [AprilTag 3 CPU and GPU detectors](apriltag/README.md).
 
 ## Detect your first marker
 
