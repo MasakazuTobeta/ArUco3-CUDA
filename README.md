@@ -86,7 +86,7 @@ Four-thread results on a 16-frame 3840×2160 `tag36h11` sequence with
 `CORNER_REFINE_APRILTAG`. Both detectors process host grayscale images and
 return host detections.
 
-| CPU host | OpenCV p50 (ms) | Project CPU p50 (ms) | Throughput, OpenCV → project (frames/s) |
+| CPU host | OpenCV p50 (ms) | Project CPU p50 (ms) | Throughput, OpenCV → project (FPS) |
 | --- | ---: | ---: | ---: |
 | DGX Spark | 95.214 | 37.735 | 10.49 → 26.44 |
 | Jetson AGX Orin | 154.667 | 39.367 | 6.47 → 25.31 |
