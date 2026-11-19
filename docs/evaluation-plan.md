@@ -1,203 +1,66 @@
-# Evaluation Plan
+# Evaluation plan
 
 ## Purpose
 
-This document defines how we evaluate the correctness, performance, device memory usage, and portability of the CUDA implementation under reproducible conditions. We do not assume that CUDA is always faster than the CPU; showing the conditions under which the CPU wins, with the same precision, is part of the purpose.
-
-This document defines how we measure. The results themselves are in the [Benchmark Report](benchmark-report.md) and the [Accuracy Evaluation Results](accuracy-report.md).
-
-The separate [CPU optimization experiment](design/cpu-optimization.md) compares
-an optional host-only detector to that same pinned OpenCV baseline. Its
-[measurement report](cpu-benchmark-report.md) specifies its extended corpus,
-one/four-thread budgets, paired measurements, latency/throughput separation and
-host-memory scope. It does not alter the route definitions or historical CUDA
-results below.
-The [steady-state follow-up](cpu-steady-state-report.md) adds exact-output
-regional computation, immutable dictionary precomputation, degraded inputs and
-independent-frame workers. Startup is not an acceptance gate; no tracking is
-allowed. Worker service latency excludes queue wait and is distinct from
-saturated multi-frame throughput.
-The [real-background evaluation](cpu-real-background-report.md) separately tests
-unchanged CPU code on public industrial photographs, including configured
-zero-detection cases. Its source selection and measurement conditions are
-recorded before execution.
+Compare detector quality, latency and memory under reproducible conditions. Identify the inputs and hardware on which each route is faster.
 
 ## Scope
 
-The comparison baseline is the OpenCV ArUco3 detection strategy (CPU), and the subject of comparison is the CUDA implementation in this repository. We measure on the following four machines.
-
-| Machine | Architecture | GPU | GPU type | CC | CUDA |
-| --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | aarch64 | NVIDIA GB10 | Integrated | 12.1 | 13.0 |
-| Jetson AGX Orin | aarch64 | Orin | Integrated | 8.7 | 11.4 |
-| Jetson AGX Thor | aarch64 | NVIDIA Thor | Integrated | 11.0 | 13.0 |
-| GeForce RTX 5070 Ti | x86_64 | RTX 5070 Ti | Discrete | 12.0 | 13.0 |
-
-The configuration of three integrated-GPU machines and one discrete-GPU machine lets us separate results specific to integrated GPUs from results that hold generally. On an integrated GPU, the host and the device share the same physical memory, so transfer costs differ from a discrete GPU. In our measurements, however, transfer cost is small even on the discrete GPU, and it comes out larger on the integrated-GPU DGX Spark GB10. We have not identified the reason. Input memory kind does divide integrated and discrete clearly: managed memory is 6.4 to 30 times slower on the discrete GPU, while on integrated GPUs it stays within 1.01 to 1.27 times.
-
-The CUDA evaluation below uses a synthetic corpus; its historical results do not
-include real-image datasets. The separate CPU photographic follow-up is linked
-above. Pose estimation is also out of scope.
+Unmodified OpenCV 4.14.0 provides the CPU compatibility baseline. Rendered markers provide ground truth for accuracy. The measured interval ends at marker IDs and ordered corners. Pose estimation is outside the evaluation.
 
 ## Current state
 
-The synthetic corpus generator, the CPU reference runner, the measurement harness for four routes, and the accuracy evaluator against ground truth are all in place, and we can measure under the conditions below. The device-resident input route is measured on all four machines. The routes that take host input are used for comparing input memory kinds.
+Use the report for the implementation and workload being reproduced. Each identifies its source, hardware and inputs.
 
-### Routes compared
-
-| ID | Route | Measured interval |
+| Study | Inputs and scope | Results and reproduction |
 | --- | --- | --- |
-| `CPU` | OpenCV ArUco3 | From `cv::Mat` input to obtaining the result |
-| `Hybrid` | Preprocessing and thresholding on the GPU, candidate extraction and decode on the CPU | Each stage and synchronization measured separately |
-| `CUDA-Resident` | CUDA route with device-resident input | From an image on the GPU to results on the device |
-| `CUDA-E2E` | CUDA route with host input | Includes upload, detection, download, and synchronization |
+| Historical component GPU, Hybrid and official CPU | Synthetic corpus on DGX Spark, Jetson AGX Orin, Jetson AGX Thor and RTX 5070 Ti. Accuracy uses 91 scenes. The latency sweep uses 28. | [Accuracy](accuracy-report.md) and [benchmarks](benchmark-report.md) |
+| Optimized CPU and official CPU | Synthetic and degraded markers, independent-frame worker throughput, and still photographs on six hosts. The photographic study uses 16 industrial backgrounds and positive controls. | [CPU steady state](cpu-steady-state-report.md) and [six-host comparison](cpu-multihost-report.md) |
+| Ordered-contour GPU, component GPU and both CPU implementations | Changing-frame quality audit, historical images, 17 Dictionaries and industrial photographs. Latency uses repeated still images on Spark and Orin. Quality after the border correction was verified on those two hosts. | [GPU steady-state report](gpu-steady-state-report.md), [quality matrix](../tools/gpu_quality/run_matrix.md) and [timing runner](../tools/gpu_quality/steady_benchmark.md) |
 
-The route identifiers are the same strings that appear in the measurement result JSONL. We use them as they are during aggregation, without renaming.
+### Routes and timing boundaries
 
-### Input memory kinds
-
-The memory kind of the input buffer is recorded as a measurement axis independent of the route.
-
-| Symbol | Memory kind | What happens in the measured interval |
+| Route in the benchmark | Input | End of measured interval |
 | --- | --- | --- |
-| `M-Pageable` | Pageable host memory | The driver copies into a staging buffer, then DMAs |
-| `M-Pinned` | Page-locked host memory | DMA reads directly. The copy into page-locked memory happens once, outside the measured interval |
-| `M-Managed` | Managed memory | There is no explicit copy. Pages migrate the moment the device touches them, and the synchronization and cache costs remain |
-| `M-Device` | Device-resident | For when the upstream processing is on the GPU |
+| `CPU` | Prepared host grayscale `cv::Mat` | OpenCV has returned host results. The optimized CPU study times the same boundary. |
+| `Hybrid` | Host or device image, according to the memory kind | GPU preprocessing and synchronization plus CPU candidate extraction and decoding have completed. |
+| `CUDA-Resident` | Device image | Detection on the submitted stream has completed with results on the device. Host download is excluded. |
+| `CUDA-E2E` | Host image | The detector has processed the input and returned results to the host, including transfer and synchronization. |
 
-We place the `M-Pinned` copy outside the measured interval because this axis measures the **kind of the input buffer**, not the cost of the copy. Copying every frame would bury the difference between kinds in the cost of the copy.
+Record input memory separately. `M-Pageable` uses ordinary host memory, `M-Pinned` uses a page-locked buffer prepared before timing, `M-Managed` allows migration on device access, and `M-Device` starts with resident pixels. The [measurement harness](../bench/benchmark_harness.md) specifies supported combinations and JSONL identifiers.
 
-### Measured interval
+File decoding, checksums, initialization and allocation occur before steady-state timing. Record time to first result and CUDA context creation separately for a cold-start study. Report single-frame p50/p95/p99 and measure multi-frame throughput directly in frames/s. Worker service latency excludes queue wait. Repeated still-image calls measure latency with a persistent detector. A changing-frame correctness test supplies no video throughput measurement.
 
-We measure detection only. Image loading and checksums are not included. Real-time processing does not decode PNG, and if we loaded the image on every iteration, decoding would dominate the measured interval and the comparison would no longer be a comparison of detection time.
+Stage wall times include host synchronization. Label kernel-only diagnostics by instrument and scope. The historical harness has no per-stage CUDA-event times. The steady-state study separately reports sums of GPU kernel durations from a Spark Nsight Systems trace. [Kernel diagnostic](gpu-steady-state-report.md#separate-kernel-diagnostic)
 
-```mermaid
-flowchart LR
-    L["Image loading<br/>checksum<br/>initialization / memory allocation"] -.outside the measured interval.-> S
-    subgraph S["Measured interval"]
-        direction LR
-        I["Passing the input<br/>(present or not depending on the route)"] --> D["Detection"] --> R["Retrieving results and synchronization<br/>(present or not depending on the route)"]
-    end
-```
+### Inputs and accuracy
 
-Initialization and memory allocation are excluded from the measured interval, but they are not discarded: we record them as a separate item. On the CUDA routes, context creation and kernel loading incur a cost several hundred times the steady state, once per process. Looking only at post-warmup percentiles hides this cost and makes it impossible to compare single detections or short bursts.
+The historical `full` corpus uses 8-bit grayscale at 640×480, 1280×720, 1920×1080 and 3840×2160, with 0, 1, 4 or 16 markers and `DICT_ARUCO_MIP_36h12`. Clean marker sides are 16, 32, 64, 128 or 256 px. Degraded scenes use 96 px markers and vary rotation, perspective, blur, noise, illumination, occlusion and image borders, alone or in combination. The generator skips layouts that cannot fit. [Corpus generator](../tools/corpusgen/corpus_generator.md)
 
-### Input conditions
+Match detections by centroid proximity. Record misses, extra detections, incorrect IDs, rotation from cyclic corner order, and maximum corner error and RMSE. For synthetic images also report precision, false positives and recall overall, at or above the ArUco3 size bound, and below it. Compare per scene and by marker size and degradation. Unannotated photographs establish agreement with CPU. [Accuracy metrics](../tools/evaluate/accuracy.md)
 
-| Item | Value |
-| --- | --- |
-| Resolution | 640x480, 1280x720, 1920x1080, 3840x2160 |
-| Image format | 8-bit grayscale |
-| Marker count | 0, 1, 4, 16 |
-| Marker side length | 16, 32, 64, 128, 256 pixels in the clean scenes, 96 pixels in the degraded scenes |
-| Degradation conditions | Rotation, projective distortion, blur, noise, illumination difference, partial occlusion, image border, and all of them combined |
-| Dictionary | Fixed to `DICT_ARUCO_MIP_36h12` |
-
-These are the conditions of the `full` preset of the corpus generator. Combinations in which the markers would not fit in the image are skipped, so not every marker count and side length occurs at every resolution; the preset yields 91 scenes in total.
-
-The policy for widening dictionary support is in the [Dictionary Policy](dictionaries.md). The corpus generation rules and how ground truth is derived are in the [corpus generator](../tools/corpusgen/corpus_generator.md).
-
-Corpus images generated with the same seed differ across build environments. Per-scene hashes were kept only for the 28 benchmark scenes: 18 of those differ between aarch64 and x86_64, and 6 differ between the two aarch64 machines, so the instruction set alone does not explain it. How many of the 91 scenes differ, and by how much, is not recorded. This does not affect comparisons within the same machine, but when comparing corner errors across machines, we take this difference into account.
-
-### Measurement conditions
-
-| Item | How it is decided |
-| --- | --- |
-| CPU core | Fixed by core type, not by core number |
-| OpenCV thread count | Fixed to 1 |
-| Percentile | Nearest-rank. No interpolation |
-| Independent runs | The same condition is run multiple times as independent processes |
-| Outliers | Not removed. The full distribution is kept |
-
-We fix the CPU core by type because on machines that mix performance cores and efficiency cores, matching only the core number means comparing cores of different types. CPU 0 on the DGX Spark GB10 is an efficiency core, while CPU 0 on the GeForce RTX 5070 Ti machine is a performance core, and the value for the CPU route changes by roughly a factor of 2 depending on which one we measure.
-
-We use nearest-rank percentiles so that the returned value is always one of the actual measurements. Interpolation makes the aggregation method implementation-dependent, and comparisons across environments no longer hold.
-
-We run multiple times as independent processes because percentiles within a single run do not capture the variation caused by per-process memory layout. Run-to-run variance can be an order of magnitude larger on the GPU routes than on the CPU route (it is on the DGX Spark; it is not on the GeForce RTX 5070 Ti), so we always report it alongside the results, per machine. When we want to isolate a change in a before-and-after comparison, we disable ASLR with `setarch -R` and record that we did so.
-
-### Accuracy metrics
-
-- Precision and recall
-- Number of false positives
-- ID and rotation agreement rate
-- RMSE and maximum error of the corner coordinates
-- Detection rate by marker side length, angle, and degradation condition
-- Number of differences from the CPU reference, and the differing images
-
-The CPU reference result is a compatibility baseline, not ground truth. For the synthetic corpus, we also use the true values from generation time as ground truth.
-
-We report recall in three categories. The ArUco3 detection strategy inherently cannot detect markers whose side, after downscaling, falls below a lower limit. The corpus deliberately includes sizes below this limit, so the overall recall is dominated by that limit. Unless we separate overall, at or above the limit, and below the limit, we cannot distinguish misses by the implementation from the limits of the strategy. The definitions of the metrics are in the [Accuracy Evaluation Metrics](../tools/evaluate/accuracy.md).
-
-### Performance metrics
-
-- `T_kernel`: Kernel time measured with CUDA events
-- `T_end_to_end`: Wall-clock time from input preparation to obtaining the result
-- Latency: p50, p95, p99
-- Throughput: frames/s during continuous processing
-- Peak device memory usage, and the number of allocations per frame
-- Time until the first image produces a result, and the time taken by CUDA context creation
-- CPU utilization, GPU utilization, and power consumption where obtainable on the target machine
-
-We do not currently record `T_kernel`. The per-stage times are wall-clock values that include host synchronization, which makes them the same kind of value as `T_end_to_end`. We do not mix the two in aggregation.
+For the steady GPU quality gate, check every CPU-detected ground-truth marker, false positives, IDs, rotations and per-truth corner errors. Record raw deltas and the declared 0.001 px numerical classification band. Exercise graph and direct submission, including different frames at the same device address. Keep overflow and partial outputs as failures. The checkerboard needs more than the default 4,096 candidates, so this audit uses 16,384 candidates and 1,024 markers. [Acceptance conditions](gpu-steady-optimization-plan.md) and [audit procedure](../tools/gpu_quality/audit.md)
 
 ### Measurement procedure
 
-1. Record the hardware, OS, CUDA, driver, compiler, OpenCV, power mode, and clocks. Also record the CPU core configuration, the cores used for the measurement, and the ASLR state.
-2. Pin the CPU by core type. The Jetson used is the AGX Orin Developer Kit, with power mode MAXN. Specify with `--cpu-list` and keep a record in the results of which cores were used.
-3. Fix the input and the detector parameters. For the ArUco3 detection strategy settings, also record the effective value of the downscale factor `fxfy`. The default of `minMarkerLengthRatioOriginalImg` is 0.0, in which case no downscaling occurs even with `useAruco3Detection` enabled.
-4. Separate initialization and memory allocation from the measured interval, and record them as a separate item.
-5. Measure after warmup. Record the warmup and iteration counts in the results.
-6. Do not remove outliers; keep the aggregation method and the full distribution.
-7. Run the same condition multiple times as independent processes, and report the run-to-run variance.
-8. **Determine the crossover point, including the conditions where the CPU is faster.** Do not report only the favorable side.
-9. Check that the CPU reference measurements are not off by an order of magnitude. The reporter of [OpenCV Issue #27118](https://github.com/opencv/opencv/issues/27118) cites reference values whose environment and settings are unknown. These are not a pass criterion; treat them as a sanity check for questioning the measurement conditions.
+1. Record the source and binary identities, input hashes, hardware, OS, driver, CUDA, compiler and OpenCV build. Pin the toolchain container. Record power mode, clocks, shared workloads, CPU topology, affinity and ASLR state. Pin by core **type**. For example, CPU 0 is an efficiency core on Spark.
+2. Fix the prepared pixels, Dictionary, detector configuration, effective scale `fxfy`, resource budgets, numerical profile and input memory. OpenCV's default `minMarkerLengthRatioOriginalImg=0` makes `fxfy=1` even with ArUco3 enabled. The historical CPU baseline uses one thread. The steady studies also compare four threads.
+3. Check CPU compatibility and synthetic ground truth before timing. On a shared-memory GPU, capture `cudaMemGetInfo` and host memory/load alongside the run. Preserve allocation failures or device skips and confirm the intended device executed on retry. The steady studies retained unrelated workloads and the existing page cache. The historical cold-start and memory conditions are recorded in the [benchmark report](benchmark-report.md#reproducing-the-measurements).
+4. Record warmups, sample counts and independent process counts. Alternate implementations in the same session to resolve small effects. Report nearest-rank percentiles with process spread and retain all samples, including outliers. If ASLR is disabled with `setarch -R`, record it. Compute startup break-even only where the steady-state difference exceeds run-to-run variation.
+5. Report fast and slow cases, peak workspace and per-frame allocations. Record utilization and power where available. Keep profiler runs separate from primary timing, and identify the source revision for each result.
 
-The commands needed for reproduction are in the Reproducing the measurements sections of the [Benchmark Report](benchmark-report.md) and the [Accuracy Evaluation Results](accuracy-report.md). The design of the measurement harness is in the [Measurement Harness](../bench/benchmark_harness.md), and running the CPU reference is covered in the [CPU Reference Runner](../reference/reference_runner.md).
+A matching generator seed does not guarantee matching pixels across hosts. Historical checksums cover 28 benchmark images. Eighteen differed between aarch64 and x86_64 and six differed between the two compared aarch64 machines. Compare routes using the same prepared bytes on each host. [Reproducibility details](accuracy-report.md#corpus-reproducibility)
 
-### Conditions the evaluation must satisfy
-
-- The accuracy results reproduce stably under the target conditions.
-- Compute Sanitizer detects no memory errors and no races.
-- The same test corpus passes on all four machines.
-- The performance results state the measured interval and the synchronization points explicitly.
-- We can explain both the conditions where CUDA wins and the conditions where the CPU wins.
-
-For the synthetic corpus, the above are satisfied. Reproducibility on real images remains future work.
-
-### Deliverables
-
-- Machine-readable environment information and measurement results (`docs/measurements/`)
-- Aggregate tables and graphs
-- Images that differ from the CPU reference
-- Reproduction commands
-- The benchmark report and the accuracy evaluation results
-
-Large images and videos are not committed directly to the Git repository; we record their storage location and checksum in a manifest. CPU, GPU and Hybrid experiments keep generated measurement rows, logs, environment captures and machine-readable result summaries in local storage, while evaluation conditions, conclusions and reproduction sources remain in Git. A fresh checkout does not include historical generated output; see the [measurement storage policy](measurements/README.md) for audit and reproduction prerequisites.
+Commit conditions, source/input manifests, reproduction commands and concise findings. Keep generated rows, environment captures, differing images and logs in local storage. The [measurement policy](measurements/README.md) distinguishes inputs available in a fresh checkout from locally retained output.
 
 ## Goals
 
-- Produce the same metrics using annotations of a real-image dataset as ground truth.
-- Measure per-stage kernel time with CUDA events and record it separately from wall-clock.
-- Confirm the crossover point on real images. The boundary obtained on the synthetic corpus is dominated by contour point count, and it may move on real images.
-- Add scenes smaller than 640x480 and resolutions above 4K to the corpus, and check both inside and outside the boundary.
-- Measure detections per unit of power consumption on the machines where it can be obtained.
+- Reproduce per-scene quality and run memory, initialization, race and synchronization checks on the target devices.
+- Measure accuracy and crossover points with annotated deployment images, including resolutions below 640×480 and above 4K.
+- Add per-stage CUDA-event timing and measure detections per unit of energy on hardware with suitable power telemetry.
 
 ## Open questions
 
-- Whether to lock the GPU clock frequency during measurement or measure at the default. If we lock it, we need to check per model whether `nvidia-smi --lock-gpu-clocks` is possible.
-- Whether a comparison with the CPU route fixed to 1 thread is enough on its own. We have not compared against a multi-threaded CPU route.
-- The terms under which a real-image dataset can be obtained and distributed.
-- The acceptable corner coordinate error, and numeric criteria for the performance improvement rate.
-- The reason corpus images do not match across architectures.
-- The effect of the CUDA Toolkit version difference (11.4 on the Jetson, 13.0 on the other two machines) on the measurements. We have not isolated it.
-
-## See also
-
-- [Benchmark Report](benchmark-report.md)
-- [Accuracy Evaluation Results](accuracy-report.md)
-- [Roadmap](roadmap.md)
-- [Detection Pipeline Design](design/detector-pipeline.md)
-- [Memory Transfer Between Host and Device](design/memory-transfer.md)
-- [Measurement Harness](../bench/benchmark_harness.md)
-- [Accuracy Evaluation CLI](../tools/evaluate/main.md)
-- [ADR-0002: Fix the build infrastructure and target environment baseline](adr/0002-toolchain-and-target-baseline.md)
+- Which real-camera sequences and annotations are available under suitable distribution terms, and which application tolerances should govern corner error and speed?
+- How do changing-frame GPU throughput, toolkit versions and clock policies affect crossover points under deployment load?
+- What causes generated pixels to differ across build environments with the same seed?

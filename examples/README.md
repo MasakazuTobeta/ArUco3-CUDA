@@ -1,54 +1,37 @@
 # Samples
 
-Two small programs that together run the whole public API without needing a camera,
-an image library, or any file that is not produced here.
-
-Each one exists twice, in C++ and in Python. The two take the same options and
-print the same lines, and the tests compare their output, so neither can drift
-into being the one that is actually maintained.
-
-| Program | Needs a GPU | What it shows |
+| Program | Needs a GPU | What it does |
 | --- | --- | --- |
-| `generate_marker` | No | Turning a packed dictionary entry back into a picture |
-| `detect_image` | Yes | Sizing the workspace, uploading, detecting on a stream, and reading the results |
+| `generate_marker` | No | Render a built-in dictionary entry as an 8-bit grayscale PGM. |
+| `detect_image` | Yes | Upload a PGM, detect on a stream and print IDs, rotations and corners. |
 
-Nothing here depends on OpenCV, and the Python pair depends on nothing outside
-the standard library either. The library does not either, and a sample with a
-wider dependency than the thing it demonstrates teaches the wrong lesson about
-what is required.
+Both programs are available in C++ and Python with the same command-line options.
+The Python binding uses the standard library. Neither language requires OpenCV.
 
 ## Build
 
-The samples are built with the rest of the project by default, so there is nothing
-extra to do.
-
-```bash
-cmake --preset native && cmake --build --preset native
-# binaries in build/native/examples/
-```
-
-Pass `-DARUCO3CUDA_BUILD_EXAMPLES=OFF` to skip them. They default to off when this
-project is pulled into another one with `add_subdirectory`.
+Follow the [quick start](../README.md#detect-your-first-marker) to build the samples
+in `build/native/examples/`. Top-level builds include them by default.
+Set `ARUCO3CUDA_BUILD_EXAMPLES=OFF` to omit them.
 
 ### Building against an installed package
 
-This is the path a consumer takes, and it is worth running at least once, because it
-is the only form that exercises `find_package` and the exported target names.
+From the repository root after the quick start, install the library into a local
+prefix and build the standalone samples against it.
 
 ```bash
-cmake -S . -B build/install -DCMAKE_BUILD_TYPE=Release \
-  -DARUCO3CUDA_BUILD_REFERENCE=OFF -DARUCO3CUDA_BUILD_TESTS=OFF \
-  -DARUCO3CUDA_BUILD_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX=/your/prefix
-cmake --build build/install -j && cmake --install build/install
-
-cmake -S examples -B build/examples -DCMAKE_PREFIX_PATH=/your/prefix
+cmake --install build/native --prefix "$PWD/build/prefix"
+cmake -S examples -B build/examples -DCMAKE_PREFIX_PATH="$PWD/build/prefix"
 cmake --build build/examples
 ```
 
-`examples/CMakeLists.txt` is written to work both ways round, so the file in this
-directory is the same one CI builds standalone. It enables only the `CXX` language:
-the samples call the CUDA runtime but compile no device code, which is why a
-consumer does not need the CUDA language enabled in their own project.
+In a C++ application, use the exported targets. The consumer only needs to enable
+the CXX language in CMake.
+
+```cmake
+find_package(aruco3cuda REQUIRED)
+target_link_libraries(your_target PRIVATE aruco3cuda::core aruco3cuda::dictionary)
+```
 
 ## Run, in C++
 

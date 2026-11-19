@@ -1,12 +1,9 @@
 # ADR-0003: Adopt plan A (connected components and extreme point search) as the primary approach for quadrilateral candidate extraction
 
-- Status: Accepted
+- Status: Accepted for ordinary presets. Superseded for steady presets by [ADR-0004](0004-device-contours-for-cpu-quality.md).
 - Date: 2026-08-27
 
-The expanded CPU-quality audit has reopened this decision. See proposed
-[ADR-0004](0004-device-contours-for-cpu-quality.md) for the newly observed
-connected-marker hole contours and device-contour evaluation. The historical
-measurements below describe the original corpus, not the expanded quality gate.
+The measurements below describe the original component extractor on the historical corpus.
 
 ## Purpose
 

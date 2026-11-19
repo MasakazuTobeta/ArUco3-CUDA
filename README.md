@@ -2,161 +2,42 @@
 
 [![CI](https://github.com/MasakazuTobeta/ArUco3-CUDA/actions/workflows/ci.yml/badge.svg)](https://github.com/MasakazuTobeta/ArUco3-CUDA/actions/workflows/ci.yml)
 
-ArUco3-CUDA is a library that independently implements, in CUDA, the ArUco3 detection strategy found in OpenCV's `cv::aruco::ArucoDetector`. It processes an input image on the GPU all the way to marker IDs and corners, and returns the results while they remain on the device. No GPLv3 code from the official ArUco is copied or adapted ([Intellectual property and licensing policy](docs/ip-and-licensing.md)).
+Detect ArUco markers on the GPU using the ArUco3 detection strategy from OpenCV.
+Give the detector an 8-bit grayscale image in device or managed memory. It returns marker IDs,
+rotations and four corners in the original image coordinates. Results can stay on the GPU
+for the next stage or be downloaded to the host.
 
-> [!IMPORTANT]
-> The expanded GPU evaluation includes annotated synthetic scenes, external compatibility inputs and 16 real industrial photographs. The photographs return no markers under the tested settings; this measures background latency and output compatibility, not detection recall on real images. The [steady-state report](docs/gpu-steady-state-report.md) distinguishes the new contour route from historical GPU results. The optimized CPU implementation was also evaluated across six hosts.
+The CUDA library has C++, C and Python interfaces and supports 17 predefined dictionaries.
+An experimental host-only detector is available for applications with CPU input.
 
-## What it does
+## Detect your first marker
 
-- Detection runs entirely on the GPU, from preprocessing through subpixel corner refinement. `Detector` leaves the results on the device. Steady-state `detect_async()` remains asynchronous on the host; an owned completion event orders reuse across streams. Initialization, readback and layout changes synchronize as described in the [lifetime contract](src/core/detector.md).
-- The kernel launch sequence for one frame is folded into a CUDA Graph. An explicit-stream steady submission launches the captured graph and records completion; changing the stream or layout rebuilds the graph.
-- The workspace is allocated for the configured limits in `initialize()` and is not reallocated per frame. Memory depends on the selected candidate extractor, image size and resource limits; the historical component route measured 17.51 MB with ArUco3 enabled and 414.51 MB with it disabled. These figures do not describe the new contour route.
-- Detection results are cross-checked against OpenCV and synthetic ground truth. The new contour route recovers CPU-detectable markers missed by the historical component extractor; see the [expanded quality evaluation](docs/gpu-steady-state-report.md).
-- The historical component route passed automated tests and all four Compute Sanitizer tools on Spark, Orin, Thor and RTX 5070 Ti. The new steady route's separately recorded validation covers Spark, Orin and RTX 4090; earlier runs on other GPUs do not validate the new implementation.
+On a machine with an NVIDIA GPU, a compatible CUDA toolkit and C++ compiler, CMake 3.25+
+and Ninja, run these commands from the repository root. They build the samples without
+OpenCV, generate a marker and detect it. A [Docker environment](docs/design/docker-environment.md)
+is available for DGX Spark, Jetson AGX Orin, Jetson AGX Thor and RTX 5070 Ti.
 
-## Detection flow
-
-The input image is processed on the GPU through to IDs and corners. The design of each stage is in [Detection pipeline design](docs/design/detector-pipeline.md).
-
-```mermaid
-flowchart TD
-    A["Input image (8-bit grayscale on the device)"] --> B["Downscaling and adaptive thresholding"]
-    B --> C["Connected components and quadrilateral candidate extraction"]
-    C --> D["Candidate filtering and proximity merging"]
-    D --> E["Perspective transform and cell sampling"]
-    E --> F["Cell bit readout, border verification, and Dictionary matching"]
-    F --> G["Containment tree, identification suppression, and rotation cancellation"]
-    G --> H["Subpixel corner refinement and restoration to full scale"]
-    H --> I["IDs, corners, rotation (device-resident)"]
+```bash
+cmake --preset native -DARUCO3CUDA_BUILD_REFERENCE=OFF -DARUCO3CUDA_BUILD_TESTS=OFF
+cmake --build --preset native --parallel 4
+build/native/examples/generate_marker --id 42 --size 200 --margin 40 --output build/marker.pgm
+build/native/examples/detect_image --input build/marker.pgm
 ```
 
-Pose estimation is out of scope. The output corners are in the full-scale coordinates of the input image, so they can be passed directly to OpenCV's `solvePnP` and similar functions.
+Expect one detection with ID `42`. For Python examples, installation with CMake
+`find_package`, or help with a missed marker, see the [sample guide](examples/README.md).
 
-## Speed
+## Choose a detector
 
-### Steady GPU presets with expanded CPU-quality coverage
-
-The new contour route preserves CPU-detectable markers missed by the original
-GPU extractor. It combines exact threshold, pyramid, histogram, candidate-grid
-and contour optimizations, with explicit `dgx-spark-steady` and
-`jetson-orin-steady` presets. **Quality improvement costs latency and memory;
-the new GPU does not beat the old GPU or optimized CPU in every condition.**
-The [full report](docs/gpu-steady-state-report.md) includes both losses and gains.
-
-For the same 16 industrial photographs, ArUco3 enabled, the following values are
-median per-image p50 times over three processes (20 warm-ups, 200 samples each).
-All routes return zero detections. CPU times include host results; resident GPU
-times exclude result download, while GPU E2E includes pageable input and results.
-
-| Machine | OpenCV CPU 1t | Optimized CPU 1t | OpenCV CPU 4t | Optimized CPU 4t | New GPU resident | New GPU E2E |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| DGX Spark GB10 | 2.984 ms | 1.882 ms | 1.395 ms | 0.817 ms | 3.405 ms | 3.464 ms |
-| Jetson AGX Orin | 6.892 ms | 4.518 ms | 2.928 ms | 2.080 ms | 3.037 ms | 3.723 ms |
-
-On Orin, resident GPU beats both one-thread CPU routes on all 16 images, with
-median per-image speedups of **2.328x over OpenCV** and **1.524x over optimized
-CPU**. Four-thread optimized CPU wins 15 images. On Spark, which retained
-substantial unrelated GPU work, optimized CPU wins all 16. Old-default GPU
-resident medians are 2.794 ms and 1.542 ms respectively, faster than the new
-route on these negative images but insufficient in the expanded positive-marker
-quality gate. Speedups are medians of per-image ratios, not ratios of table medians.
-
-The full report separates equal-budget and old-default comparisons, disabled
-ArUco3, detected-marker/empty controls, kernel times, p95/p99, memory and
-reproduction conditions. It does not claim a universal hardware limit.
-
-### Historical GPU routes on synthetic images
-
-These results describe the original component/extrema candidate extractor.
-The expanded [quality audit](tools/gpu_quality/audit.md) subsequently found
-CPU-detectable markers it misses. They are retained as historical measurements;
-they do not establish the quality or speed of the explicit `*-steady` presets.
-
-These are end-to-end times measuring detection only. Image loading and checksums are not included in the measured region. 28 scenes x 3 routes x 4 machines are compared using the median of three independent processes ([Benchmark report](docs/benchmark-report.md)).
-
-Generated CPU, GPU and Hybrid measurement output is retained locally and excluded from version control. The paths below identify local records, which are absent from a fresh checkout. Reports and reproduction procedures remain available; see the [measurement storage policy](docs/measurements/README.md).
-
-In this subsection, `CPU` means the official, unmodified OpenCV CPU implementation. The experimental optimized CPU route is evaluated separately in the photographic comparison below.
-
-`CUDA-Resident` is the route that takes device-resident input and processes every stage on the GPU; this is the route the library provides.
-
-`Hybrid` is a **comparison route** that runs downscaling and adaptive thresholding on the GPU and everything from candidate extraction onward on the host. **It is not part of the public API.** It lives in `hybrid/` and requires OpenCV. It exists to cross-check the correctness of the GPU implementation against the CPU baseline, and it is not installed. It appears in the table to show where the move to the GPU pays off.
-
-| Machine | Official OpenCV (CPU) | Hybrid | CUDA-Resident | CUDA-Resident / OpenCV (1280x720, 4 markers) | Same (3840x2160) |
-| --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | 0.699 ms | 0.301 ms | 0.696 ms | 0.99 | 0.31 |
-| Jetson AGX Orin | 1.676 ms | 1.144 ms | 1.077 ms | 0.64 | 0.25 |
-| GeForce RTX 5070 Ti | 0.614 ms | 0.295 ms | 0.421 ms | 0.69 | 0.15 |
-| Jetson AGX Thor | 1.420 ms | 0.561 ms | 0.837 ms | 0.59 | 0.22 |
-
-The left three columns are the steady-state p50 for a scene with 4 markers placed in a 1280x720 image, taken as the median over three independent processes of the one-process, one-image measurement (200 iterations) used to measure startup cost (`docs/measurements/2026-08-29-*-startup.jsonl`, and `2026-08-31-jetson-thor-startup.jsonl`). The 1280x720 ratio column is those same three columns divided out. That measurement covers only the one 1280x720 scene, so the 3840x2160 column is taken from the 28-scene sweep instead (`docs/measurements/*-sweep.jsonl`, scene `clean_3840x2160_n4_s128`); at 3840x2160 every marker in the corpus falls below the ArUco3 detection lower bound, so all three routes return 0 detections there, and that column compares the cost of processing the frame rather than of decoding markers. Measuring the 1280x720 scene in the 28-scene sweep instead gives somewhat different values (for example, CUDA-Resident on DGX Spark comes out at 0.626 ms, a ratio of 0.89 rather than 0.99). **The GPU routes have large run-to-run variance, and differences of this magnitude arise between measurements.** Details are in the [Benchmark report](docs/benchmark-report.md). A ratio below 1 means the GPU is faster.
-
-**There are conditions under which the CPU wins.** **The CPU beats CUDA-Resident on small scenes with a low contour point count.** That is 5 of the 28 scenes on DGX Spark, 4 on GeForce RTX 5070 Ti, 1 on Jetson AGX Orin, and **none at all on Jetson AGX Thor**, where CUDA-Resident wins every scene. **Resolution alone does not decide it.** At the same 640x480, `noise_640x480` has many contour points, and on DGX Spark the GPU is 2.3x faster — 0.612 ms for CUDA-Resident against 1.406 ms for the CPU. Conversely, the 5 scenes on DGX Spark include one 1280x720 scene.
-
-That said, this applies when the route is fixed to `CUDA-Resident`. **On DGX Spark and GeForce RTX 5070 Ti, there is not a single scene out of 28 where the CPU beats `Hybrid`.** If the faster of the two can be chosen per scene, no scene remains where the CPU wins on these two machines. Only on Jetson AGX Orin is there one scene where the CPU beats both routes at once. Jetson AGX Thor needs no such choice: CUDA-Resident already wins all 28. On real images the contour point count may be higher than in the synthetic corpus, which would move this boundary. This has not been confirmed yet.
-
-What determines the boundary is neither resolution nor candidate count, but the contour point count after thresholding. The coefficient per 1e5 contour points is 2.48-5.35 ms for CPU, 2.54-5.48 ms for Hybrid, and 0.041-0.278 ms for CUDA-Resident — **Hybrid is nearly the same as CPU**, because everything from contour extraction onward runs on the host. Above about 20,000 contour points CUDA-Resident wins on all four machines, but that figure is a rough guide rather than a boundary: below it, native resolution decides instead, and CUDA-Resident already wins at 3840x2160 on DGX Spark and at 1920x1080 and above on GeForce RTX 5070 Ti even with almost no contour points. On Jetson AGX Thor it wins on all 28 scenes; on Jetson AGX Orin, on 27 of them.
-
-For short videos or processing a single image, startup cost dominates. When one process handles just one image (1280x720, 4 markers), the time until the first result is available is 3.3 ms for CPU on DGX Spark, against 171.0 ms for Hybrid and 174.0 ms for CUDA-Resident. Jetson AGX Orin is 6.1 / 57.6 / 69.8 ms, GeForce RTX 5070 Ti is 2.2 / 66.1 / 70.0 ms, and Jetson AGX Thor is 5.2 / 93.2 / 92.8 ms. On DGX Spark the GPU routes also have run-to-run variance an order of magnitude larger than the CPU route (0.6% for CPU against 17.7% for Hybrid and 14.1% for CUDA-Resident). That does not carry to the others in the same way: on Jetson AGX Orin only Hybrid is larger (3.5% against 0.4% for CPU, with CUDA-Resident at 0.5%), on GeForce RTX 5070 Ti both GPU routes are at or below the CPU route (0.4% and 0.0% against 0.5%), and on Jetson AGX Thor CUDA-Resident is the noisy one (16.5% against 1.5% for CPU, with Hybrid at 5.3%).
-
-### CPU routes on industrial photographs
-
-The experimental CPU detector is compared with official, unmodified OpenCV 4.14.0 on the same 16 factory, warehouse and equipment-room photographs across six hosts ([Six-host CPU report](docs/cpu-multihost-report.md)). Images preserve their aspect ratio, with a longest side of at most 1920 pixels. All 16 return zero detections with both implementations. The optimized route uses no CUDA or tracking and does not reuse previous-frame images or detections.
-
-The table uses ArUco3 enabled and `DICT_ARUCO_MIP_36h12`, with one or four threads pinned to distinct physical cores. Each image has three independent processes, 30 warm-ups and 200 measured calls per route/process. Times cover host grayscale input to host results; startup, decoding, setup and warm-up are excluded.
-
-| Machine / CPU | Threads | Official OpenCV (CPU) | Optimized CPU (this repository) | Median speedup over OpenCV |
-| --- | ---: | ---: | ---: | ---: |
-| DGX Spark GB10 | 1 | 3.011 ms | 1.895 ms | 1.577x |
-| DGX Spark GB10 | 4 | 1.423 ms | 0.829 ms | 1.674x |
-| Jetson AGX Orin | 1 | 6.901 ms | 4.518 ms | 1.539x |
-| Jetson AGX Orin | 4 | 2.938 ms | 2.086 ms | 1.389x |
-| Intel N97 | 1 | 5.003 ms | 3.314 ms | 1.509x |
-| Intel N97 | 4 | 2.475 ms | 1.696 ms | 1.443x |
-| Xeon w7-3565X | 1 | 3.757 ms | 2.509 ms | 1.481x |
-| Xeon w7-3565X | 4 | 1.414 ms | 1.056 ms | 1.328x |
-| Jetson AGX Thor | 1 | 5.075 ms | 3.116 ms | 1.629x |
-| Jetson AGX Thor | 4 | 2.218 ms | 1.332 ms | 1.623x |
-| Core i9-12900KS | 1 | 2.994 ms | 2.046 ms | 1.450x |
-| Core i9-12900KS | 4 | 1.206 ms | 0.829 ms | 1.442x |
-
-For each image, p50 is the median of three process p50 values. The time columns then take the median across the 16 images. The speedup column takes the median of the 16 per-image OpenCV/optimized ratios, so it is not the quotient of the two displayed time columns. A speedup above 1 means the optimized CPU route is faster. Per-image absolute p50/p95/p99 times are retained in local measurement output; raw logs and generated results from these CPU experiments are excluded from version control. The [report](docs/cpu-multihost-report.md) records the evaluation conditions and conclusions.
-
-The evaluation also includes ArUco3 disabled. Across both modes, both thread budgets and all six hosts, **all 384 image/configuration comparisons favor the optimized CPU route at aggregated p50, p95 and p99**, with matching detection results. Known four-marker controls also pass in every mode/thread combination. The median speedup depends on the CPU and settings: it ranges from 1.159x to 1.961x across all 24 configurations. The smallest individual-image aggregate margin is 1.041x on Xeon with ArUco3 disabled and four threads. Existing background services and power policies were retained; this sample does not guarantee a speedup on every deployment image. Full conditions, ArUco3-disabled results and independent validation are in the [report](docs/cpu-multihost-report.md).
-
-## Accuracy
-
-The following historical comparison measured official OpenCV (CPU), Hybrid and the original CUDA-Resident route on 91 synthetic scenes with 480 ground truth items, across 12 combinations of 3 routes x 4 machines ([Accuracy evaluation results](docs/accuracy-report.md)). The expanded [GPU quality audit](tools/gpu_quality/audit.md) explains why this corpus alone is insufficient to establish CPU-equivalent quality.
-
-| Metric | Result |
+| Build | When to use it |
 | --- | --- |
-| precision | 100% across all 12 combinations. 0 false positives, 0 ID errors |
-| recall (whole corpus) | 18.33% (88 of 480 ground truth items) |
-| recall (at or above the detection lower bound) | 94.44% (85 of 90 ground truth items) |
-| rotation | Matches ground truth for all 88 detections (85 of them at or above the bound) |
-| corner RMSE | CPU 0.5184 px (aarch64) / 0.5042 px (x86_64), CUDA 0.4806 px / 0.4653 px |
+| `dgx-spark-steady` or `jetson-orin-steady` | GPU input on Spark or Orin. Ordered contours recover markers whose borders connect to dark background lines. The expanded quality evaluation uses these presets. |
+| `native` and ordinary GPU presets | Run the original connected-component detector. It uses less workspace but can miss markers in those connected contours. |
+| `cpu/standalone` | CPU input and host results. The optimized detector uses OpenCV 4.14 and processes each frame independently. It builds without CUDA. |
 
-By design, ArUco3 does not detect markers whose side length after downscaling falls below a lower bound. The corpus deliberately includes sizes below this bound, so the overall recall of 18.33% is a figure dominated by that strategic lower bound. The lower bound for each resolution is in [Accuracy evaluation results](docs/accuracy-report.md). The 5 misses break down as 3 combined degradation, 1 occlusion, and 1 border clipping; rotation, projection, blur, noise, and illumination differences each account for 0 on their own.
-
-The differences from the OpenCV CPU implementation are as follows. The Hybrid route matches on 91 of 91 images (maximum difference 0.000 px). The CUDA route matches on 90 of 91 images; the single difference is 3.804 px on a 640x480 image with occlusion. For that one image, CUDA is in fact closer to the ground truth (CPU 3.6351 px, CUDA 1.0936 px). The difference originates in how the corners are estimated: CUDA uses extreme point search, while OpenCV uses polygonal approximation of the contour.
-
-## Target environments
-
-| Machine | Host architecture | GPU type | Compute Capability | CUDA |
-| --- | --- | --- | --- | --- |
-| DGX Spark GB10 | aarch64 | Integrated | 12.1 | 13.0 |
-| Jetson AGX Orin | aarch64 | Integrated | 8.7 | 11.4 |
-| Jetson AGX Thor | aarch64 | Integrated | 11.0 | 13.0 |
-| GeForce RTX 5070 Ti | x86_64 | Discrete | 12.0 | 13.0 |
-
-On the two machines with integrated GPUs, the host and device share the same physical memory, so transfer costs differ from those of a discrete GPU. Adding one machine with a discrete GPU separates results specific to integrated GPUs from results that hold generally. Jetson support targets the Orin family. Support for Nano, Xavier, and Thor is undetermined.
-
-## Building and running
-
-### Steady GPU implementation
-
-With the pinned OpenCV development environment, select the evaluated preset:
+To build the evaluated GPU configuration in the pinned development environment, select
+the preset for your machine. The reported runs used limits of 16,384 candidates and
+1,024 markers, set at runtime. [Configuration and measurement conditions](docs/gpu-steady-state-report.md#measurement-conditions)
 
 ```bash
 cmake --preset dgx-spark-steady -DOpenCV_DIR=/opt/opencv/lib/cmake/opencv4
@@ -164,224 +45,46 @@ cmake --build --preset dgx-spark-steady
 ctest --preset dgx-spark-steady --output-on-failure
 ```
 
-Use `jetson-orin-steady` on Orin. These presets share the algorithm and select
-different explicit OpenCV resize descriptors. Revalidate the descriptor when
-changing OpenCV's HAL/compiler build. Ordinary presets retain the historical
-component extractor. For a core-only build without OpenCV, override both
-`ARUCO3CUDA_BUILD_REFERENCE=OFF` and `ARUCO3CUDA_BUILD_CPU_EXPERIMENT=OFF`.
-
-The expanded audit and benchmark set `DetectorConfig::max_candidates_ = 16384`
-and `max_markers_ = 1024` before initialization; the CLI equivalents are
-`--max-candidates 16384 --max-markers 1024`. These explicit limits do not change
-the default candidate budget. Overflow is reported and must not be accepted as
-a valid partial detection result. See the [evaluation report](docs/gpu-steady-state-report.md)
-and [benchmark runner](tools/gpu_quality/steady_benchmark.md) for reproduction.
-
-### Experimental CPU implementation
-
-The repository includes a host-only detector under
-[`cpu/`](cpu/cpu_detector.md). Its default route retains OpenCV's contour-based
-detection rules, while reusing workspaces, sharing threshold calculations,
-packing dictionary comparisons, precomputing exact-word matches, filtering
-contours before allocation, and building demanded current-frame pyramid tiles.
-No tracking or previous-frame detections are used. An independent-frame video
-benchmark also compares persistent workers with intra-frame parallelism.
-Algorithm-changing experiments are explicit options. This is an experimental
-target and is not part of the installed CUDA API.
-
-On DGX Spark, the primary 48-scene subset with detected markers shows median
-speedups over pinned OpenCV of 2.45x with one thread and 2.43x with four. A final
-44-scene confirmation preserves the advantage. The report below records source
-stages, exact-output validation, video throughput, memory use and conditions
-where OpenCV or the previous CPU route remains faster.
-
-A separate [six-host real-background evaluation](docs/cpu-multihost-report.md)
-uses 16 factory/warehouse photographs. The Speed section above compares official
-OpenCV and the optimized CPU implementation; the report includes both ArUco3
-modes, per-image latencies, exact-output checks and measurement limitations.
-
-Build it with OpenCV 4.14, GoogleTest and Python 3, without a CUDA toolkit or GPU:
+To try the optimized CPU detector alongside official OpenCV, build the standalone benchmark.
+The last command generates sample images and runs both detectors. [CPU detector and tuning options](cpu/cpu_detector.md)
 
 ```bash
-cmake -S cpu/standalone -B build/cpu-opt -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/cpu-opt -j
-ctest --test-dir build/cpu-opt --output-on-failure --schedule-random -j 4
-build/cpu-opt/cpu/aruco3cuda_cpu_benchmark --input-dir data/cpu-experiment \
-  --generate --variants opencv,optimized --iterations 200 --warmup 30
+cmake -S cpu/standalone -B build/cpu -G Ninja -DCMAKE_BUILD_TYPE=Release -DARUCO3CUDA_BUILD_TESTS=OFF
+cmake --build build/cpu --target aruco3cuda_cpu_benchmark --parallel 4
+build/cpu/cpu/aruco3cuda_cpu_benchmark --input-dir build/cpu-scenes --generate \
+  --variants opencv,optimized --iterations 2 --warmup 1
 ```
 
-`ARUCO3CPU_NATIVE=ON` explicitly tunes the experimental library for the build
-host; it is off by default. The regular CUDA build can include the experiment
-with `ARUCO3CUDA_BUILD_CPU_EXPERIMENT=ON`. See the
-[CPU experiment design and validation plan](docs/design/cpu-optimization.md)
-and [CPU steady-state report](docs/cpu-steady-state-report.md) for comparison conditions,
-measurements, and limitations.
+## Performance and detection quality
 
-Because the same procedure is used on all four machines, builds and measurements are performed in a container. Choose one of the profile names `dgx-spark`, `jetson-orin`, `jetson-thor`, or `rtx-blackwell`.
+Detector-call latency in **milliseconds** on 16 industrial photographs with ArUco3 enabled.
+Each process ran 20 warm-ups and 200 timed detections on each still image. The table gives
+the median across images of their three-process median p50. All routes returned zero markers.
 
-| Machine | docker profile | CMake preset | GPU architecture |
-| --- | --- | --- | --- |
-| DGX Spark GB10 | `dgx-spark` | `dgx-spark` | `sm_121` |
-| Jetson AGX Orin | `jetson-orin` | `jetson-orin` | `sm_87` |
-| Jetson AGX Thor | `jetson-thor` | `jetson-thor` | `sm_110` |
-| GeForce RTX 5070 Ti | `rtx-blackwell` | `rtx-blackwell` | `sm_120` |
+| Machine | OpenCV CPU (1T) | Optimized CPU (1T) | OpenCV CPU (4T) | Optimized CPU (4T) | Steady GPU (device) | Steady GPU (host) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| DGX Spark GB10 | 2.984 | 1.882 | 1.395 | **0.817** | 3.405 | 3.464 |
+| Jetson AGX Orin | 6.892 | 4.518 | 2.928 | **2.080** | 3.037 | 3.723 |
 
-```bash
-PROFILE=dgx-spark   # or jetson-orin, jetson-thor, rtx-blackwell
-cp docker/.env.example docker/.env
-docker compose -f docker/compose.yaml build "$PROFILE"
-docker compose -f docker/compose.yaml run --rm "$PROFILE" verify-environment.sh
-docker compose -f docker/compose.yaml run --rm "$PROFILE" bash -c '
-  cmake --preset native && cmake --build --preset native && ctest --preset native'
-```
+On Orin the device-resident GPU beat both single-thread CPU detectors on all 16 images.
+The four-thread optimized CPU beat it on 15. Spark had substantial concurrent GPU work.
+CPU times include host results. Device-to-device GPU times include stream synchronization.
+Host-to-host GPU times also include upload and download. These timings predate the border-margin
+correction. GPU throughput on changing video frames has yet to be measured.
+[GPU latency, memory and measurement protocol](docs/gpu-steady-state-report.md)
 
-The `native` preset detects the architecture of the machine it runs on automatically. To cover all four machines with a single binary, use the `portability` preset, which generates all four of `sm_87`, `sm_110`, `sm_120`, and `sm_121`. That binary runs on all four, but it can only be built where the CUDA Toolkit supports every listed architecture: the Jetson AGX Orin is on CUDA 11.4, which stops at `sm_87` and rejects the preset at configure time, so use `native` or `jetson-orin` there. For Compute Sanitizer, configure the `sanitizer` preset and then run `ctest -L sanitizer`. See [Docker environment design](docs/design/docker-environment.md) for details.
-
-## Usage
-
-### Installation
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DARUCO3CUDA_BUILD_REFERENCE=OFF -DARUCO3CUDA_BUILD_TESTS=OFF \
-  -DCMAKE_INSTALL_PREFIX=/your/prefix
-cmake --build build -j && cmake --install build
-```
-
-`ARUCO3CUDA_BUILD_REFERENCE=OFF` removes the dependency on OpenCV. The library itself does not require OpenCV.
-
-Consumers reference it via `find_package`.
-
-```cmake
-find_package(aruco3cuda REQUIRED)
-target_link_libraries(your_target PRIVATE aruco3cuda::core aruco3cuda::dictionary)
-```
-
-### Example
-
-The public API is in `include/aruco3cuda/`. The input is 8-bit grayscale in device or managed space, and ownership stays with the caller.
-
-```cpp
-#include <cuda_runtime_api.h>
-
-#include <string>
-
-#include "aruco3cuda/detector.hpp"
-
-using namespace aruco3cuda;
-
-const DictionaryTable* dictionary = find_builtin_dictionary("DICT_ARUCO_MIP_36h12");
-
-DetectorConfig config;         // defaults: ArUco3 enabled, subpixel corner refinement on
-config.max_width_px_ = 1280;   // the workspace is sized for the worst case from these limits
-config.max_height_px_ = 720;
-
-Detector detector;
-std::string message;
-if (detector.initialize(*dictionary, config, &message) != Status::kOk) {
-    // message carries the reason
-}
-
-ImageViewU8 image;
-image.data_ = device_gray;     // memory obtained from cudaMalloc / cudaMallocPitch
-image.width_px_ = 1280;
-image.height_px_ = 720;
-image.pitch_bytes_ = pitch_bytes;
-image.space_ = MemorySpace::kDevice;
-
-cudaStream_t stream = nullptr;
-cudaStreamCreate(&stream);     // passing an explicit stream folds the launch sequence into a CUDA Graph
-
-detector.detect_async(image, stream, &message);
-
-// If the next stage is on the same device, read the results without going back to the host.
-DeviceDetections on_device;
-detector.device_detections(&on_device);
-
-// Receive on the host. In steady state this is the only synchronizing call.
-HostDetections result;
-detector.download(&result, stream, &message);
-// result.ids_[i] and result.corners_[i * 8 .. i * 8 + 7] (x0, y0, ... x3, y3)
-```
-
-Only two configuration combinations are accepted: ArUco3 enabled with subpixel corner refinement, or ArUco3 disabled without refinement. `initialize()` rejects the other two. The list of defaults and the meaning of each field are in `include/aruco3cuda/config.hpp` and [Public API](docs/design/public-api.md).
-
-### Samples
-
-`examples/` holds two programs that run the whole API without a camera, an image library, or any file not produced on the spot. `generate_marker` renders a marker from the built-in dictionary and writes it as a PGM; `detect_image` reads it back and prints the ids and corners.
-
-```bash
-cd build/native/examples
-./generate_marker --id 42 --size 200 --margin 40 --output marker.pgm
-./detect_image --input marker.pgm
-```
-
-```
-detections   : 1 (accepted 1)
-  [0] id=42 rotation=2 corners= (39.59, 39.59) (239.41, 39.59) (239.42, 239.42) (39.59, 239.41)
-```
-
-They are built with the rest of the project by default. `examples/CMakeLists.txt` also configures standalone against an installed package, which is the form that exercises `find_package`. See [Samples](examples/README.md).
-
-Each sample exists twice, in C++ and in Python, taking the same options and printing the same lines.
-
-### Python
-
-`libaruco3cuda_c.so` exposes the detector through a C ABI, and the `aruco3cuda` package drives it with `ctypes`. Nothing is compiled for Python, so the same build works with any CPython 3, and the package depends on nothing outside the standard library.
-
-```bash
-export PYTHONPATH=build/native/python
-python3 -c "import aruco3cuda; print(aruco3cuda.version())"
-```
-
-```python
-import aruco3cuda
-
-config = aruco3cuda.Config(max_width_px=280, max_height_px=280)
-with aruco3cuda.Detector() as detector:
-    detector.initialize("DICT_ARUCO_MIP_36h12", config)
-    with aruco3cuda.DeviceImage.from_host(pixels, 280, 280) as image:
-        with aruco3cuda.Stream() as stream:
-            detector.detect(image, stream)
-            for detection in detector.download(stream):
-                print(detection.id, detection.corners)
-```
-
-`detect()` takes device-resident input: a `DeviceImage`, or anything exposing `__cuda_array_interface__`, which is how a CuPy or PyTorch array is handed over without a copy. A host buffer is rejected with a message naming `DeviceImage.from_host`, so that the transfer is visible where it happens rather than hidden inside every frame. See [C ABI and Python binding](docs/design/c-abi-and-python.md).
-
-## Limitations
-
-- GPU accuracy and the CPU/GPU crossover were evaluated on synthetic images only. The experimental CPU route has also been measured on 16 real industrial photographs with zero configured detections, but real-image detection recall and the GPU crossover remain unmeasured.
-- Seventeen dictionaries are bundled: the sixteen `DICT_NxN_*` of OpenCV 4.x, and `DICT_ARUCO_MIP_36h12`. `DICT_ARUCO_ORIGINAL` is deliberately left out, because it contains markers that are unchanged by a 180 degree rotation, so their orientation cannot be recovered. The AprilTag families OpenCV lists alongside them are out of scope. `ARUCO_MIP_16h3` and `_25h7` exist only in the GPLv3 ArUco distribution and cannot be bundled ([Dictionary policy](docs/dictionaries.md)).
-- Pose estimation is out of scope.
-- Per-stage times are wall-clock and include host synchronization. Per-stage measurement using CUDA events has not been done.
-- A single `Detector` instance cannot be used from multiple threads at the same time.
-- Even with the same seed, images in the synthetic corpus differ across build environments. Per-scene hashes were kept only for the 28 benchmark scenes: 18 of those differ between aarch64 and x86_64, and 6 differ between the two aarch64 machines. How many of the 91 scenes differ, and by how much, was not recorded. This affects only comparisons across machines.
+- **CPU across six hosts.** With ArUco3 enabled, median per-image speedups over official OpenCV ranged from 1.45× to 1.63× with one thread and 1.33× to 1.67× with four. [Six-host comparison and absolute timings](docs/cpu-multihost-report.md#current-state)
+- **Accuracy on annotated scenes.** On Spark and Orin, the corrected steady GPU and CPU each detected 113 of 136 markers with ArUco3 enabled and 124 with it disabled, with zero false positives. Recall on real photographs with visible markers remains unmeasured. [Quality evaluation](docs/gpu-steady-state-report.md#current-state)
 
 ## Documentation
 
-- [Project overview](docs/project-overview.md) / [Architecture](docs/architecture.md) / [Roadmap](docs/roadmap.md)
-- [Samples](examples/README.md)
-- [Detection pipeline design](docs/design/detector-pipeline.md) / [Public API](docs/design/public-api.md) / [C ABI and Python binding](docs/design/c-abi-and-python.md) / [Memory handoff between host and device](docs/design/memory-transfer.md) / [Docker environment design](docs/design/docker-environment.md)
-- [Evaluation plan](docs/evaluation-plan.md) / [Benchmark report](docs/benchmark-report.md) / [Accuracy evaluation results](docs/accuracy-report.md)
-- [CPU steady-state report](docs/cpu-steady-state-report.md) / [Six-host CPU benchmark report](docs/cpu-multihost-report.md)
-- [CPU adversarial review and regression checks](docs/cpu-adversarial-review.md)
-- [Dictionary policy](docs/dictionaries.md) / [Implementation plan](docs/implementation-plan.md) / [Glossary](docs/terminology.md)
-- [ADR-0001: Implement first in an independent repository](docs/adr/0001-independent-implementation.md) / [ADR-0002: Fix the build infrastructure and target environment baseline](docs/adr/0002-toolchain-and-target-baseline.md) / [ADR-0003: Adopt approach A as the primary plan for quadrilateral candidate extraction](docs/adr/0003-candidate-extraction-approach.md)
-- [Intellectual property and licensing policy](docs/ip-and-licensing.md) / [Code provenance record](docs/code-provenance.md) / [Contribution guidelines](CONTRIBUTING.md)
+- [Integrate the C++ API](docs/design/public-api.md) · [C ABI and Python](docs/design/c-abi-and-python.md) · [Stream and buffer lifetimes](src/core/detector.md)
+- [Project guide and report index](docs/project-overview.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
-If the approach is confirmed to be effective, a proposal to OpenCV will be considered (see: OpenCV Issue #27118).
+## License and trademarks
 
-## License
+[Apache License 2.0](LICENSE) · [Third-party notices](NOTICE) · [Licensing and provenance policy](docs/ip-and-licensing.md)
 
-This project is provided under the [Apache License 2.0](LICENSE). No GPLv3 code from the official ArUco is copied or adapted. See [Intellectual property and licensing policy](docs/ip-and-licensing.md) for details.
-
-Third-party copyright notices are in [NOTICE](NOTICE). OpenCV 4.x has different license headers per file, and the `imgproc` files whose behavior this project mirrors are 3-clause BSD.
-
-The implementation is based solely on the ArUco3 paper and Apache-2.0 OpenCV 4.x. The predefined dictionaries are not extracted from the GPLv3 official ArUco distribution; the authoritative source is OpenCV 4.x data at a pinned version and commit.
-
-## Trademarks
-
-`ArUco` is the name of a marker scheme published by a research group at the Universidad de Córdoba. This project uses the name solely to indicate the compatibility target and the technical scheme, and is **not affiliated with, endorsed by, or recommended by the Universidad de Córdoba, the official ArUco library, or OpenCV.**
-
-All other trademarks belong to their respective owners. See [Intellectual property and licensing policy](docs/ip-and-licensing.md) for details.
+ArUco names the marker scheme published by researchers at the Universidad de Córdoba.
+This independent project has no affiliation with or endorsement from the university,
+the official ArUco library or OpenCV.

@@ -24,41 +24,39 @@ or result reuse is introduced. GPUs are not used in this experiment.
 
 ## Current state
 
-Generated measurement files referenced by local paths below are not version-controlled.
-The report retains the results and conditions; raw outputs remain in local storage.
+Both CPU implementations returned zero detections on all 16 photographs.
+The optimized detector had lower p50, p95 and p99 latency in **all 384**
+image/configuration comparisons (16 photographs × 6 hosts × 2 thread counts ×
+2 ArUco3 settings). It also won all 1,152 individual-process p50 comparisons,
+with a minimum speedup of 1.037x.
 
-All six hosts completed the planned measurements. **All 384 image/configuration
-comparisons beat OpenCV at aggregated p50, p95 and p99.** Each image/configuration
-has three independent processes; all 1,152 individual-process p50 comparisons
-also beat OpenCV. The minimum individual-process speedup is 1.037x.
+The time columns are in milliseconds with ArUco3 enabled. Each image contributes
+the median of three process p50s. Latency is the median of those 16 image values.
+Each speedup is the median of the 16 per-image OpenCV/optimized ratios.
 
-The table gives the median of 16 image speedup ratios for each condition.
-Each ratio is OpenCV p50 divided by optimized p50, after taking the median of
-three process p50 values for that image. Values above one favor this detector.
-These are neither pooled timings nor a guarantee for every image.
+| Machine | Threads | Official OpenCV CPU (ms) | Optimized CPU (ms) | Speedup, ArUco3 on | Speedup, ArUco3 off |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| DGX Spark GB10 | 1 | 3.011 | 1.895 | 1.577x | 1.660x |
+| DGX Spark GB10 | 4 | 1.423 | 0.829 | 1.674x | 1.838x |
+| Jetson AGX Orin | 1 | 6.901 | 4.518 | 1.539x | 1.513x |
+| Jetson AGX Orin | 4 | 2.938 | 2.086 | 1.389x | 1.358x |
+| Intel N97 | 1 | 5.003 | 3.314 | 1.509x | 1.469x |
+| Intel N97 | 4 | 2.475 | 1.696 | 1.443x | 1.277x |
+| Xeon w7-3565X | 1 | 3.757 | 2.509 | 1.481x | 1.364x |
+| Xeon w7-3565X | 4 | 1.414 | 1.056 | 1.328x | 1.159x |
+| Jetson AGX Thor | 1 | 5.075 | 3.116 | 1.629x | 1.639x |
+| Jetson AGX Thor | 4 | 2.218 | 1.332 | 1.623x | 1.961x |
+| Core i9-12900KS | 1 | 2.994 | 2.046 | 1.450x | 1.356x |
+| Core i9-12900KS | 4 | 1.206 | 0.829 | 1.442x | 1.242x |
 
-| CPU / host suffix | ArUco3 on, 1 thread | ArUco3 on, 4 threads | ArUco3 off, 1 thread | ArUco3 off, 4 threads |
-| --- | ---: | ---: | ---: | ---: |
-| DGX Spark GB10 / 20.23 | 1.577x | 1.674x | 1.660x | 1.838x |
-| Jetson AGX Orin / 20.30 | 1.539x | 1.389x | 1.513x | 1.358x |
-| Intel N97 / 10.26 | 1.509x | 1.443x | 1.469x | 1.277x |
-| Xeon w7-3565X / 20.41 | 1.481x | 1.328x | 1.364x | 1.159x |
-| Jetson AGX Thor / 20.20 | 1.629x | 1.623x | 1.639x | 1.961x |
-| Core i9-12900KS / 20.44 | 1.450x | 1.442x | 1.356x | 1.242x |
+Across the 24 configurations, the median speedup ranged from 1.159x to 1.961x
+(about 14–49% lower latency). The smallest per-image aggregate margin was
+1.041x on the Xeon with ArUco3 disabled and four threads, for
+`01_warehouse_racks.png`.
 
-Thus the earlier approximate 1.6–1.8x gain is specific to the Spark measurement;
-it does not transfer unchanged to every CPU. Across these configurations, median
-speedups range from 1.159x to 1.961x, corresponding to approximately 14–49% lower
-detector-call latency. The smallest per-image aggregate margin is **1.041x** on
-the Xeon, ArUco3 disabled with four threads, for `01_warehouse_racks.png`.
-That small observed margin is not a guarantee under different loads or inputs.
-
-All 16 photographs returned zero detections in every route/mode/thread/process.
-The four positive-control configurations on each host returned four markers.
-The benchmark's exact ID, oriented-corner and rejected-count comparisons passed.
-Checks cover the initial untimed and final retained results; intermediate timed
-outputs are not retained. These checks establish compatibility on this corpus,
-not general field recognition accuracy.
+Each host returned the four known markers in every positive-control configuration.
+The benchmark compared IDs, oriented corners and rejected counts before and after
+timing. It retained the final output of each timed series.
 
 ### Measurement conditions
 
@@ -81,12 +79,12 @@ No task builds overlap timings on the same host.
 
 | Host | CPU affinity: 1 thread / 4 threads | Build and retained environment |
 | --- | --- | --- |
-| 20.23 | 5 / 5,6,7,8 | GCC 13.3; existing Spark container; existing host services |
-| 20.30 | 8 / 8,9,10,11 | GCC 9.4; Orin container, MAXN; preexisting busy system service |
-| 10.26 | 0 / 0,1,2,3 | Portable GCC 13.3 x86 bundle; native Ubuntu 26.04.1 runtime |
-| 20.41 | 16 / 16,17,18,19 | Same x86 bundle; native Ubuntu 24.04 runtime; preexisting CPU workload |
-| 20.20 | 4 / 4,5,6,7 | GCC 13.3; Thor container, MAXN; preexisting simulation workload |
-| 20.44 | 0 / 0,2,4,6 | Same x86 detector/OpenCV bytes; Ubuntu 24.04 container; preexisting CPU workload |
+| DGX Spark GB10 / 20.23 | 5 / 5,6,7,8 | GCC 13.3; existing Spark container; existing host services |
+| Jetson AGX Orin / 20.30 | 8 / 8,9,10,11 | GCC 9.4; Orin container, MAXN; preexisting busy system service |
+| Intel N97 / 10.26 | 0 / 0,1,2,3 | Portable GCC 13.3 x86 bundle; native Ubuntu 26.04.1 runtime |
+| Xeon w7-3565X / 20.41 | 16 / 16,17,18,19 | Same x86 bundle; native Ubuntu 24.04 runtime; preexisting CPU workload |
+| Jetson AGX Thor / 20.20 | 4 / 4,5,6,7 | GCC 13.3; Thor container, MAXN; preexisting simulation workload |
+| Core i9-12900KS / 20.44 | 0 / 0,2,4,6 | Same x86 detector/OpenCV bytes; Ubuntu 24.04 container; preexisting CPU workload |
 
 All three x86 hosts use byte-identical benchmark binaries and seven actual
 resolved OpenCV libraries, independently checked by hash. OpenCV x86 has
