@@ -158,10 +158,16 @@ void benchmark(const cv::Mat& image, ac::Detector& cpu, cv::aruco::ArucoDetector
 // count change. Camera I/O, rendering and correctness assertions stay outside timing.
 void stream_benchmark(const cv::aruco::Dictionary& dictionary, cv::aruco::ArucoDetector& opencv,
                       ac::Detector& cpu, const Options& opts) {
-    if (opts.stream_ != "720p" && opts.stream_ != "1080p") {
-        throw std::invalid_argument("--stream expects 720p or 1080p");
+    cv::Size shape;
+    if (opts.stream_ == "720p") {
+        shape = cv::Size(1280, 720);
+    } else if (opts.stream_ == "1080p") {
+        shape = cv::Size(1920, 1080);
+    } else if (opts.stream_ == "2160p") {
+        shape = cv::Size(3840, 2160);
+    } else {
+        throw std::invalid_argument("--stream expects 720p, 1080p or 2160p");
     }
-    const cv::Size shape = opts.stream_ == "720p" ? cv::Size(1280, 720) : cv::Size(1920, 1080);
     std::vector<cv::Mat> frames;
     constexpr int counts[] = {0, 1, 4, 12};
     cv::Mat marker;

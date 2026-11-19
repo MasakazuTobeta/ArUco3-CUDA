@@ -740,9 +740,16 @@ bool measure_hybrid(const std::string& image_path, const BenchmarkConfig& config
         return false;
     }
     const auto upload = [&]() {
-        return device.upload(image.data, image.cols, image.rows,
-                             static_cast<std::size_t>(image.step),
-                             &message) == aruco3cuda::Status::kOk;
+        if (device.upload(image.data, image.cols, image.rows, static_cast<std::size_t>(image.step),
+                          &message) != aruco3cuda::Status::kOk) {
+            return false;
+        }
+        const cudaError_t completed = cudaStreamSynchronize(nullptr);
+        if (completed != cudaSuccess) {
+            message = std::string("input upload: ") + cudaGetErrorString(completed);
+            return false;
+        }
+        return true;
     };
     if (!upload()) {
         *out_error = message;
@@ -933,8 +940,20 @@ bool measure_cuda(const std::string& image_path, const BenchmarkConfig& config,
     }
 
     const auto upload = [&]() {
-        return device.upload(source, image.cols, image.rows, source_pitch, &message) ==
-               aruco3cuda::Status::kOk;
+        if (device.upload(source, image.cols, image.rows, source_pitch, &message) !=
+            aruco3cuda::Status::kOk) {
+            return false;
+        }
+        // Pageable copies can return after staging while DMA is still in flight.
+        // The detector runs on a nonblocking stream, so finish the default-stream copy here.
+        if (resident || config.memory_mode_ == MemoryMode::kHostPageable) {
+            const cudaError_t completed = cudaStreamSynchronize(nullptr);
+            if (completed != cudaSuccess) {
+                message = std::string("input upload: ") + cudaGetErrorString(completed);
+                return false;
+            }
+        }
+        return true;
     };
     if (!upload()) {
         *out_error = message;

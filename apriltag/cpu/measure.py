@@ -26,6 +26,8 @@ def main():
     parser.add_argument("photos", type=Path, help="directory with the 16 prepared industrial PNGs")
     parser.add_argument("output", type=Path, help="new local output directory")
     parser.add_argument("--cores", required=True, help="four distinct physical cores, e.g. 5,6,7,8")
+    parser.add_argument("--resolutions", nargs="+", choices=["720p", "1080p", "2160p"],
+                        default=["720p", "1080p"])
     args = parser.parse_args()
     cores = list(map(int, args.cores.split(",")))
     if len(cores) != 4 or len(set(cores)) != 4 or not set(cores) <= os.sched_getaffinity(0):
@@ -50,10 +52,10 @@ def main():
     hashes = {str(path): sha256(path) for path in [binary, *dependencies]}
     args.output.mkdir(parents=True, exist_ok=False)
     environment = {"platform": platform.platform(), "cores": cores, "binary_hashes": hashes,
-                   "input_hashes": input_hashes}
+                   "input_hashes": input_hashes, "resolutions": args.resolutions}
     (args.output / "environment.json").write_text(json.dumps(environment, indent=2))
     for group in [cores[:1], cores]:
-        for resolution in ["720p", "1080p"]:
+        for resolution in args.resolutions:
             for rep in [1, 2, 3]:
                 destination = args.output / f"stream-{len(group)}t-{resolution}-{rep}.csv"
                 run(binary, destination, group, ["--stream", resolution, "--warmup", "16",
