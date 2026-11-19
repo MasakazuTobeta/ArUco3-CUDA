@@ -7,6 +7,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include "aruco3cuda/apriltag/gpu/detector.hpp"
 #include "aruco3cuda/apriltag_dictionary.hpp"
 #include "pgm.hpp"
@@ -58,6 +59,9 @@ int main(int argc, char** argv) {
             if (width != image.width_px_ || height != image.height_px_) {
                 width = image.width_px_;
                 height = image.height_px_;
+                // Layout changes discard the old image and workspace before allocating either.
+                detector.reset();
+                frame.reset();
                 frame = std::make_unique<DeviceFrame>(width, height);
                 detector = std::make_unique<aruco3cuda::apriltag_gpu::Detector>(*family, width,
                                                                                 height, cfg);
@@ -65,7 +69,13 @@ int main(int argc, char** argv) {
             check(cudaMemcpy2D(frame->data_, frame->pitch_, image.pixels_.data(), width, width,
                                height, cudaMemcpyHostToDevice));
             const auto tags = detector->detect(frame->data_, frame->pitch_, nullptr);
-            std::cout << "image," << argv[i] << '\n';
+            const std::string_view path(argv[i]);
+            std::cout << "image,";
+            if (path.find_first_of(",\"\r\n") == std::string_view::npos)
+                std::cout << path;
+            else
+                std::cout << std::quoted(path, '"', '"');
+            std::cout << '\n';
             for (const auto& tag : tags) {
                 std::cout << "gpu_detection," << tag.id_;
                 for (float value : tag.corners_)
@@ -73,6 +83,8 @@ int main(int argc, char** argv) {
                 std::cout << '\n';
             }
         }
+        if (!std::cout.flush())
+            throw std::runtime_error("failed to write AprilTag detection output");
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
         return 1;

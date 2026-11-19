@@ -35,6 +35,12 @@ if(ARUCO3_APRILTAG_CPU_COMPARE)
   target_link_libraries(apriltag_cpu_compare PRIVATE aruco3_apriltag_cpu ${OpenCV_LIBS})
   enable_testing()
   add_test(NAME apriltag_cpu_compare COMMAND apriltag_cpu_compare --check)
+  add_test(NAME apriltag_cpu_compare.parallel COMMAND apriltag_cpu_compare --check --threads 4)
+  find_package(Python3 QUIET COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME apriltag_cpu_compare.observations COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test_observe.py" $<TARGET_FILE:apriltag_cpu_compare>)
+  endif()
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)

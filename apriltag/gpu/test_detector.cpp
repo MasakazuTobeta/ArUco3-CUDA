@@ -127,6 +127,48 @@ void small_tag_recovery(const aruco3cuda::DictionaryTable& family) {
     auto tags = cropped.detect(roi.device_, roi.pitch_, nullptr);
     expect(tags.size() == 1 && tags[0].id_ == 17, "small ROI needs no coarse trigger");
 }
+void stream_subviews(const aruco3cuda::DictionaryTable& family) {
+    struct Stream {
+        cudaStream_t value_ = nullptr;
+        Stream() { check(cudaStreamCreateWithFlags(&value_, cudaStreamNonBlocking)); }
+        ~Stream() { cudaStreamDestroy(value_); }
+    } streams[2];
+    constexpr int width = 139, height = 121, x0 = 15, y0 = 13;
+    Frame parent(329, 173);
+    Config cfg;
+    cfg.decimate_ = 1;
+    Detector detector(family, width, height, cfg);
+    std::array<float, 8> expected{};
+    for (int pass = 0; pass < 4; ++pass) {
+        const auto stream = streams[(pass + pass / 2) % 2].value_;
+        // Alternate poisoned surroundings and tag/blank contents at the same pitched subview.
+        std::fill(parent.pixels_.begin(), parent.pixels_.end(), pass < 2 ? 0 : 0x9d);
+        for (int y = 0; y < height; ++y)
+            std::fill_n(parent.pixels_.begin() + (y + y0) * parent.width_ + x0, width, 255);
+        if (pass % 2 == 0)
+            parent.draw(family, 17, 0, x0 + 1, y0 + 20, 72, 72);
+        check(cudaMemcpy2DAsync(parent.device_, parent.pitch_, parent.pixels_.data(), parent.width_,
+                                parent.width_, parent.height_, cudaMemcpyHostToDevice, stream));
+        const auto tags =
+                detector.detect(parent.device_ + y0 * parent.pitch_ + x0, parent.pitch_, stream);
+        check(cudaStreamQuery(stream));
+        if (pass % 2 == 0) {
+            expect(tags.size() == 1 && tags[0].id_ == 17,
+                   "unaligned subview with one-pixel margin");
+            if (pass == 0) {
+                expected = tags[0].corners_;
+                const float truth[] = {.5F, 19.5F, 72.5F, 19.5F, 72.5F, 91.5F, .5F, 91.5F};
+                for (int j = 0; j < 8; ++j)
+                    expect(std::abs(expected[j] - truth[j]) < 1.1F, "subview-local corners");
+            } else
+                expect(tags[0].corners_ == expected,
+                       "corner coordinates depend on subview exterior");
+        } else {
+            expect(tags.empty(), "tag reappeared on blank subview");
+        }
+    }
+}
+
 void crowded_texture(const aruco3cuda::DictionaryTable& family) {
     Frame image;
     Config cfg;
@@ -240,6 +282,7 @@ int main() {
                           "DICT_APRILTAG_36h11"})
             exercise(name);
         const auto& family = *aruco3cuda::find_apriltag_dictionary("DICT_APRILTAG_36h11");
+        stream_subviews(family);
         crowded_texture(family);
         partial_border(family);
         small_tag_recovery(family);

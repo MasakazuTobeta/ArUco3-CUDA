@@ -112,7 +112,9 @@ active on Spark. Its 1080p four-thread candidate runs ranged from 92 to 146 FPS.
 
 Configure with `-DARUCO3_APRILTAG_CPU_COMPARE=ON` in the pinned OpenCV 4.14
 environment and rebuild. The tests cover every family, rotations, error correction,
-strided images, tiny images, a missing border and malformed inputs.
+strided images, tiny images, a missing border and malformed inputs. At decimations
+1–4 they also check oriented corners against the printed square on one and four
+workers. Each observation row records the SHA-256 of the scored manifest.
 
 ```sh
 ctest --test-dir build/april-host --output-on-failure

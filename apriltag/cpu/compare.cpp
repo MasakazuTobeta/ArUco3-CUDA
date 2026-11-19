@@ -239,6 +239,12 @@ void validate(const Family& family, int threads, int decimate) {
     cv::Mat backing(320, 522, CV_8UC1, cv::Scalar(71));
     cv::Mat image = backing(cv::Rect(3, 3, 512, 300));
     constexpr int kX = 57, kY = 90, kSize = 100;
+    // Pixel centers are integers. Each rendered outer edge lies half a pixel
+    // outside its first or last black pixel, independent of quad decimation.
+    const std::array<cv::Point2d, 4> truth = {{{kX - 0.5, kY - 0.5},
+                                               {kX + kSize - 0.5, kY - 0.5},
+                                               {kX + kSize - 0.5, kY + kSize - 0.5},
+                                               {kX - 0.5, kY + kSize - 0.5}}};
     for (const int id : {0, dictionary.bytesList.rows - 1}) {
         cv::Mat marker;
         cv::aruco::generateImageMarker(dictionary, id, kSize, marker);
@@ -254,7 +260,11 @@ void validate(const Family& family, int threads, int decimate) {
             }
             for (int i = 0; i < 4; ++i) {
                 const auto& p = found.front().corners_[i];
-                if (std::hypot(p.x_ - corners[0][i].x, p.y_ - corners[0][i].y) > 1.5) {
+                const auto& expected = truth[(i + turns) % 4];
+                if (std::hypot(p.x_ - expected.x, p.y_ - expected.y) > 1.5)
+                    throw std::runtime_error("Corner mismatch against the rotated printed square");
+                if (decimate <= 2 &&
+                    std::hypot(p.x_ - corners[0][i].x, p.y_ - corners[0][i].y) > 1.5) {
                     std::cerr << "family=" << family.name_ << " id=" << id << " turns=" << turns
                               << " i=" << i << " got=" << p.x_ << ',' << p.y_
                               << " expected=" << corners[0][i] << '\n';
@@ -322,7 +332,7 @@ int run(const Options& opts) {
         } catch (const std::invalid_argument&) {
         }
         for (const auto& family : kFamilies) {
-            for (int decimate : {1, 2})
+            for (int decimate : {1, 2, 3, 4})
                 validate(family, opts.threads_, decimate);
         }
         return 0;
@@ -367,7 +377,10 @@ int run(const Options& opts) {
 
 int main(int argc, char** argv) {
     try {
-        return run(options(argc, argv));
+        const int status = run(options(argc, argv));
+        if (!std::cout.flush())
+            throw std::runtime_error("failed to write CPU comparison output");
+        return status;
     } catch (const std::exception& ex) {
         std::cerr << ex.what() << '\n';
         return 1;

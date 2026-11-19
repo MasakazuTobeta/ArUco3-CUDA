@@ -72,9 +72,11 @@ cmake --build --preset native --target aruco3cuda_apriltag_gpu_detect
 build/native/apriltag/gpu/aruco3cuda_apriltag_gpu_detect DICT_APRILTAG_36h11 frame.pgm
 ```
 
-The CLI takes binary 8-bit PGM images. Within a sequence of matching dimensions it
-reuses the detector and device frame. It accepts `--decimate N` before the first
-image. The default `0` uses adaptive sampling. Values `1` through `4` select
+The CLI takes binary 8-bit PGM images. It reuses the detector and device frame
+at a fixed resolution and releases both before switching layouts. It writes
+CSV rows to stdout, quoting image paths that contain a comma, quote or line
+break. It returns a failure status if it cannot write the results.
+It accepts `--decimate N` before the first image. The default `0` uses adaptive sampling. Values `1` through `4` select
 a single fixed spacing. The API's `fine_samples_per_cell_` changes the
 adaptive trigger. `small_frame_pixels_` controls the full-resolution input
 area limit and `min_pixels_per_cell_` controls the minimum projected cell
@@ -101,7 +103,12 @@ first detection. Replaying the frames allocated no additional device memory.
 The detector returned no tags for the noise image and ID 17 on a pitched
 3841×2160 positive image. A 3840×2160 one-pixel checkerboard exhausted the
 default hash probe budget and raised the documented overflow exception.
-The synthetic test also retries a saturated detector with a valid marker.
+The synthetic test also retries a saturated detector with a valid marker and
+alternates tag and blank subviews on two non-blocking streams. Changing the
+pixels outside an unaligned, pitched subview preserved the tag's exact corner
+coordinates. On a 640×480 → 1280×720 CLI sequence, releasing the previous
+layout before allocating the next reduced peak device allocations from
+45,386,464 to 31,554,416 bytes on GB10 (Nsight Systems).
 
 For memory measurements, run the CLI under
 `nsys profile --trace=cuda --cuda-memory-usage=true` with the same PGM
