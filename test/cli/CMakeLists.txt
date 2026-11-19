@@ -109,6 +109,10 @@ aruco3cuda_add_cli_test(cli.dictgen.check_missing_file aruco3cuda_dictgen FALSE
 # src/dictionary/generated without adding it here does not silently go
 # unchecked.
 set(kBundledDictionaries
+  DICT_APRILTAG_16h5
+  DICT_APRILTAG_25h9
+  DICT_APRILTAG_36h10
+  DICT_APRILTAG_36h11
   DICT_4X4_50
   DICT_4X4_100
   DICT_4X4_250

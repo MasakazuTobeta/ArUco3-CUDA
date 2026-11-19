@@ -6,6 +6,11 @@
 add_library(aruco3cuda_dictionary
   dictionary.cpp
   registry.cpp
+  apriltag_registry.cpp
+  generated/dict_apriltag_16h5.cpp
+  generated/dict_apriltag_25h9.cpp
+  generated/dict_apriltag_36h10.cpp
+  generated/dict_apriltag_36h11.cpp
   generated/dict_4x4_50.cpp
   generated/dict_4x4_100.cpp
   generated/dict_4x4_250.cpp

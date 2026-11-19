@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "aruco3cuda/apriltag_dictionary.hpp"
 #include "aruco3cuda/status.hpp"
 
 namespace {
@@ -68,6 +69,18 @@ TEST(DictionaryTest, registry_lists_all_builtin_tables) {
     EXPECT_EQ(aruco3cuda::builtin_dictionary_at(aruco3cuda::builtin_dictionary_count()), nullptr);
     EXPECT_EQ(aruco3cuda::find_builtin_dictionary("DICT_NOPE"), nullptr);
     EXPECT_EQ(aruco3cuda::find_builtin_dictionary(nullptr), nullptr);
+}
+
+TEST(DictionaryTest, apriltag_lookup_keeps_aruco_enumeration_separate) {
+    EXPECT_EQ(aruco3cuda::find_apriltag_dictionary(nullptr), nullptr);
+    EXPECT_EQ(aruco3cuda::find_apriltag_dictionary("DICT_ARUCO_MIP_36h12"), nullptr);
+    for (const char* name : {"DICT_APRILTAG_16h5", "DICT_APRILTAG_25h9", "DICT_APRILTAG_36h10",
+                             "DICT_APRILTAG_36h11"}) {
+        const auto* table = aruco3cuda::find_apriltag_dictionary(name);
+        ASSERT_NE(table, nullptr);
+        EXPECT_STREQ(table->name_, name);
+        EXPECT_EQ(aruco3cuda::find_builtin_dictionary(name), nullptr);
+    }
 }
 
 // Nominal: pack and unpack round-trip.
