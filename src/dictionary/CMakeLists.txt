@@ -34,7 +34,7 @@ add_library(aruco3cuda::dictionary ALIAS aruco3cuda_dictionary)
 target_include_directories(aruco3cuda_dictionary
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 target_link_libraries(aruco3cuda_dictionary PRIVATE aruco3cuda::warnings aruco3cuda::coverage)
 

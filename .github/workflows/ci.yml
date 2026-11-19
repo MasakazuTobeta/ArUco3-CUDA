@@ -105,6 +105,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DARUCO3CUDA_BUILD_APRILTAG_CPU=ON \
             -DARUCO3CUDA_BUILD_APRILTAG_GPU=ON \
+            -DCMAKE_INSTALL_INCLUDEDIR=vendor/include \
             -DARUCO3CUDA_BUILD_REFERENCE=OFF \
             -DCMAKE_CUDA_ARCHITECTURES="87;110;120;121"
 
@@ -134,6 +135,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${{ runner.temp }}/prefix"
           cmake --build build/ci-examples -j "$(nproc)"
+          cmake -S test/package -B build/ci-apriltag-consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="${{ runner.temp }}/prefix"
+          cmake --build build/ci-apriltag-consumer
 
       # generate_marker performs no detection, so it is the one sample that can
       # actually run here. Rendering exercises the packed dictionary tables,

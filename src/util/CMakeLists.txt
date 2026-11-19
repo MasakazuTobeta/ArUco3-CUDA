@@ -12,7 +12,7 @@ add_library(aruco3cuda::util ALIAS aruco3cuda_util)
 target_include_directories(aruco3cuda_util
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 target_link_libraries(aruco3cuda_util PRIVATE aruco3cuda::warnings aruco3cuda::coverage)
 

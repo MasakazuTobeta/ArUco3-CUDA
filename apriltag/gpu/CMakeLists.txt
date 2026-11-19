@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 add_library(aruco3cuda_apriltag_gpu detector.cu)
+target_compile_features(aruco3cuda_apriltag_gpu INTERFACE cxx_std_17)
 target_include_directories(aruco3cuda_apriltag_gpu PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
-  $<INSTALL_INTERFACE:include>)
+  "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 target_link_libraries(aruco3cuda_apriltag_gpu PUBLIC aruco3cuda::dictionary CUDA::cudart)
 add_library(aruco3cuda::apriltag_gpu ALIAS aruco3cuda_apriltag_gpu)
 
