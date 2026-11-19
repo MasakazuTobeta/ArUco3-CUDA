@@ -118,7 +118,8 @@ int run(int argc, char** argv) {
             if (cycle < 0) {
                 continue;
             }
-            std::cout << "{\"cycle\":" << cycle << ",\"frame\":" << i << ",\"scope\":\"" << scope
+            std::cout << "{\"backend\":\"" << Backend::kName << "\",\"cycle\":" << cycle
+                      << ",\"frame\":" << i << ",\"scope\":\"" << scope
                       << "\",\"ms\":" << elapsed_ms << ",\"tags\":[";
             for (size_t j = 0; j < count; ++j) {
                 std::cout << (j == 0 ? "" : ",") << "{\"id\":" << detector.id(j)
@@ -135,7 +136,7 @@ int run(int argc, char** argv) {
             std::cout << "]}\n";
         }
     }
-    if (!std::cout) {
+    if (!std::cout.flush()) {
         throw std::runtime_error("failed to write benchmark output");
     }
     return 0;

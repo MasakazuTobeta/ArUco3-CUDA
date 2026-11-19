@@ -6,18 +6,36 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import sys
 
 
-def load_observations(path, names):
+def load_observations(path, names, manifest_digest, allow_unbound=False):
     records = {}
+    bound = set()
     for line in path.read_text().splitlines():
         row = json.loads(line)
         name = row["scene"]
         if name in records or not isinstance(row["detections"], list):
             raise ValueError(f"invalid or duplicate frame: {name}")
+        bound.add("manifest_sha256" in row)
+        if "manifest_sha256" in row and row["manifest_sha256"] != manifest_digest:
+            raise ValueError(f"{path}: observation manifest mismatch in {name}")
         records[name] = row["detections"]
     if names != records.keys():
         raise ValueError(f"{path}: missing or unexpected frames: {names ^ records.keys()}")
+    if len(bound) != 1:
+        raise ValueError(f"{path}: inconsistent observation manifest fields")
+    if False in bound:
+        # The original GPU runner wrote the manifest digest next to this exact output file.
+        conditions = path.parent / "conditions.json"
+        if path.name == "observations.jsonl" and conditions.is_file():
+            if json.loads(conditions.read_bytes()).get("manifest_sha256") != manifest_digest:
+                raise ValueError(f"{path}: legacy run manifest mismatch")
+        elif not allow_unbound:
+            raise ValueError(f"{path}: historical observations lack a manifest digest; "
+                             "regenerate them or use --allow-unbound-observations for a legacy audit")
+        else:
+            print(f"warning: {path} has no verifiable input manifest", file=sys.stderr)
     return records
 
 
@@ -82,8 +100,12 @@ def main():
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--scorer", type=Path, required=True)
+    parser.add_argument("--allow-unbound-observations", action="store_true",
+                        help="read historical files with no manifest identity")
     args = parser.parse_args()
-    scenes = json.loads(args.manifest.read_bytes())["scenes"]
+    manifest_bytes = args.manifest.read_bytes()
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
+    scenes = json.loads(manifest_bytes)["scenes"]
     names = {s["name"] for s in scenes}
     if not scenes or len(names) != len(scenes):
         raise ValueError("empty or duplicate-scene manifest")
@@ -91,8 +113,10 @@ def main():
         path = args.manifest.parent / scene["path"]
         if hashlib.sha256(path.read_bytes()).hexdigest() != scene["sha256"]:
             raise ValueError(f"input checksum mismatch: {path}")
-    baseline, fp_base, bs = score(scenes, load_observations(args.baseline, names), args.scorer)
-    candidate, fp_new, cs = score(scenes, load_observations(args.candidate, names), args.scorer)
+    baseline_obs = load_observations(args.baseline, names, digest, args.allow_unbound_observations)
+    candidate_obs = load_observations(args.candidate, names, digest, args.allow_unbound_observations)
+    baseline, fp_base, bs = score(scenes, baseline_obs, args.scorer)
+    candidate, fp_new, cs = score(scenes, candidate_obs, args.scorer)
     shared = baseline.keys() & candidate.keys()
     # A lower paired RMSE can hide a single badly localized tag in a crowded frame.
     regression = None

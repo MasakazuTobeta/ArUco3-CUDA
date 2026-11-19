@@ -22,6 +22,7 @@ aruco3cuda::apriltag_gpu::Config settings(int decimate, int capacity) {
 
 class ProjectDetector {
 public:
+    static constexpr const char* kName = "project";
     static constexpr int kMinParameter = 0;
     static constexpr int kMaxParameter = 4;
     static constexpr size_t kBytesPerPixel = 1;

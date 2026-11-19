@@ -23,3 +23,9 @@ if(TARGET aruco3cuda_apriltag_gpu)
   target_include_directories(apriltag_project_benchmark PRIVATE ../../examples)
   target_link_libraries(apriltag_project_benchmark PRIVATE aruco3cuda::apriltag_gpu)
 endif()
+
+if(ARUCO3CUDA_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME AprilTagBenchmarkProtocol
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_protocol.py")
+endif()

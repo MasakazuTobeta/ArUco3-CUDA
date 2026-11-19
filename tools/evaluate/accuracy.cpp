@@ -22,6 +22,25 @@ struct Pair {
     double distance_ = 0.0;
 };
 
+// Cyclic shifts preserve the winding of a projected square. A reflection,
+// crossed sequence, or collapsed side cannot have the reference corner order.
+int convex_winding(const Quad& q) {
+    int winding = 0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        const std::size_t a = 2 * i;
+        const std::size_t b = 2 * ((i + 1) % 4);
+        const std::size_t c = 2 * ((i + 2) % 4);
+        const double turn =
+                (q[b] - q[a]) * (q[c + 1] - q[b + 1]) - (q[b + 1] - q[a + 1]) * (q[c] - q[b]);
+        const int direction = (turn > 0.0) - (turn < 0.0);
+        if (direction == 0 || (i > 0 && direction != winding)) {
+            return 0;
+        }
+        winding = direction;
+    }
+    return winding;
+}
+
 /// Determines by how many positions the corner ordering is rotated.
 ///
 /// The corners of a true value are ordered in marker coordinates. A detection whose
@@ -105,7 +124,10 @@ ImageAccuracy compare_to_truth(const std::string& image_name, const std::vector<
         ++accuracy.true_positive_;
         double squared = 0.0;
         const int steps = best_rotation_steps(expected.corners_, actual.corners_, &squared);
-        if (steps == 0) {
+        const int winding = convex_winding(actual.corners_);
+        const bool oriented =
+                steps == 0 && winding != 0 && winding == convex_winding(expected.corners_);
+        if (oriented) {
             ++accuracy.rotation_agreed_;
         }
         const double worst =
@@ -116,7 +138,7 @@ ImageAccuracy compare_to_truth(const std::string& image_name, const std::vector<
         accuracy.truth_outcomes_[pair.truth_index_] = TruthOutcome::kDetected;
         accuracy.truth_squared_error_px2_[pair.truth_index_] = squared;
         accuracy.truth_corner_max_px_[pair.truth_index_] = worst;
-        accuracy.truth_rotation_agreed_[pair.truth_index_] = (steps == 0);
+        accuracy.truth_rotation_agreed_[pair.truth_index_] = oriented;
     }
 
     for (std::size_t i = 0; i < truth.size(); ++i) {

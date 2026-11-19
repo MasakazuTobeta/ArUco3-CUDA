@@ -60,6 +60,11 @@ The ground truth corners are ordered as (0,0), (S,0), (S,S), (0,S) in the marker
 If the ID has been read correctly, the detection is in the same order, so any nonzero number of cyclic steps
 means the rotation was judged incorrectly.
 
+Rotation agreement also requires a convex observed quadrilateral with the same
+winding as its matched reference. Reversed, crossed and collapsed corner sequences
+fail orientation even when zero cyclic shift minimizes the squared distance.
+Position and ID still determine the detection count.
+
 ## Goals
 
 - Allow the same metrics to be produced with annotations of a real-image dataset as ground truth

@@ -53,6 +53,9 @@ jobs:
       - name: Test steady benchmark validation without OpenCV or a GPU
         run: python3 -m unittest discover -s test/cli -p 'test_steady_benchmark.py' -v
 
+      - name: Test AprilTag benchmark and scoring validation
+        run: python3 apriltag/benchmark/test_protocol.py
+
       - name: Check the SPDX identifiers on new source files
         run: |
           missing=0

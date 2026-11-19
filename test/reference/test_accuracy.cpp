@@ -125,6 +125,20 @@ TEST(Accuracy, AcceptsMatchAtRadiusBoundary) {
     EXPECT_DOUBLE_EQ(result.corner_max_px_, 20.0);
 }
 
+TEST(Accuracy, RejectsReflectedCrossedAndCollapsedCornerOrders) {
+    const auto truth = truth_at(7, 50, 50, 40);
+    for (const Quad& invalid :
+         {Quad{30, 30, 30, 70, 70, 70, 70, 30}, Quad{30, 30, 70, 70, 70, 30, 30, 70},
+          Quad{50, 50, 50, 50, 50, 50, 50, 50}}) {
+        const Observation observed{7, invalid};
+        const auto result =
+                aruco3cuda::evaluate::compare_to_truth("order", {truth}, {observed}, {});
+        EXPECT_EQ(result.true_positive_, 1U);
+        EXPECT_EQ(result.rotation_agreed_, 0U);
+        EXPECT_FALSE(result.truth_rotation_agreed_.at(0));
+    }
+}
+
 TEST(Accuracy, DetectsRotatedCornerOrder) {
     // The ID is correct but the corner order is cyclically shifted by one. The
     // position still matches, so this is a true positive, but it does not count as

@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 def main():
@@ -16,20 +17,28 @@ def main():
     parser.add_argument("--prefix", help="output filename prefix (default: family)")
     parser.add_argument("--exact", action="store_true", help="disable Hamming correction on both routes")
     args = parser.parse_args()
-    manifest = json.loads(args.manifest.read_text())
-    family = manifest["dictionary"].split("DICT_APRILTAG_")[-1]
-    if family not in ("16h5", "25h9", "36h10", "36h11"):
-        raise ValueError(f"unexpected dictionary {family}")
+    manifest_bytes = args.manifest.read_bytes()
+    manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
+    manifest = json.loads(manifest_bytes)
+    dictionary = manifest["dictionary"]
+    if dictionary not in ("DICT_APRILTAG_16h5", "DICT_APRILTAG_25h9",
+                          "DICT_APRILTAG_36h10", "DICT_APRILTAG_36h11"):
+        raise ValueError(f"unexpected dictionary {dictionary}")
+    family = dictionary.rsplit("_", 1)[1]
     args.output_dir.mkdir(parents=True, exist_ok=True)
     observations = {"cpu": [], "opencv": []}
     for scene in manifest["scenes"]:
         path = args.manifest.parent / scene["path"]
-        if hashlib.sha256(path.read_bytes()).hexdigest() != scene["sha256"]:
+        pixels = path.read_bytes()
+        if hashlib.sha256(pixels).hexdigest() != scene["sha256"]:
             raise ValueError(f"unexpected pixels in {path}")
-        result = subprocess.run(
-            [str(args.binary.resolve()), "--image", str(path), "--family", "tag" + family,
-             "--samples", "1", "--warmup", "0"] + (["--exact"] if args.exact else []),
-            check=True, text=True, capture_output=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / path.name
+            image.write_bytes(pixels)
+            result = subprocess.run(
+                [str(args.binary.resolve()), "--image", str(image), "--family", "tag" + family,
+                 "--samples", "1", "--warmup", "0"] + (["--exact"] if args.exact else []),
+                check=True, text=True, capture_output=True)
         rows = list(csv.reader(result.stdout.splitlines()))
         for route, output in observations.items():
             count, = [int(row[4]) for row in rows if row[0] == route]
@@ -37,7 +46,8 @@ def main():
                           for row in rows if row[0] == route + "_detection"]
             if len(detections) != count or any(len(d["corners"]) != 8 for d in detections):
                 raise ValueError(f"incomplete {route} results for {path}")
-            output.append(json.dumps({"scene": scene["name"], "detections": detections}))
+            output.append(json.dumps({"scene": scene["name"], "manifest_sha256": manifest_digest,
+                                      "detections": detections}, allow_nan=False))
     for route, output in observations.items():
         (args.output_dir / f"{args.prefix or family}-{route}.jsonl").write_text("\n".join(output) + "\n")
 

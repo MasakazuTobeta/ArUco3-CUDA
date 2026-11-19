@@ -26,14 +26,16 @@ std::vector<Marker> read_markers(std::size_t count) {
     }
     return markers;
 }
-}  // namespace
 
-int main() {
+int run() {
     using namespace aruco3cuda::evaluate;
     std::size_t truth_count = 0;
     std::size_t observation_count = 0;
     std::cout << std::setprecision(17);
-    while (std::cin >> truth_count >> observation_count) {
+    while (std::cin >> std::ws && std::cin.peek() != std::char_traits<char>::eof()) {
+        if (!(std::cin >> truth_count >> observation_count)) {
+            throw std::invalid_argument("incomplete frame header");
+        }
         auto truth = read_markers<TruthMarker>(truth_count);
         for (auto& marker : truth) {
             marker.side_px_ = aruco3cuda::report::quad_average_side(marker.corners_);
@@ -49,5 +51,15 @@ int main() {
         }
         std::cout << '\n';
     }
-    return std::cin.eof() ? 0 : 1;
+    return !std::cin.bad() && std::cout.flush() ? 0 : 1;
+}
+}  // namespace
+
+int main() {
+    try {
+        return run();
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
 }

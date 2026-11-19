@@ -14,6 +14,7 @@ void check_detector(int status, const char* operation) {
 
 class NvidiaDetector {
 public:
+    static constexpr const char* kName = "nvidia";
     static constexpr int kMinParameter = 1;
     static constexpr int kMaxParameter = 1024;
     static constexpr size_t kBytesPerPixel = sizeof(uchar3);

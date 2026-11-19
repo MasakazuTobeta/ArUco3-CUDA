@@ -300,8 +300,12 @@ Enable `ARUCO3CUDA_BUILD_APRILTAG_GPU=ON` and `ARUCO3CUDA_BUILD_APRILTAG_BENCHMA
 in the top-level CMake build. Run `apriltag_project_benchmark` with the same script using `--backend project`
 and `--decimate 0` for automatic sampling. Repeat with `--scope host`.
 Use fresh processes and alternate route order between runs. The script verifies
-the SHA-256 of each input and writes raw wall times and canonical observations.
-It checks exact replay after sorting detections. Output directories must be new.
+the SHA-256 of each input, passes private copies of those bytes to the native
+loader, and writes raw wall times and canonical observations. The saved command
+uses the original image paths for reproduction.
+Each timed row identifies its compiled backend. Rebuild both benchmark executables
+when using the updated sequence runner. It checks that the backend matches the
+requested route and verifies exact replay after sorting detections. Output directories must be new.
 
 ## Goals
 

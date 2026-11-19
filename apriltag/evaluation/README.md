@@ -58,6 +58,10 @@ python3 apriltag/evaluation/field_corpus.py /path/to/apriltag/test/data build/fi
 Collect observations with the [CPU comparison](../cpu/observe.py) or
 [GPU sequence runner](../benchmark/README.md). The scorer requires exactly one
 observation per manifest entry, including empty frames, and checks each image hash.
+The observers record the SHA-256 of the exact manifest in every output row.
+For older GPU runs keep `observations.jsonl` next to its original `conditions.json`.
+Older observations with no recorded digest require regeneration or the explicit
+`--allow-unbound-observations` option to score them without verifying their origin.
 It uses the project's [ground-truth matcher](../../tools/evaluate/accuracy.md)
 to pair by centroid before checking IDs. A rotated corner sequence counts as
 an orientation error. Compare geometry on the common detections and inspect any
