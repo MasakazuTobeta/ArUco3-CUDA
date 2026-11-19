@@ -101,16 +101,17 @@ return host detections.
 
 Median detector-call latency (p50) on 32 changing 3840×2160 `tag36h11`
 frames, from host grayscale input to host detections. Both GPU timings
-include input preparation, upload, and result retrieval.
+include input preparation, upload, and result retrieval. FPS is the median
+across runs of frames processed divided by total timed detector-call duration.
 
-| GPU | NVIDIA cuAprilTags (ms) | Project CUDA (ms) | p50 speedup |
+| GPU | NVIDIA cuAprilTags p50 (ms) | Project CUDA p50 (ms) | Throughput, cuAprilTags → project (FPS) |
 | --- | ---: | ---: | ---: |
-| DGX Spark GB10 | 10.304 | 1.280 | 8.05× |
-| Jetson AGX Orin | 35.428 | 3.108 | 11.40× |
-| Jetson AGX Thor | 19.427 | 1.016 | 19.12× |
-| RTX PRO 6000 | 7.436 | 1.215 | 6.12× |
-| RTX 4090 | 8.903 | 1.130 | 7.88× |
-| RTX 5070 Ti | 8.208 | 0.860 | 9.54× |
+| DGX Spark GB10 | 10.304 | 1.280 | 94.30 → 581.92 |
+| Jetson AGX Orin | 35.428 | 3.108 | 27.30 → 180.79 |
+| Jetson AGX Thor | 19.427 | 1.016 | 49.39 → 462.63 |
+| RTX PRO 6000 | 7.436 | 1.215 | 133.68 → 662.60 |
+| RTX 4090 | 8.903 | 1.130 | 111.66 → 711.50 |
+| RTX 5070 Ti | 8.208 | 0.860 | 117.30 → 852.23 |
 
 On these 4K frames, the project detected 35 of 48 annotated tags, including
 all 18 cuAprilTags detections.
