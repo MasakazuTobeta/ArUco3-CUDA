@@ -108,7 +108,7 @@ flowchart TD
 | `pinned` (default) | Install only the required packages into the image | 1.64 GB | Use this for any run that involves measurement |
 | `mounted` | Bind-mounted read-only from the host | 1.28 GB | Quick local experiments. Behaviour and performance are not guaranteed |
 
-`pinned` is the default because the compiler used for a measurement then travels with the image, so a CUDA update on the host cannot destroy the comparability of benchmark results. Success criterion 3 in the [Project overview](../project-overview.md) calls for a reproducible build and measurement procedure, and a configuration where the image depends on the host environment weakens it.
+The default `pinned` image packages the compiler, so a host Toolkit update cannot change its version.
 
 The full CUDA Toolkit is 4.7 GB, but measuring the breakdown shows that 3.2 GB of it is cuBLAS, cuFFT, cuSOLVER, cuSPARSE, and cuRAND, none of which this project uses. Only the following packages are needed, which keeps the difference between `pinned` and `mounted` to roughly 360 MB.
 

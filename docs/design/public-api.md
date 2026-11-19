@@ -1,28 +1,20 @@
-# Public API draft
+# C++ detector API
 
 ## Purpose
 
-This document defines the types, ownership, synchronization behavior, and error reporting of the CUDA detector's public API, and presents a structure that keeps the OpenCV dependency out of core.
-
-**The headers under [`include/aruco3cuda/`](../../include/aruco3cuda) are authoritative; this document explains the reasoning behind them.** Declarations are deliberately not restated here. An earlier revision carried a copy of the headers, and the copy drifted until field names, types, and signatures disagreed with the code. Where this text and a header disagree, the header wins and this document is the thing to correct. Do not reintroduce a copy: describe intent and link to the header instead.
+This guide explains the operating contract of the detector. The [public headers](../../include/aruco3cuda) define its types, signatures and defaults.
 
 ## Scope
 
-The scope covers the types and functions exposed by `core`, the configuration values, the result representation, and the conversion API in `adapter/opencv`. Pose estimation APIs, Python bindings, and the ROS2 interface are out of scope.
+The C++ API accepts grayscale CUDA images and returns device views or host results.
+The [C ABI and Python binding](c-abi-and-python.md) wrap the same detector.
 
 ## Current state
 
-The core API is implemented. `Status` and the CUDA error message accessor, `MemorySpace`, `ImageViewU8` with `validate_image_view()`, `CornerRefineMethod`, `DetectorConfig` with `validate()` and `opencv_defaults()`, `DictionaryTable` with the matching helpers, `DeviceProbeResult`, `Workspace` with `WorkspaceStatistics`, `DeviceDetections`, `HostDetections`, and `Detector` all exist. The per-header breakdown is in [Namespace and file layout](#namespace-and-file-layout).
-
-Not implemented: the OpenCV adapter, and per-stage CUDA event timing (`set_stage_timing_enabled`), which appears nowhere in the code.
-
-Known limitations of what is implemented:
-
-- `Detector::initialize()` accepts only two combinations of settings: ArUco3 enabled with `kSubpix` refinement, and ArUco3 disabled with `kNone`. The other two are rejected, because with ArUco3 enabled and refinement off the corners would be left in downscaled coordinates, and with ArUco3 disabled there is only one level, so refinement would never run. The table in [`detector.hpp`](../../include/aruco3cuda/detector.hpp) states this.
-- `DeviceDetections::rotations_` holds the rotation from before it was undone, while the corners are already ordered with it undone. A later stage that reads `rotations_` and rotates again ends up 90 degrees off.
-- The GPU allocates its output storage at initialization time, so `max_candidates_` and `max_markers_` are hard limits. Truncation is reported, never silent.
-
-The defaults match the observed specification of `DetectorParameters` in OpenCV 4.x. Only the two items related to the ArUco3 detection strategy have defaults changed to suit the evaluation goals. When defaults identical to OpenCV are required, use `DetectorConfig::opencv_defaults()`. Two candidate-filtering thresholds have no OpenCV counterpart at all: their defaults come from measurements on synthetic shapes, and the measured values that bracket each default are recorded in [`config.hpp`](../../include/aruco3cuda/config.hpp) next to the field.
+- `Detector::initialize()` accepts ArUco3 enabled with `kSubpix` refinement, or ArUco3 disabled with `kNone`.
+- Corners are already ordered after undoing the matched rotation. `rotations_` records that original rotation.
+- Device output has fixed capacities. After completion, a nonzero failure word invalidates the entire result. With a zero failure word, `accepted_total_ > count_` indicates marker-limit truncation.
+- Use `DetectorConfig::opencv_defaults()` for OpenCV-compatible initial settings. The project defaults enable the ArUco3 detection strategy and downscaling. [Configuration fields](../../include/aruco3cuda/config.hpp)
 
 ## Goals
 
@@ -84,13 +76,14 @@ The defaults for `use_aruco3_detection_` and `min_marker_length_ratio_original_i
 
 [`detections.hpp`](../../include/aruco3cuda/detections.hpp) declares the two result types, and it is the one header in the public set that includes nothing CUDA-specific.
 
-`DeviceDetections` is a set of non-owning references to memory the `Detector` owns, so a GPU-resident pipeline can consume the results without a host synchronization. It holds no synchronization point of its own: the contents are not final until the kernels already issued have completed, and the pointers go stale when the `Detector` is destroyed or when `detect_async()` is called with input whose dimensions changed, so it has to be fetched again after every detection.
+The detector owns the storage behind `DeviceDetections`. Reinitialization, layout
+changes and destruction invalidate the view. A new submission can overwrite its
+contents. A consumer must order its reads after detection completes and before reuse.
 
-The corners are held as separate planes, structure of arrays, indexed as `(corner * capacity_) + detection`. Stages S5 through S10 all read and write that same layout, and S10 writes back in place at the same index, so an array-of-structures layout would mean rewriting kernels that have already been verified down to bit equality. This is settled: `DeviceDetections` ships plain `float*` SoA planes, which also keeps the public header free of any dependency on `vector_types.h`.
-
-Two properties of the contents are easy to get wrong and are worth repeating here. The corners are ordered after the rotation found by dictionary matching has been undone, while `rotations_` still holds the value from before that. And the coordinates are in the full resolution of the input image, not in the coordinates of the downscaled segmentation image. The detection counts before and after truncation each live in a single device-side element, so the host cannot read them without a copy.
-
-`HostDetections` is the value-type counterpart filled by `download()`. It flattens the corners to eight floats per detection and carries both the count before truncation and an explicit overflow flag, so a truncated result is never mistaken for a complete one.
+Device corners use separate x and y planes indexed by `corner * capacity_ + detection`.
+The kernels read and update that layout in place. `download()` fills caller-owned
+`HostDetections` with eight floats per detection in full-resolution image coordinates.
+Check its returned status for failure or truncation. [Result types](../../include/aruco3cuda/detections.hpp)
 
 ### Detector
 
@@ -98,13 +91,13 @@ Two properties of the contents are easy to get wrong and are worth repeating her
 
 Ownership is fixed for every public member function: the class owns the workspace and the memory behind `DeviceDetections`; the caller owns the input image and the stream. The `DictionaryTable` is copied to the device inside `initialize()`, so the caller may destroy it once that call returns. A single instance must not be used from several threads at once.
 
-Synchronization is not confined to `download()`, and the distinction matters for anyone measuring end-to-end time:
-
-- `initialize()` synchronizes the whole device at the end, so that the dictionary transfer is complete as seen from any stream afterwards.
-- `download()` waits for the stream and then fills the host buffer.
-- `detect_async()` normally only issues kernels. On a frame whose input dimensions or pitch differ from the previous one it synchronizes the stream once, before the buffer layout is rebuilt.
-
-When an explicit stream is given, one frame worth of the issue sequence is captured as a CUDA Graph, so every subsequent frame costs a single launch. A captured sequence bakes in the kernel arguments, so it is discarded and recaptured when `initialize()` is called again, when the input dimensions, pitch, or pointer change, or when the stream changes. Changing a setting requires calling `initialize()` again, so there is no path by which a baked value silently goes stale. CUDA does not permit capture on the default stream, so passing `nullptr` takes the path that issues one step at a time.
+On an explicit stream, a stable frame layout and input address enable CUDA Graph replay.
+A change of stream, pointer or layout requires recapture. Passing `nullptr` submits the
+stages directly. Steady submissions record a completion event so later submissions
+and readbacks can safely reuse detector storage across streams. Keep borrowed input
+and results valid until their consumers finish. Reinitialization, layout changes,
+readback and failure recovery have distinct synchronization points.
+[Submission and storage lifetime](../../src/core/detector.md)
 
 `device_detections()` returns a `Status` and fills an out parameter rather than returning a reference, because after a move it would otherwise have no way to report `kNotInitialized`. `workspace_statistics()` exists so that a test can confirm `allocation_count_` stays at 1 after `initialize()`, which is what makes "no per-frame allocation" checkable rather than merely asserted.
 
@@ -120,62 +113,10 @@ One constraint falls out of the header contract and has to be resolved when the 
 
 ### Usage example
 
-Verified against the headers listed above. The `Detector` is constructed once and reused; nothing in the per-frame path allocates.
-
-```cpp
-#include <cstddef>
-#include <cstdint>
-#include <string>
-
-#include "aruco3cuda/detector.hpp"
-
-bool detect_one_frame(const std::uint8_t* device_image, int width_px, int height_px,
-                      std::size_t pitch_bytes) {
-    const aruco3cuda::DictionaryTable* dictionary =
-            aruco3cuda::find_builtin_dictionary("DICT_ARUCO_MIP_36h12");
-    if (dictionary == nullptr) {
-        return false;
-    }
-
-    aruco3cuda::DetectorConfig config;
-    config.max_width_px_ = 1920;
-    config.max_height_px_ = 1080;
-
-    std::string message;
-    aruco3cuda::Detector detector;
-    if (detector.initialize(*dictionary, config, &message) != aruco3cuda::Status::kOk) {
-        return false;
-    }
-
-    cudaStream_t stream = nullptr;
-    if (cudaStreamCreate(&stream) != cudaSuccess) {
-        return false;
-    }
-
-    aruco3cuda::ImageViewU8 view;
-    view.data_ = device_image;
-    view.width_px_ = width_px;
-    view.height_px_ = height_px;
-    view.pitch_bytes_ = pitch_bytes;
-    view.space_ = aruco3cuda::MemorySpace::kDevice;
-
-    bool ok = detector.detect_async(view, stream, &message) == aruco3cuda::Status::kOk;
-
-    // The results can be read on the device without synchronizing.
-    aruco3cuda::DeviceDetections device_detections;
-    ok = ok && detector.device_detections(&device_detections) == aruco3cuda::Status::kOk;
-
-    // Or brought back to the host, which synchronizes the stream once.
-    // kMarkerOverflow still fills out; it means the results were truncated.
-    aruco3cuda::HostDetections result;
-    const aruco3cuda::Status status = detector.download(&result, stream, &message);
-    ok = ok && (status == aruco3cuda::Status::kOk ||
-                status == aruco3cuda::Status::kMarkerOverflow);
-
-    cudaStreamDestroy(stream);
-    return ok;  // result.ids_ holds the IDs, result.corners_ eight floats per detection.
-}
-```
+The [C++ sample](../../examples/detect_image.cpp) initializes one detector, uploads
+an image, submits detection on an explicit stream and downloads the result. Run it
+with `--repeat 8` to reuse the detector and workspace. The [sample guide](../../examples/README.md)
+includes build commands and expected output.
 
 ## Design decisions
 

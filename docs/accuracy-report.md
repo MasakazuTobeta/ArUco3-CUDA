@@ -1,9 +1,7 @@
 # Accuracy Evaluation Results
 
-This report records the historical component/extrema GPU route. Its 91-image
-corpus did not expose the connected-marker failures found by the expanded
-audit. The [steady-state evaluation](gpu-steady-state-report.md) records the
-new contour route, broader quality matrix and remaining limits separately.
+This report covers the historical component/extrema extractor. For the ordered
+contour presets and connected-marker tests, see the [steady-state evaluation](gpu-steady-state-report.md).
 
 ## Purpose
 
@@ -26,30 +24,27 @@ checkout does not contain the raw historical outputs.
 
 ### Overall
 
-These are the results with the ArUco3 detection strategy enabled. All three routes detect the same 88 markers. The columns of the table do not share one denominator, so each header names the division it belongs to. Precision, rotation match, corner RMSE, and corner max are over the 88 detections. Recall (overall) is over all 480 ground truth markers, and recall (at or above bound) is over the 90 ground truth markers at or above the ArUco3 bound. The evaluator does not define precision for the at-or-above-bound division, because a false positive has no ground truth marker to take a side length from.
+With ArUco3 enabled, all three routes on all four machines detected **88 of
+480** true markers (18.33% recall). Of the 90 markers at or above the evaluated
+size bound, **85 were detected** (94.44%). All 88 detections had the correct ID
+and rotation, with zero false positives. Precision and corner errors use all
+88 detections.
 
-| Machine | Route | precision (all detections) | recall (overall, 480 truth) | recall (at or above bound, 90 truth) | rotation match (all detections) | Corner RMSE (all detections) | Corner max (all detections) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| DGX Spark GB10 | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
-| DGX Spark GB10 | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
-| DGX Spark GB10 | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
-| Jetson AGX Orin | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
-| Jetson AGX Orin | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
-| Jetson AGX Orin | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
-| Jetson AGX Thor | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
-| Jetson AGX Thor | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5184 px | 3.6351 px |
-| Jetson AGX Thor | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4806 px | 1.0936 px |
-| GeForce RTX 5070 Ti | CPU | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
-| GeForce RTX 5070 Ti | Hybrid | 100.00% | 18.33% | 94.44% | 88/88 | 0.5042 px | 3.6351 px |
-| GeForce RTX 5070 Ti | CUDA-Resident | 100.00% | 18.33% | 94.44% | 88/88 | 0.4653 px | 1.0936 px |
+| Machines | Route | Corner RMSE | Maximum corner error |
+| --- | --- | ---: | ---: |
+| DGX Spark, AGX Orin and AGX Thor | CPU and Hybrid | 0.5184 px | 3.6351 px |
+| DGX Spark, AGX Orin and AGX Thor | CUDA-Resident | 0.4806 px | 1.0936 px |
+| GeForce RTX 5070 Ti | CPU and Hybrid | 0.5042 px | 3.6351 px |
+| GeForce RTX 5070 Ti | CUDA-Resident | 0.4653 px | 1.0936 px |
 
-Precision is 100.00% across all 12 combinations of 3 routes x 4 machines. There is not a single false positive anywhere in 91 scenes x 3 routes x 4 machines, and there are zero detections with an incorrect ID. The evaluator counts a misread ID as a false positive as well as a false negative, so precision at 100.00% is what rules ID errors out. Rotation matches the ground truth for all 88 detections, and 85 of those 88 are at or above the ArUco3 bound. The 12 combinations cover only the ArUco3-enabled measurements. The ArUco3-disabled runs of the same 3 routes x 4 machines are a separate set of 12, reported under "Differences with the ArUco3 strategy and subpixel refinement turned off" below.
-
-The RMSE values differ between the two aarch64 machines and the x86_64 machine **because the corpus images themselves do not match across architectures**. See "Corpus reproducibility" below. As long as routes are compared within the same machine, this difference does not enter.
+The evaluator counts an incorrect ID as both a false positive and a false
+negative. It reports precision over the whole corpus because a false positive
+has no ground-truth side length. Each machine used identical input for its
+three routes. Hashes differed between builds. [Corpus reproducibility](#corpus-reproducibility)
 
 ### Why recall is presented in three divisions
 
-The ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below `minSideLengthCanonicalImg`. With L as the long side of the original image, the bound is determined by `S + L * tau_i`, which with the defaults (S=32, tau_i=0.05) gives the following values.
+The ArUco3 detection strategy inherently cannot detect markers whose side length after downscaling falls below `minSideLengthCanonicalImg`. With L as the long side of the original image, the bound is determined by `S + L * tau_i`, which with the tested settings (S=32, tau_i=0.05) gives the following values.
 
 | Resolution | Lower bound on the detectable side length |
 | --- | --- |
@@ -60,27 +55,13 @@ The ArUco3 detection strategy inherently cannot detect markers whose side length
 
 The evaluator classifies a ground truth marker as "at or above bound" when `side_px >= S + L * tau_i`, comparing the nominal side length of the marker against the bound (`tools/evaluate/main.cpp`, `record()`). `tau_i` is held as a `float`, and `0.05F` is slightly larger than 0.05, so the threshold actually compared against is slightly above the values in the table: 64.0000005, 96.0000010, 128.0000014, and 224.0000029 px. **A marker whose side length is exactly the value in the table therefore lands on the "below bound" side of the division.** The corpus contains 74 such markers.
 
-The corpus deliberately includes sizes below this bound. Therefore recall computed with all 480 ground truth markers as the denominator measures the strategy's inherent bound rather than misses by the implementation. The denominator splits as follows.
-
-```mermaid
-flowchart LR
-    A["Ground truth 480"] --> B["At or above bound 90"]
-    A --> C["Below bound 390"]
-    B --> B1["Detected 85<br/>recall 94.44%"]
-    B --> B2["Missed 5"]
-    C --> C1["Detected 3<br/>recall 0.77%"]
-    C --> C2["Missed 387<br/>range ArUco3 inherently does not detect"]
-```
-
-The 387 at the bottom right of the diagram are what pushes the overall recall down to 18.33%. The values per division are as follows.
+The corpus includes small markers to test behavior around this boundary.
 
 | Division | Ground truth | Detected | recall |
 | --- | --- | --- | --- |
 | All | 480 | 88 | 18.33% |
 | At or above bound | 90 | 85 | 94.44% |
 | Below bound | 390 | 3 | 0.77% |
-
-The figure that represents misses by the implementation is 94.44%. Quoting 18.33% on its own leads to misreading the strategy's inherent bound as a defect of the implementation.
 
 All 3 detections in the "below bound" division are markers sitting exactly on the bound of their resolution. The other 316 markers below the bound produce no detection at all.
 
@@ -109,35 +90,26 @@ These are the values for the DGX Spark GB10. The recall of CPU and CUDA-Resident
 | border (clipping) | 4 | 75.00% | 0.3064 px | 0.3056 px |
 | combined | 4 | 25.00% | 0.4317 px | 0.4215 px |
 
-There are 5 misses, broken down into 3 from combined degradation, 1 from occlusion, and 1 from border clipping. Rotation, perspective distortion, blur, noise, and illumination differences drop not a single marker on their own. What is dropped are cases where degradations overlap and cases where part of the marker is outside the image or under an occluding object.
-
-The corner RMSE is exactly equal for both routes in 3 of the 9 conditions: rotation, noise, and illumination. **It differs in the other 6.** Under clean, CPU is smaller by 0.0001 px (0.4910 px against 0.4911 px). Under perspective, blur, border, and combined, CUDA-Resident is smaller, but by at most 0.0102 px (combined, 0.4317 px against 0.4215 px); the other three differ by 0.0003, 0.0032, and 0.0008 px. Occlusion is the only condition where the difference is larger than the last displayed digits, 1.1497 px against 0.4722 px, and it rests on the 3 occlusion detections at or above the bound. Neither the small differences nor the occlusion one should be read as a general superiority.
+Of the five misses above the size bound, three involved combined degradation,
+one occlusion and one border clipping. Occlusion also had the largest difference
+in corner RMSE, based on three detections. For the other conditions the CPU and
+CUDA RMSE differed by at most 0.0102 px.
 
 ### Differences from the CPU reference
 
-These are the results of comparing 91 scenes on the same machine.
-
-| Machine | Hybrid vs CPU | CUDA-Resident vs CPU |
-| --- | --- | --- |
-| DGX Spark GB10 | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
-| Jetson AGX Orin | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
-| Jetson AGX Thor | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
-| GeForce RTX 5070 Ti | 91/91 images match, max difference 0.000 px | 90/91 images match, max difference 3.804 px |
-
-The Hybrid route matches the CPU reference results exactly on all four machines. Because Hybrid performs everything from contour extraction onward on the host, this result is predictable from the structure of the route.
-
-The CUDA-Resident route disagrees with the CPU reference results in only one detection in one scene. It is ID 140 in `occlusion_640x480`, where the corners differ by 3.804 px. The error against the ground truth is 3.6351 px for CPU and 1.0936 px for CUDA-Resident, so **in this one case CUDA-Resident is closer to the ground truth**. For a candidate whose contour was broken by occlusion, the two implementations converged to different local solutions. However, the denominator is a single case, and this is not a sample from which superiority in accuracy can be claimed.
+On every machine, Hybrid matched OpenCV in 91/91 scenes with a maximum corner
+difference of 0.000 px. CUDA-Resident matched OpenCV in 90/91 scenes. The
+exception was ID 140 in `occlusion_640x480`. The routes differed by 3.804 px.
+For this marker the maximum corner error against ground truth was 3.6351 px
+for CPU and 1.0936 px for CUDA. The historical GPU extractor estimated corners
+from extreme points, while OpenCV approximated contours with polygons.
 
 ### Differences with the ArUco3 strategy and subpixel refinement turned off
 
 `--use-aruco3 0` turns off the ArUco3 detection strategy and subpixel refinement **at the same time**. In this implementation the two cannot be toggled independently. Since dropping the downscaling puts every marker above the detection bound, **the number of detections itself changes** (detections by the CPU reference increase from 88 to 436). Note that the counts below have a different denominator from the ArUco3-enabled case.
 
-| Machine | CUDA-Resident vs CPU | Breakdown |
-| --- | --- | --- |
-| DGX Spark GB10 | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
-| Jetson AGX Orin | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
-| Jetson AGX Thor | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
-| GeForce RTX 5070 Ti | 82/91 images match, max difference 1.414 px | 18 corner deviations, 3 extra detections |
+All four machines agreed with the CPU on 82/91 images. Across the nine
+remaining images, CUDA had 18 corner deviations and three extra detections.
 
 Every difference is exactly 1.414 px, that is, sqrt(2). This is the distance of a diagonal one-pixel shift of integer-coordinate corners, and it is the difference in the corner estimation method appearing directly. This implementation uses extreme point search, while OpenCV uses polygon approximation of the contour (see [detection pipeline design](design/detector-pipeline.md) for details). Of the 18 cases, 16 are blur scenes.
 
@@ -147,21 +119,10 @@ Every difference is exactly 1.414 px, that is, sqrt(2). This is the distance of 
 
 The "3 extra detections" are markers that the CPU missed and CUDA-Resident detected. All 3 are in combined degradation scenes, and precision remains 100%. Recall without refinement, with 480 ground truth markers as the denominator, is as follows.
 
-| Machine | CPU detections / recall | CUDA-Resident detections / recall |
-| --- | --- | --- |
-| DGX Spark GB10 | 436 / 90.83% | 439 / 91.46% |
-| Jetson AGX Orin | 436 / 90.83% | 439 / 91.46% |
-| Jetson AGX Thor | 436 / 90.83% | 439 / 91.46% |
-| GeForce RTX 5070 Ti | 435 / 90.62% | 438 / 91.25% |
-
-Without refinement, the corner error against the ground truth is also smaller for CUDA-Resident.
-
-| Machine | CPU corner RMSE | CUDA-Resident corner RMSE |
-| --- | --- | --- |
-| DGX Spark GB10 | 0.8779 px | 0.8337 px |
-| Jetson AGX Orin | 0.8779 px | 0.8337 px |
-| Jetson AGX Thor | 0.8779 px | 0.8337 px |
-| GeForce RTX 5070 Ti | 0.8653 px | 0.8204 px |
+| Machines | CPU detections / recall | CUDA detections / recall | CPU corner RMSE | CUDA corner RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| DGX Spark, AGX Orin and AGX Thor | 436 / 90.83% | 439 / 91.46% | 0.8779 px | 0.8337 px |
+| GeForce RTX 5070 Ti | 435 / 90.62% | 438 / 91.25% | 0.8653 px | 0.8204 px |
 
 The difference is large when limited to blur scenes: 1.6282 px for CPU against 0.8068 px for CUDA-Resident. On blurred edges, extreme point search returns corners closer to the ground truth than polygon approximation does. However, **the denominator for this comparison is only 16 markers**. We treat it as a tendency, not a conclusion.
 
@@ -290,7 +251,7 @@ The corpus is regenerated with the dictionary under test, because the markers th
 
 **Workspace peak scales with the marker size and with nothing else**: 14.51 MB at 4x4, 15.53 MB at 5x5, 16.70 MB at 6x6, 18.03 MB at 7x7, the same value for every dictionary of a given size regardless of its code count. That follows from the canonical patch being `(bits + 2 * border) * perspective_remove_pixel_per_cell` pixels on a side. It is the one structural difference between dictionaries that the measurements show cleanly.
 
-**Corner RMSE differs by architecture, not by dictionary.** The three aarch64 machines agree exactly; the GeForce RTX 5070 Ti is lower by about 0.015 px for every dictionary. That is the corpus difference already recorded in the README: the same seed produces slightly different images on x86_64, so the ground truth the corners are measured against is not the same image.
+**Corner RMSE differs by architecture, not by dictionary.** The three aarch64 machines agree exactly; the GeForce RTX 5070 Ti is lower by about 0.015 px for every dictionary. Images from the same seed differ across builds. See [corpus reproducibility](#corpus-reproducibility).
 
 **Recall varies from 0.911 to 0.967, and this should not be read as a ranking.** The same marker size spans 0.911 to 0.922 at 4x4 and 5x5, and 0.933 to 0.956 at 6x6, so the spread within one size is as large as the spread between sizes. With a corpus that changes along with the dictionary, this measurement cannot separate the two.
 
