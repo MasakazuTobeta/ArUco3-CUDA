@@ -198,14 +198,73 @@ verified in each trace. The sums omit CPU work, transfers and synchronization.
 | Clean 640×480, one marker | 17 / 0.0920 ms | 9 / 0.1701 ms |
 | Warehouse racks, 1920×1496, zero detections | 17 / 0.8013 ms | 9 / 0.2120 ms |
 
+### Five-host repeat
+
+Five CUDA hosts ran the same detector revision (`9669eb7`), pinned NVIDIA SDK
+and SHA-256-verified tag36h11 inputs. Rates below are synchronized calls per
+second, calculated as total timed calls divided by their summed duration.
+Each cell shows cuAprilTags → project with adaptive sampling. The 96-frame
+sequence ran in three fresh processes per route at 640×480 (2 warm-up passes
+and 10 timed passes, 2,880 timed calls). At 1280×720 each route ran once
+with the same pass counts. Route order alternated across the three rounds.
+
+| GPU | 640×480 device, calls/s | Gain | 640×480 host, calls/s | 1280×720 device, calls/s |
+| --- | ---: | ---: | ---: | ---: |
+| DGX Spark GB10 | 458 → 533 | 1.16× | 427 → 508 | 377 → 497 |
+| Jetson AGX Orin | 562 → 2,015 | 3.58× | 447 → 1,620 | 243 → 1,205 |
+| Jetson AGX Thor | 445 → 1,277 | 2.87× | 339 → 809 | 287 → 1,142 |
+| RTX PRO 6000 Blackwell Max-Q | 1,095 → 2,249 | 2.05× | 826 → 2,107 | 1,031 → 1,740 |
+| GeForce RTX 4090 | 591 → 1,421 | 2.41× | 547 → 1,346 | 568 → 898 |
+
+All five machines reproduced the same matches. At 640×480 cuAprilTags detected
+65 of 136 markers and the project found 95. At 1280×720 the counts were 57 and
+104. The project retained every cuAprilTags match, with zero false positives,
+wrong IDs or rotation errors on both synthetic sequences. Common-marker corner
+RMSE fell from 1.515 to 0.183 px and from 1.164 to 0.190 px, respectively.
+On Spark the 640×480 device rate improved while p50 rose from 2.326 to 2.368 ms.
+On RTX 4090 device p95 rose from 2.355 to 2.375 ms.
+
+The outdoor columns use device input and three independently started runs per
+route, each with 8 warm-up and 60 timed passes over the three field photos.
+The industrial columns give the median of 16 per-image p50 speedups using
+the [industrial photograph procedure](#industrial-photographs). Each GPU
+returned zero detections on all 16 photos and the project had lower p50 on
+every photo in both input scopes.
+
+| GPU | Outdoor cuAprilTags | Outdoor adaptive | Outdoor fixed full resolution | Industrial device / host gain |
+| --- | ---: | ---: | ---: | ---: |
+| DGX Spark GB10 | 433 | 243 | 469 | 2.74× / 2.72× |
+| Jetson AGX Orin | 297 | 500 | 596 | 9.26× / 7.50× |
+| Jetson AGX Thor | 292 | 480 | 776 | 13.97× / 12.10× |
+| RTX PRO 6000 Blackwell Max-Q | 1,010 | 1,009 | 1,887 | 3.97× / 6.30× |
+| GeForce RTX 4090 | 533 | 518 | 949 | 6.58× / 6.10× |
+
+On the outdoor photos the adaptive route was slower on Spark and RTX 4090.
+On RTX PRO 6000 the winner changed between runs. Full-resolution sampling
+(`--decimate 1`) retained the same 45 of 47 reference positions, including
+all 15 cuAprilTags matches, and had higher pooled throughput than cuAprilTags
+on all five hosts. Both project settings also detected two visible tags outside
+the upstream reference list.
+
+The JetPack 6.1 archive ran on Spark (SM 121, driver 580.95.05, CUDA 13.0,
+CPU cores 5–8) and Thor (SM 110, L4T R38.4, CUDA 13.0, MAXN, cores 4–7).
+Its SHA-256 was `e67298e8ee52d6253cd702f4c55b3727bea177f57236aa23797bde50d74dfc24`.
+RTX PRO 6000 used SM 120, driver 595.99.02, CUDA 12.8, cores 2–5 and the
+same x86 CUDA 12.6 SDK archive as RTX 4090. Orin and RTX 4090 used the
+[toolchains below](#reproduction-environment). Existing workloads stayed active.
+Utilization snapshots on Spark, Thor and the two RTX machines were around
+90–99%. The spread was material on the outdoor Orin run, where cuAprilTags
+ranged from 214 to 372 calls/s. Raw samples, binary hashes and per-frame
+observations are local under `build/tag-multihost/`. The sixth listed host,
+the Intel N97, was unreachable over SSH during this run.
+
 ### Reproduction environment
 
-Release builds used the same source export on both machines. Orin used JetPack
+The original two-host measurements used the same Release source export on both machines. Orin used JetPack
 5.1.2 (L4T R35.4.1), CUDA 11.4.315, GCC 9.4, Ubuntu 20.04, SM 87, MAXN and
 CPU affinity 8–11. RTX 4090 used driver 575.64.03, CUDA 12.6.68, GCC 13.3,
 Ubuntu 24.04, SM 89 and CPU affinity 2–5. The pinned vendor snapshot ships
-JetPack 5.1, JetPack 6.1 and x86-64 CUDA 12.6 archives. It supplies no DGX Spark
-archive, so this SDK comparison uses Orin and RTX.
+JetPack 5.1, JetPack 6.1 and x86-64 CUDA 12.6 archives. The five-host repeat also exercised the JetPack 6.1 archive on Spark and Thor.
 [Published platform archives](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nitros/tree/94ada8a17231ec3d333664fc1320faa5e4bd1b7b/cuapriltags_vendor)
 
 Clocks and pre-existing system loads were retained. The frozen source manifest SHA-256 was
