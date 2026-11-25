@@ -229,6 +229,18 @@ This record describes an experimental implementation; validation and selection
 of the final GPU route remain governed by the
 [GPU optimization plan](gpu-steady-optimization-plan.md).
 
+### Bounded CPU quadrilateral approximation
+
+The [AprilTag CPU bounded approximation](../apriltag/small_cpu/bounded_quad_approximation.hpp)
+adapts closed split ordering and cleanup from the same pinned OpenCV
+`approx.cpp` described above. It uses bounded arrays and exact integer
+distance comparisons for small integer contours. The helper preserves ordered
+four-vertex output in ordinary search and ordered four- or five-vertex output
+in supplemental search. Both use the pinned public OpenCV operation outside
+the documented bounds. The Intel BSD-3-Clause source notice is retained in
+the [module license](../apriltag/small_cpu/LICENSE.opencv-approx) and the source
+is listed in `NOTICE`.
+
 ## Goals
 
 - Add at least one line of record per implementation PR, keeping the basis explainable after the fact.

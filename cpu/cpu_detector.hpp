@@ -45,6 +45,17 @@ struct CpuOptions {
     std::size_t threshold_max_prefix_bytes_ = 2U * 1024U * 1024U;
     double component_edge_band_px_ = 2.0;
     bool profile_stages_ = false;
+    /// Opt-in projective refinement for tag36h11 with one border cell. Zero disables it.
+    int decoded_grid_radius_px_ = 0;
+    /// Sample the original image for tag36h11 payloads and corner fitting.
+    bool decode_at_source_resolution_ = false;
+    /// With source-resolution decoding, use a 2x2 average on a grid of 2..8 pixels.
+    /// Zero uses the configured ArUco3 segmentation resize.
+    int candidate_box_stride_px_ = 0;
+    /// Add a bright exterior only during candidate search at the frame edge.
+    bool search_frame_edges_ = false;
+    /// Total original-image area considered by supplemental edge searches in one frame.
+    std::size_t frame_edge_max_pixels_ = 720000U;
 };
 
 /// Host wall-clock stage times; zero unless profile_stages_ is enabled.

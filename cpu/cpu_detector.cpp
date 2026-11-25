@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <iterator>
 #include <limits>
@@ -21,9 +22,12 @@
 #include <utility>
 #include <vector>
 
+#include "cpu_box_sample.hpp"
 #include "cpu_candidates.hpp"
 #include "cpu_component_candidates.hpp"
 #include "cpu_contours.hpp"
+#include "cpu_edge_regions.hpp"
+#include "cpu_grid_refine.hpp"
 #include "cpu_grouping.hpp"
 #include "cpu_sparse_pyramid.hpp"
 #include "cpu_threshold.hpp"
@@ -42,6 +46,44 @@ void message(std::string* out, const std::string& value) {
     if (out != nullptr) {
         *out = value;
     }
+}
+
+// Return the rows that can affect a threshold contour, with its full local window.
+cv::Range informative_rows(const cv::Mat& image, int halo) {
+    const auto* first = image.ptr<unsigned char>(0);
+    const auto* last = image.ptr<unsigned char>(image.rows - 1);
+    const auto uniform = [&](const unsigned char* row) {
+        return std::memcmp(row, row + 1, static_cast<std::size_t>(image.cols - 1)) == 0;
+    };
+    int start = 0, end = image.rows;
+    if (uniform(first)) {
+        while (start < end && std::memcmp(first, image.ptr<unsigned char>(start), image.cols) == 0)
+            ++start;
+        if (start == end)
+            return {0, 0};
+    }
+    if (uniform(last)) {
+        while (end > start && std::memcmp(last, image.ptr<unsigned char>(end - 1), image.cols) == 0)
+            --end;
+    }
+    return {std::max(0, start - halo), std::min(image.rows, end + halo)};
+}
+
+// Only an edge with real contrast can enclose a tag and its outer quiet zone.
+bool edge_has_contrast(const cv::Mat& image, bool horizontal, bool last) {
+    const int count = horizontal ? image.cols : image.rows;
+    const std::size_t step = horizontal ? 1 : image.step[0];
+    const auto* first = image.ptr<unsigned char>(horizontal && last ? image.rows - 1 : 0) +
+                        (!horizontal && last ? image.cols - 1 : 0);
+    int lowest = 255, highest = 0;
+    for (int i = 0; i < count; ++i) {
+        const int value = first[static_cast<std::size_t>(i) * step];
+        lowest = std::min(lowest, value);
+        highest = std::max(highest, value);
+        if (highest - lowest >= 8)
+            return true;
+    }
+    return false;
 }
 
 double elapsed_ms(Clock::time_point start) {
@@ -66,6 +108,7 @@ const std::map<std::string, int>& dictionary_table() {
             {"DICT_7X7_100", cv::aruco::DICT_7X7_100},
             {"DICT_7X7_250", cv::aruco::DICT_7X7_250},
             {"DICT_7X7_1000", cv::aruco::DICT_7X7_1000},
+            {"DICT_APRILTAG_36h11", cv::aruco::DICT_APRILTAG_36h11},
             {"DICT_ARUCO_ORIGINAL", cv::aruco::DICT_ARUCO_ORIGINAL},
             {"DICT_ARUCO_MIP_36h12", cv::aruco::DICT_ARUCO_MIP_36h12},
     };
@@ -286,6 +329,8 @@ public:
     Status detect(const cv::Mat& image, CpuResult* out, std::string* out_message);
 
 private:
+    Status detect_pass(const cv::Mat& image, CpuResult* out, std::string* out_message,
+                       unsigned edge_mask);
     void ensure_level(std::size_t level);
     bool sparse_work_is_smaller(const std::vector<CandidateNode>& nodes, int segmentation_width,
                                 int closest) const;
@@ -302,6 +347,7 @@ private:
     CpuOptions options_;
     cv::aruco::DetectorParameters parameters_;
     cv::aruco::Dictionary dictionary_;
+    std::vector<cv::Mat> decoded_grids_;
     std::vector<std::array<std::uint64_t, 4>> codes_;
     std::vector<ExactDictionaryEntry> exact_dictionary_;
     std::uint64_t valid_code_bits_ = 0U;
@@ -309,6 +355,7 @@ private:
     std::vector<cv::Size> pyramid_sizes_;
     std::size_t built_level_ = 0U;
     cv::Mat segmentation_;
+    cv::Mat padded_segmentation_;
     std::vector<cv::Mat> binary_;
     std::vector<detail::ContourWorkspace> contour_workspaces_;
     std::vector<int> windows_;
@@ -373,6 +420,34 @@ Status CpuDetector::Impl::initialize(const std::string& dictionary_name,
         message(out_message, "sparse_max_work_ratio must be finite and nonnegative");
         return Status::kInvalidConfig;
     }
+    if (options.decoded_grid_radius_px_ != 0 &&
+        (options.decoded_grid_radius_px_ < 2 || options.decoded_grid_radius_px_ > 32 ||
+         dictionary_name != "DICT_APRILTAG_36h11" || config.marker_border_bits_ != 1)) {
+        message(out_message,
+                "decoded grid refinement requires tag36h11, one border cell and a radius of 2..32 "
+                "pixels");
+        return Status::kInvalidConfig;
+    }
+    if (options.decode_at_source_resolution_ &&
+        (!config.use_aruco3_detection_ || dictionary_name != "DICT_APRILTAG_36h11")) {
+        message(out_message, "source-resolution decoding requires the tag36h11 ArUco3 search");
+        return Status::kInvalidConfig;
+    }
+    if (options.candidate_box_stride_px_ != 0 &&
+        (!options.decode_at_source_resolution_ || options.candidate_box_stride_px_ < 2 ||
+         options.candidate_box_stride_px_ > 8)) {
+        message(out_message,
+                "candidate box stride must be zero, or 2..8 with source-resolution decoding");
+        return Status::kInvalidConfig;
+    }
+    if (options.search_frame_edges_ &&
+        (!options.decode_at_source_resolution_ || config.min_distance_to_border_px_ != 0 ||
+         options.decoded_grid_radius_px_ == 0)) {
+        message(out_message,
+                "frame-edge search requires source-resolution decoding, grid refinement and zero "
+                "border distance");
+        return Status::kInvalidConfig;
+    }
     const auto found = dictionary_table().find(dictionary_name);
     if (found == dictionary_table().end()) {
         message(out_message, "unsupported predefined dictionary: " + dictionary_name);
@@ -383,6 +458,12 @@ Status CpuDetector::Impl::initialize(const std::string& dictionary_name,
         if (this->dictionary_.markerSize > 7) {
             message(out_message, "packed dictionary supports marker sizes up to seven");
             return Status::kUnsupportedDictionary;
+        }
+        this->decoded_grids_.clear();
+        if (options.decoded_grid_radius_px_ != 0) {
+            this->decoded_grids_.resize(this->dictionary_.bytesList.rows);
+            for (int id = 0; id < this->dictionary_.bytesList.rows; ++id)
+                this->dictionary_.generateImageMarker(id, 8, this->decoded_grids_[id], 1);
         }
         this->config_ = config;
         this->options_ = options;
@@ -756,6 +837,90 @@ bool CpuDetector::Impl::identify_one(const std::vector<cv::Point2f>& corners, co
 }
 
 Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::string* out_message) {
+    if (!this->options_.search_frame_edges_ || out == nullptr || !this->initialized_) {
+        return this->detect_pass(image, out, out_message, 0U);
+    }
+    CpuResult frame;
+    const Status status = this->detect_pass(image, &frame, out_message, 0U);
+    if (status != Status::kOk)
+        return status;
+    try {
+        const bool profile = this->options_.profile_stages_;
+        auto start = profile ? Clock::now() : Clock::time_point{};
+        const auto regions = detail::edge_regions(image, this->options_.frame_edge_max_pixels_);
+        if (profile)
+            frame.stage_times_.preprocess_ms_ += elapsed_ms(start);
+        for (const auto& region : regions) {
+            // Only the original field of view can be extended. The other ROI sides
+            // are ordinary cuts through real image pixels.
+            const unsigned mask =
+                    (region.x == 0 ? 1U : 0U) | (region.br().x == image.cols ? 2U : 0U) |
+                    (region.y == 0 ? 4U : 0U) | (region.br().y == image.rows ? 8U : 0U);
+            CpuResult local;
+            const auto retry_status = this->detect_pass(image(region), &local, out_message, mask);
+            if (retry_status != Status::kOk)
+                return retry_status;
+            const std::size_t original_count = frame.ids_.size();
+            if (profile)
+                start = Clock::now();
+            for (std::size_t i = 0; i < local.ids_.size(); ++i) {
+                auto& corners = local.corners_[i];
+                for (auto& point : corners)
+                    point += cv::Point2f(region.tl());
+                const auto touches = [&](cv::Point2f p) {
+                    return p.x <= 3 || p.y <= 3 || p.x >= image.cols - 4 || p.y >= image.rows - 4;
+                };
+                if (!std::any_of(corners.begin(), corners.end(), touches))
+                    continue;
+                const auto duplicate = [&](const auto& previous) {
+                    const double radius = .2 * std::min(cv::norm(corners[0] - corners[2]),
+                                                        cv::norm(previous[0] - previous[2]));
+                    for (int offset = 0; offset < 4; ++offset) {
+                        bool same = true;
+                        for (int c = 0; c < 4; ++c)
+                            same &= cv::norm(previous[(c + offset) % 4] - corners[c]) <= radius;
+                        if (same)
+                            return true;
+                    }
+                    return false;
+                };
+                if (std::any_of(frame.corners_.begin(), frame.corners_.end(), duplicate))
+                    continue;
+                const int id = local.ids_[i];
+                const int budget = static_cast<int>(this->dictionary_.maxCorrectionBits *
+                                                    this->config_.error_correction_rate_);
+                const int ring_budget = static_cast<int>(
+                        this->dictionary_.markerSize * this->dictionary_.markerSize *
+                        this->config_.max_erroneous_bits_in_border_rate_);
+                if (!detail::visible_grid_matches(image, this->decoded_grids_[id], corners, budget,
+                                                  ring_budget))
+                    continue;
+                frame.ids_.push_back(id);
+                frame.corners_.push_back(std::move(corners));
+            }
+            frame.candidate_count_ += local.candidate_count_;
+            frame.rejected_count_ += local.rejected_count_ + local.ids_.size() -
+                                     (frame.ids_.size() - original_count);
+            if (profile) {
+                auto& times = frame.stage_times_;
+                times.preprocess_ms_ += local.stage_times_.preprocess_ms_;
+                times.threshold_ms_ += local.stage_times_.threshold_ms_;
+                times.candidates_ms_ += local.stage_times_.candidates_ms_;
+                times.trace_ms_ += local.stage_times_.trace_ms_;
+                times.group_ms_ += local.stage_times_.group_ms_;
+                times.decode_ms_ += local.stage_times_.decode_ms_;
+                times.refine_ms_ += local.stage_times_.refine_ms_ + elapsed_ms(start);
+            }
+        }
+        *out = std::move(frame);
+        return Status::kOk;
+    } catch (const std::exception& error) {
+        message(out_message, std::string("frame-edge search: ") + error.what());
+        return Status::kInvalidImage;
+    }
+}
+Status CpuDetector::Impl::detect_pass(const cv::Mat& image, CpuResult* out,
+                                      std::string* out_message, unsigned edge_mask) {
     if (out == nullptr) {
         message(out_message, "result must not be null");
         return Status::kInvalidArgument;
@@ -773,6 +938,15 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
                 "INT_MAX pixels");
         return Status::kInvalidImage;
     }
+    const auto first = reinterpret_cast<std::uintptr_t>(image.data);
+    const auto end = reinterpret_cast<std::uintptr_t>(image.dataend);
+    const std::size_t width = static_cast<std::size_t>(image.cols);
+    const std::size_t last_row = static_cast<std::size_t>(image.rows - 1);
+    if (image.step[1] != 1U || end < first || end - first < width ||
+        (last_row != 0U && image.step[0] > (end - first - width) / last_row)) {
+        message(out_message, "image storage must cover all visible bytes of each Gray8 row");
+        return Status::kInvalidImage;
+    }
     try {
         CpuResult result;
         ++this->frame_epoch_;
@@ -785,6 +959,7 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
                                this->config_.use_aruco3_detection_ && !image.isSubmatrix();
         const bool profile = this->options_.profile_stages_;
         Clock::time_point start = profile ? Clock::now() : Clock::time_point{};
+        const int box_step = this->options_.candidate_box_stride_px_;
         float scale = 1.0F;
         int levels = 0;
         int closest = 0;
@@ -794,6 +969,8 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
             scale = canonical /
                     (canonical + static_cast<float>(std::max(image.cols, image.rows)) *
                                          this->config_.min_marker_length_ratio_original_img_);
+            if (box_step > 0)
+                scale = 1.0F / box_step;
             const float image_area =
                     static_cast<float>(static_cast<double>(image.cols) * image.rows);
             const float marker_area = canonical * canonical;
@@ -801,16 +978,63 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
             const float scaled_area = image_area * scale * scale;
             closest = std::max(0, cvRound(std::log2(image_area / scaled_area) / 2.0F));
             levels = std::max(levels, closest);
+            if (this->options_.decode_at_source_resolution_) {
+                levels = 0;
+                closest = 0;
+            }
         }
-        const cv::Size segmentation_size(cvRound(scale * image.cols), cvRound(scale * image.rows));
+        const int minimum_extent = box_step > 0 ? 1 : 0;
+        const cv::Size segmentation_size(std::max(minimum_extent, cvRound(scale * image.cols)),
+                                         std::max(minimum_extent, cvRound(scale * image.rows)));
         if (segmentation_size.width <= 0 || segmentation_size.height <= 0) {
             message(out_message, "downscaling produces an empty segmentation image");
             return Status::kInvalidImage;
         }
         cv::Mat segmentation = image;
         if (scale != 1.0F) {
-            cv::resize(image, this->segmentation_, segmentation_size);
+            if (box_step != 0) {
+                detail::sample_box_grid(image, this->segmentation_, segmentation_size, box_step);
+            } else {
+                cv::resize(image, this->segmentation_, segmentation_size);
+            }
             segmentation = this->segmentation_;
+        }
+        const int neighborhood = this->windows_.back() / 2 + 2;
+        int trim_top = 0;
+        if (this->options_.decode_at_source_resolution_ && segmentation.cols >= segmentation.rows &&
+            this->config_.adaptive_thresh_constant_ >= 1.0) {
+            const cv::Range rows = informative_rows(segmentation, neighborhood);
+            if (rows.empty()) {
+                *out = std::move(result);
+                return Status::kOk;
+            }
+            trim_top = rows.start;
+            segmentation = segmentation.rowRange(rows);
+        }
+        int pad_top = 0, pad_bottom = 0, pad_left = 0, pad_right = 0;
+        if (edge_mask != 0U) {
+            if ((edge_mask & 4U) && trim_top == 0 && edge_has_contrast(segmentation, true, false))
+                pad_top = neighborhood;
+            if ((edge_mask & 8U) && trim_top + segmentation.rows == segmentation_size.height &&
+                edge_has_contrast(segmentation, true, true))
+                pad_bottom = neighborhood;
+            if ((edge_mask & 1U) && edge_has_contrast(segmentation, false, false))
+                pad_left = neighborhood;
+            if ((edge_mask & 2U) && edge_has_contrast(segmentation, false, true))
+                pad_right = neighborhood;
+        }
+        const bool padded = pad_top || pad_bottom || pad_left || pad_right;
+        if (padded) {
+            if (static_cast<std::int64_t>(segmentation.cols + pad_left + pad_right) *
+                        (segmentation.rows + pad_top + pad_bottom) >
+                std::numeric_limits<int>::max()) {
+                message(out_message, "padded candidate image exceeds INT_MAX pixels");
+                return Status::kInvalidImage;
+            }
+            cv::copyMakeBorder(segmentation, this->padded_segmentation_, pad_top, pad_bottom,
+                               pad_left, pad_right, cv::BORDER_CONSTANT | cv::BORDER_ISOLATED,
+                               cv::Scalar(255));
+            segmentation = this->padded_segmentation_;
         }
         this->pyramid_.resize(static_cast<std::size_t>(levels) + 1U);
         this->pyramid_sizes_.resize(this->pyramid_.size());
@@ -914,6 +1138,15 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
                 }
             }
         }
+        if (!padded && trim_top != 0) {
+            const cv::Point offset(0, trim_top);
+            for (auto& quad : candidates)
+                for (auto& corner : quad)
+                    corner += cv::Point2f(offset);
+            for (auto& contour : contours)
+                for (auto& point : contour)
+                    point += offset;
+        }
         result.candidate_count_ = candidates.size();
         for (std::vector<cv::Point2f>& candidate : candidates) {
             reorder_corners(candidate);
@@ -922,12 +1155,15 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
             result.stage_times_.trace_ms_ = elapsed_ms(start);
             start = Clock::now();
         }
+        // Test group bounds in the coordinates used for extraction. A fitted
+        // padded contour may be just outside the source while another member is visible.
+        const cv::Size group_size = padded ? segmentation.size() : segmentation_size;
         std::vector<CandidateNode> nodes =
                 this->options_.spatial_grouping_
-                        ? detail::filter_spatial_candidates(segmentation_size, candidates, contours,
+                        ? detail::filter_spatial_candidates(group_size, candidates, contours,
                                                             this->config_,
                                                             this->dictionary_.markerSize)
-                        : filter_too_close_candidates(segmentation_size, candidates, contours,
+                        : filter_too_close_candidates(group_size, candidates, contours,
                                                       this->config_, this->dictionary_.markerSize);
         if (profile) {
             result.stage_times_.group_ms_ = elapsed_ms(start);
@@ -939,6 +1175,25 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
         if (profile) {
             result.stage_times_.candidates_ms_ = elapsed_ms(candidates_start);
             start = Clock::now();
+        }
+        if (box_step != 0 || padded) {
+            // Group in the segmentation grid, then map each sampling center to its
+            // original pixel position. The existing decoder applies the width ratio.
+            const float ratio = static_cast<float>(segmentation_size.width) / image.cols;
+            const float center = (box_step - 2) / 2 + .5F;
+            const auto align = [&](std::vector<cv::Point2f>& corners) {
+                for (auto& point : corners) {
+                    if (padded)
+                        point += cv::Point2f(-pad_left, trim_top - pad_top);
+                    if (box_step != 0)
+                        point = ratio * (box_step * point + cv::Point2f(center, center));
+                }
+            };
+            for (auto& node : nodes) {
+                align(node.corners_);
+                for (auto& close : node.close_contours_)
+                    align(close.corners_);
+            }
         }
         const std::size_t count = nodes.size();
         std::vector<int> ids(count, -1);
@@ -1142,6 +1397,17 @@ Status CpuDetector::Impl::detect(const cv::Mat& image, CpuResult* out, std::stri
                     }
                 }
 
+                if (this->options_.decoded_grid_radius_px_ != 0) {
+                    auto fitted = corners;
+                    int verified_id = -1, rotation = -1;
+                    if (detail::fit_decoded_grid(image, this->decoded_grids_[ids[v]],
+                                                 this->options_.decoded_grid_radius_px_, fitted) &&
+                        this->identify_one(fitted, image, 1.0F, &verified_id, &rotation, workspace,
+                                           0) &&
+                        verified_id == ids[v] && rotation == 0) {
+                        corners.swap(fitted);
+                    }
+                }
                 result.ids_[destination] = ids[v];
                 result.corners_[destination] = std::move(corners);
             }

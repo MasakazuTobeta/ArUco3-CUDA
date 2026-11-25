@@ -17,6 +17,8 @@ This document defines the policy for handling code and intellectual property fro
 
 ## Current state
 
+- NAPA 0.6.1 declares GPL-3.0-only in its [release metadata](https://pypi.org/project/napa-vision/0.6.1/#license). Limit NAPA use to external benchmarking through the released binary wheel and public API. Keep its source code outside algorithm research, implementation and review. Project detector development uses this repository’s own code and documented permissive sources. The [benchmark record](../Benchmark.md#experimental-tag36h11-cpu-routes) identifies the source of the experimental CPU algorithms.
+
 - The wording on the official ArUco page of the Universidad de Córdoba was checked on 2026-08-29. The original text is as follows (the rights holder's personal mail address is withheld).
 
   > This software is licensed under GPLv3 license for personal, research and educational purposes. For a commercial license please contact [rights holder's contact]

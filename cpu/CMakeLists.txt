@@ -2,6 +2,9 @@
 # Experimental CPU detector. No CUDA objects or runtime libraries are linked.
 add_library(aruco3cuda_cpu STATIC
   cpu_detector.cpp
+  cpu_grid_refine.cpp
+  cpu_box_sample.cpp
+  cpu_edge_regions.cpp
   cpu_component_candidates.cpp
   cpu_grouping.cpp
   cpu_contours.cpp
@@ -24,6 +27,10 @@ add_executable(aruco3cuda_cpu_benchmark benchmark.cpp)
 target_link_libraries(aruco3cuda_cpu_benchmark
   PRIVATE aruco3cuda::cpu aruco3cuda::util aruco3cuda::corpusgen
           aruco3cuda::warnings aruco3cuda::coverage)
+
+add_executable(aruco3cuda_apriltag_contour_sequence ../apriltag/benchmark/contour_sequence.cpp)
+target_link_libraries(aruco3cuda_apriltag_contour_sequence
+  PRIVATE aruco3cuda::cpu aruco3cuda::warnings aruco3cuda::coverage)
 
 add_executable(aruco3cuda_cpu_resources resource_probe.cpp)
 target_link_libraries(aruco3cuda_cpu_resources

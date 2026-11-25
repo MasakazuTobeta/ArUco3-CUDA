@@ -21,7 +21,7 @@ import os
 import re
 import sys
 
-kSkipDirs = {".git", "build", "node_modules"}
+kSkipDirs = {".git", ".runtime", "build", "node_modules"}
 kLinkPattern = re.compile(r"\]\(([^)\s]+?)(?:#[^)]*)?\)")
 
 

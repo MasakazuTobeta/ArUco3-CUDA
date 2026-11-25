@@ -42,10 +42,29 @@ Independent `CpuOptions` switches expose these experiments:
 | `sparse_pyramid_` | Generate only demanded current-frame pyramid tiles, with monitored sampling and refinement footprints. | Keep global phase and coordinates, invalidate tile validity every frame, and preserve exact numerical behavior; see [sparse design](cpu_sparse_pyramid.md). |
 | `profile_stages_` | Record host wall-clock boundaries. | Disabled for latency measurements; pyramid generation performed lazily is attributed to decode/refinement rather than preprocessing. |
 
+For `DICT_APRILTAG_36h11`, the following opt-in settings provide a host
+contour search with full-resolution tag sampling. They can be used together.
+
+| Setting | Effect |
+| --- | --- |
+| `decode_at_source_resolution_` | Search at the configured ArUco3 scale, then decode from the input pixels. When possible, skip identical leading and trailing rows of the segmentation image, retaining the threshold window's halo. |
+| `candidate_box_stride_px_` | Zero uses the configured resize. Values 2–8 sample a centered 2×2 patch on a fixed grid. Both row averages and the final average round up at a half integer. A sparse grid can miss small or oblique tags. |
+| `decoded_grid_radius_px_` | Zero disables this refinement. Values 2–32 bound the local displacement search in pixels. Fit the outer edges first, then fit a projective correction from visible black-to-white transitions of the oriented payload. Accept updated corners when the original image decodes to the same ID and rotation. This requires one border cell. |
+| `search_frame_edges_` | Keep the full-frame results and retry bounded regions around dark runs on the physical frame perimeter. Only the candidate image gets a bright exterior. Accept an additional near-edge observation after checking its cells on the unpadded source. Requires source-resolution decoding, grid refinement and zero minimum border distance. `frame_edge_max_pixels_` limits the total input area of these regions (720,000 pixels by default). |
+
+The projective fit uses the tag's printed grid, signed luminance differences and a
+weighted least-squares homography update. The wide outer-edge initializer is based
+on this project's [CUDA edge fit](../apriltag/gpu/README.md). The codewords and
+canonical orientation come from the pinned OpenCV dictionary. The [standalone AprilTag 3 CPU library](../apriltag/cpu/README.md)
+has its own candidate search and build.
+
 The retained defaults enable pyramid reuse, packed and exact-code dictionary matching,
 fused cells, shared thresholding, filtered contour tracing, sparse pyramids, cached refinement,
 per-window parallelism and per-depth decode/refinement parallelism. Compact contours,
 component prefiltering, component candidates, Otsu dry run and spatial grouping remain opt-in.
+On little-endian Arm64, filtered contour tracing finds the next run with bounded
+64-bit loads. An isolated foreground pixel gets the usual visited mark and skips
+tracing when its one-point contour cannot pass the configured minimum perimeter.
 The experimental switches preserve the earlier implementation for paired comparison. All switches may be disabled to obtain
 the compatibility control. Current results and retained/rejected experiments are recorded
 in the [steady-state evaluation report](../docs/cpu-steady-state-report.md).

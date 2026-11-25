@@ -4,6 +4,9 @@
 **/build/
 compile_commands.json
 
+# Local experiment notes, measurement records and build snapshots
+/.runtime/
+
 # Environment-specific container settings
 docker/.env
 

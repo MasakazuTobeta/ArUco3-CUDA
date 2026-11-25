@@ -33,6 +33,12 @@ queueing and pipelined throughput need a separate application-level study.
 The NVIDIA runner retains the Isaac ROS tile size of 4. With a response at
 capacity the harness fails the run so a truncated output cannot score as a pass.
 
+### Ordered CPU video accuracy
+
+The [four-detector replay](compare_video_quality.py) scores the experimental CPU video detector against the NAPA binary, NVIDIA cuAprilTags and official OpenCV 4.14.0. It reads the paired CPU observations, verifies the manifest and image hashes, and runs the two other detectors on the same native Gray8 pixels. Official OpenCV uses the 36h11 dictionary, AprilTag corner refinement and decimation 1. The NVIDIA corner order is rotated into the manifest convention before scoring.
+
+Each comparison reports the exact reference-only locations, ID and rotation errors, stale outputs, first-appearance delays for labelled tracks, and corner RMSE on shared matches. For calibrated synthetic cameras it also groups results by incidence angle. An incompletely labelled recording has no assigned false-positive rate. The CPU throughput ratio comes from the original ordered NAPA/project pair. When an independent print control and the annotation source establish the pixel origin, pass `--label-origin pixel-center` or `pixel-corner` to obtain an additional normalized score alongside the raw score. [Conditions and scores](../../Benchmark.md)
+
 ### Quality on the common tag36h11 family
 
 Both hosts produced identical observations for each route on the 96 annotated

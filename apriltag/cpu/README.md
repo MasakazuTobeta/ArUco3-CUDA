@@ -11,6 +11,12 @@ corners in OpenCV's canonical order. The library supports `tag16h5`, `tag25h9`,
 The detector uses AprilRobotics' quad extraction, edge refinement and Hamming decoder.
 It keeps the family, index and thread pool across calls. Each call scans its own pixels.
 Uniform leading and trailing rows can be skipped with a halo aligned to the threshold tiles.
+Connected components use one 32-bit entry per pixel for the parent and component size.
+This halves union-find storage while retaining the existing component traversal and
+representative tie-breaking, which determine the boundary cluster ordering.
+Workers label disjoint row ranges and the caller joins their boundaries before
+gradient workers read the component forest. The gradient lookups use read-only
+parent traversal, so they never update a shared node.
 After refinement it checks convexity, projected cell size, the black border and agreement
 with the decoded payload. Each cell needs a majority of its 16 samples to match.
 This rejects chance matches in textured backgrounds.
@@ -26,16 +32,30 @@ with a compact decoder index. [Third-party notices](../../NOTICE)
 From the repository root, build with CMake 3.24+, a C compiler and a C++17 compiler.
 The first configure downloads and verifies the pinned source archive. For an offline
 build set `FETCHCONTENT_SOURCE_DIR_APRILTAG3` to the extracted revision.
+The build generates copies of the pinned `apriltag_quad_thresh.c` and `apriltag.c`.
+The quad extractor uses the [project's compact union-find implementation](quad_union_find.h)
+and makes its gradient lookups read-only. The detector propagates a failure to
+allocate the component forest as `std::system_error` with `ENOMEM`. Other upstream
+allocation paths retain their pinned behavior.
+The supported dimensions cap the forest at 32,767² pixels plus one unused
+entry, which fits the signed parent and component-size encodings. The allocator
+checks the entry count against the platform's `size_t` before multiplication.
+The source checkout stays untouched and the generated files retain upstream notices.
 
 ```sh
 cmake -S apriltag/cpu -B build/april-host -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/april-host
+ctest --test-dir build/april-host --output-on-failure
 cmake --install build/april-host --prefix "$PWD/build/april-prefix"
 ```
 
 CMake consumers can set `CMAKE_PREFIX_PATH` to this prefix, call
 `find_package(aruco3_apriltag_cpu REQUIRED)` and link `aruco3cuda::apriltag_cpu`.
 The standalone library requires neither OpenCV nor CUDA.
+The standalone CTest uses the C runtime to verify component encoding, root
+tie-breaking, read-only lookup, and checked allocation sizes. It injects an allocator
+failure at the largest accepted size without reserving that much memory. Set
+`BUILD_TESTING=OFF` to skip this standalone test.
 
 ```cpp
 #include <aruco3cuda/apriltag/cpu/detector.hpp>
@@ -111,8 +131,8 @@ active on Spark. Its 1080p four-thread candidate runs ranged from 92 to 146 FPS.
 ## Reproduce
 
 Configure with `-DARUCO3_APRILTAG_CPU_COMPARE=ON` in the pinned OpenCV 4.14
-environment and rebuild. The tests cover every family, rotations, error correction,
-strided images, tiny images, a missing border and malformed inputs. At decimations
+environment and rebuild. The comparison tests cover every family, rotations,
+error correction, strided images, tiny images, a missing border and malformed inputs. At decimations
 1–4 they also check oriented corners against the printed square on one and four
 workers. Each observation row records the SHA-256 of the scored manifest.
 

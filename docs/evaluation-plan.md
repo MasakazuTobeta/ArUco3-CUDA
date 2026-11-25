@@ -20,6 +20,8 @@ Use the report for the implementation and workload being reproduced. Each identi
 | AprilTag CPU and CUDA | Changing frames, rotated and damaged tags, industrial photographs. CPU compares with OpenCV and CUDA with NVIDIA cuAprilTags. | [CPU results](../apriltag/cpu/README.md), [GPU results](../apriltag/benchmark/README.md) and [quality checks](../apriltag/evaluation/README.md) |
 | November 19 performance refresh | Six reachable CUDA hosts, changing 1080p and 4K frames, and native industrial photographs up to 8256×6192. | [Results and reproduction](measurements/2026-11-19-performance-refresh/README.md) |
 
+The [AprilTag CPU video benchmark](../Benchmark.md) records the current single-core evaluation conditions and scores for ordered tag36h11 sequences.
+
 ### Routes and timing boundaries
 
 | Route in the benchmark | Input | End of measured interval |

@@ -5,6 +5,13 @@ grayscale device buffer. Both return tag IDs and clockwise corners in the origin
 image coordinates, starting at the canonical top left of the tag. They support
 tag16h5, tag25h9, tag36h10 and tag36h11. Reuse a detector across frames.
 
+For single-threaded `tag36h11` video, the experimental `VideoDetector` processes
+ordered Gray8 frames with one fixed configuration. It handles moving tags,
+structured backgrounds and unrectified fisheye images. Small distant tags in
+competition footage and low-contrast print throughput remain limiting cases.
+[Video detector](small_cpu/README.md#ordered-video-search) ·
+[Accuracy and FPS by workload](../Benchmark.md#results)
+
 ## Build
 
 For CPU only, use a C++17 and C toolchain and CMake 3.24+. The build obtains
