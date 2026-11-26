@@ -4,12 +4,11 @@
 
 #include <opencv2/core.hpp>
 
-#include <array>
 #include <cstddef>
-#include <cstdint>
 #include <vector>
 
 #include "aruco3cuda/config.hpp"
+#include "cpu_contour_scan.hpp"
 
 namespace aruco3cuda::cpu::detail {
 
@@ -35,13 +34,11 @@ public:
                 std::vector<std::vector<cv::Point>>& contours);
 
 private:
-    bool trace(int row, int column, bool external);
-    void append_quad(const DetectorConfig& config, int longest, std::size_t minimum,
-                     std::size_t maximum, std::vector<std::vector<cv::Point2f>>& candidates,
+    void append_quad(std::vector<cv::Point>& trace, const DetectorConfig& config, int longest,
+                     std::size_t minimum, std::size_t maximum,
+                     std::vector<std::vector<cv::Point2f>>& candidates,
                      std::vector<std::vector<cv::Point>>& contours);
-    cv::Mat padded_;
-    std::array<std::ptrdiff_t, 16> offsets_{};
-    std::vector<cv::Point> trace_;
+    ContourScanner scanner_;
     std::vector<cv::Point> approximation_;
 };
 

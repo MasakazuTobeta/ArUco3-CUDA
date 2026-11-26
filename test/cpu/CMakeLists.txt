@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 add_executable(aruco3cuda_cpu_tests
-  test_cpu_detector.cpp test_cpu_threshold.cpp test_cpu_grouping.cpp
+  test_cpu_detector.cpp test_cpu_grid_refine.cpp test_cpu_threshold.cpp test_cpu_grouping.cpp
   test_cpu_accuracy_stress.cpp test_cpu_sparse_pyramid.cpp test_cpu_contours.cpp)
 target_link_libraries(aruco3cuda_cpu_tests
   PRIVATE aruco3cuda::cpu aruco3cuda::corpusgen aruco3cuda::cpu_quality

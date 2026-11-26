@@ -12,9 +12,11 @@ This repository includes independent reimplementations of OpenCV behavior and
 adapted portions of permissively licensed OpenCV source. The monitored CPU
 refinement arithmetic in cpu/cpu_sparse_pyramid.cpp is adapted from the BSD
 cornersubpix.cpp implementation. The CPU contour scanner is adapted from the
-Apache-2.0 contours_truco.cpp implementation. Other reproduced arithmetic,
-evaluation order and rounding support compatibility checks against the CPU
-baseline. The files and nature of each reuse are recorded in module sidecars
+Apache-2.0 contours_truco.cpp implementation. The bounded AprilTag CPU quad
+approximation adapts the BSD approx.cpp implementation and retains its
+source notice in apriltag/small_cpu/LICENSE.opencv-approx. Other reproduced
+arithmetic, evaluation order and rounding support compatibility checks
+against the CPU baseline. The files and nature of each reuse are recorded in module sidecars
 and docs/code-provenance.md.
 
 OpenCV 4.x is distributed under the Apache License 2.0, but a number of its
