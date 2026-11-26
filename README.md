@@ -80,18 +80,19 @@ host GPU p50 ranged from 1.31 to 4.23 ms across these machines.
 #### CPU video
 
 One-core median detector-call latency (p50, ms) for a moving marker over
-fixed texture. Both routes process the same 24 rendered frames per sequence
-with ArUco3 enabled. The video route uses prior detections and pixel changes
-to select regions and periodically searches the full frame.
+fixed texture. All routes process the same 24 rendered frames with ArUco3
+enabled. “Single image” uses the project's full-frame detector. “No history”
+resets the video detector before every frame. Ordered mode retains history
+within the sequence. OpenCV 4.14.0 uses matching ArUco3 settings.
 
-| CPU host | 720p full | 720p video | 4K full | 4K video |
-| --- | ---: | ---: | ---: | ---: |
-| DGX Spark | 1.440 | 0.307 | 2.332 | 0.765 |
-| Jetson AGX Orin | 3.459 | 0.839 | 6.051 | 2.475 |
-| Jetson AGX Thor | 2.421 | 0.542 | 4.095 | 1.424 |
-| Xeon w7-3565X | 1.988 | 0.419 | 3.107 | 1.122 |
-| Core i9-12900KS | 1.818 | 0.385 | 2.839 | 1.023 |
-| Core Ultra 7 265 | 1.737 | 0.355 | 2.700 | 0.937 |
+| CPU host | 720p OpenCV | 720p single image | 720p no history | 720p ordered | 4K OpenCV | 4K single image | 4K no history | 4K ordered |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DGX Spark | 2.317 | 1.440 | 1.452 | 0.307 | 4.144 | 2.332 | 2.470 | 0.765 |
+| Jetson AGX Orin | 5.107 | 3.459 | 3.564 | 0.839 | 10.631 | 6.051 | 6.466 | 2.475 |
+| Jetson AGX Thor | 3.894 | 2.421 | 2.453 | 0.542 | 8.123 | 4.095 | 4.252 | 1.424 |
+| Xeon w7-3565X | 2.663 | 1.988 | 2.035 | 0.419 | 5.342 | 3.107 | 3.316 | 1.122 |
+| Core i9-12900KS | 2.273 | 1.818 | 1.847 | 0.385 | 4.399 | 2.839 | 2.938 | 1.023 |
+| Core Ultra 7 265 | 2.159 | 1.737 | 1.772 | 0.355 | 4.185 | 2.700 | 2.803 | 0.937 |
 
 Across the three textured sequences, the video detector delivered
 1.89–3.71× full-frame FPS. All four

@@ -2,6 +2,7 @@
 // Prepared, ordered Gray8 sequences for measuring synchronous CPU detector calls.
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/objdetect/aruco_detector.hpp>
 #include <opencv2/objdetect/aruco_dictionary.hpp>
 
 #include <algorithm>
@@ -125,12 +126,15 @@ void check(aruco3cuda::Status status, const std::string& message) {
 }
 
 template <typename Detect>
-Run measure(const std::vector<Frame>& frames, Detect detect) {
+Run measure(const std::vector<Frame>& frames, Detect detect,
+            CpuVideoDetector* reset_each_frame = nullptr) {
     Run run;
     run.results_.resize(frames.size());
     run.samples_.reserve(frames.size());
     const auto sequence_start = Clock::now();
     for (std::size_t t = 0; t < frames.size(); ++t) {
+        if (reset_each_frame != nullptr)
+            reset_each_frame->reset();
         const auto start = Clock::now();
         const bool full = detect(frames[t].image_, run.results_[t]);
         const auto end = Clock::now();
@@ -253,7 +257,7 @@ void report(const std::string& scene, int resolution, const std::string& digest,
     std::cout << '\n';
 }
 
-void run_scene(const std::string& scene, int resolution, int repeats) {
+void run_scene(const std::string& scene, int resolution, int repeats, bool table_baselines) {
     const auto frames = render(scene, resolution / 720);
     aruco3cuda::util::Sha256 pixels;
     for (const auto& frame : frames) {
@@ -277,6 +281,39 @@ void run_scene(const std::string& scene, int resolution, int repeats) {
         result = std::move(output.detections_);
         return output.full_frame_;
     };
+    if (table_baselines) {
+        const aruco3cuda::DetectorConfig config;
+        cv::aruco::DetectorParameters parameters;
+        parameters.useAruco3Detection = config.use_aruco3_detection_;
+        parameters.minSideLengthCanonicalImg = config.min_side_length_canonical_img_px_;
+        parameters.minMarkerLengthRatioOriginalImg = config.min_marker_length_ratio_original_img_;
+        parameters.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;
+        const cv::aruco::ArucoDetector opencv(
+                cv::aruco::getPredefinedDictionary(cv::aruco::DICT_ARUCO_MIP_36h12), parameters);
+        auto opencv_call = [&](const cv::Mat& image, CpuResult& result) {
+            opencv.detectMarkers(image, result.corners_, result.ids_);
+            return true;
+        };
+        const Run control = measure(frames, full_call);
+        (void)measure(frames, opencv_call);
+        (void)measure(frames, video_call, &video);
+        for (int r = 0; r < repeats; ++r) {
+            Run reference;
+            Run no_history;
+            if (r % 2 == 0) {
+                reference = measure(frames, opencv_call);
+                no_history = measure(frames, video_call, &video);
+            } else {
+                no_history = measure(frames, video_call, &video);
+                reference = measure(frames, opencv_call);
+            }
+            report(scene, resolution, digest, r + 1, "opencv", reference,
+                   compare(frames, reference, control));
+            report(scene, resolution, digest, r + 1, "no_history", no_history,
+                   compare(frames, no_history, control));
+        }
+        return;
+    }
     (void)measure(frames, full_call);
     (void)measure(frames, video_call);
     for (int r = 0; r < repeats; ++r) {
@@ -312,12 +349,17 @@ int main(int argc, char** argv) {
     try {
         int repeats = 3;
         int resolution = 720;
+        bool table_baselines = false;
         for (int i = 1; i < argc; ++i) {
             const std::string option = argv[i];
             if (option == "--help") {
                 std::cout << "aruco3cuda_cpu_video_tracking_trial [--resolution 720|2160] "
-                             "[--repeats N]\n";
+                             "[--repeats N] [--table-baselines]\n";
                 return EXIT_SUCCESS;
+            }
+            if (option == "--table-baselines") {
+                table_baselines = true;
+                continue;
             }
             if ((option != "--resolution" && option != "--repeats") || ++i >= argc) {
                 throw std::invalid_argument("unknown option or missing argument: " + option);
@@ -334,7 +376,7 @@ int main(int argc, char** argv) {
         cv::setNumThreads(1);
         for (const char* scene :
              {"steady_clean", "motion_texture", "entry_exit_texture", "cut_texture"}) {
-            run_scene(scene, resolution, repeats);
+            run_scene(scene, resolution, repeats, table_baselines);
         }
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

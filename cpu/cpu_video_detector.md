@@ -144,6 +144,39 @@ The same pixels produced no detection during the next full refresh or the
 following unchanged regional frame. Keep minimum marker size and detection
 stability in the evaluation of any deployment configuration.
 
+### OpenCV and no-history baselines
+
+The README uses the motion-over-texture sequence. OpenCV 4.14.0 uses the
+same MIP dictionary, ArUco3 settings and subpixel refinement. The no-history
+route uses the video detector with an explicit reset before each call.
+The reset occurs before the per-frame timer. Sequence FPS includes that
+reset, and per-frame percentiles start at the subsequent detect call.
+
+The two baseline routes ran in a follow-up batch on each of the same six
+hosts, with matching sequence hashes, pinned cores and run counts. Across
+all four sequences and both resolutions, both routes matched the benchmark's
+full-frame result in IDs and ordered corners. Each route searched the
+full frame 24 times per traversal. The table below gives p50 / p95 / p99
+in milliseconds for motion over fixed texture.
+
+| Host | Size | OpenCV | Video, no history |
+| --- | --- | ---: | ---: |
+| DGX Spark | 720p | 2.317 / 2.386 / 2.465 | 1.452 / 1.540 / 1.622 |
+| DGX Spark | 4K | 4.144 / 4.224 / 4.266 | 2.470 / 3.183 / 3.250 |
+| Jetson AGX Orin | 720p | 5.107 / 5.177 / 5.357 | 3.564 / 3.664 / 3.765 |
+| Jetson AGX Orin | 4K | 10.631 / 10.764 / 11.070 | 6.466 / 9.407 / 9.536 |
+| Jetson AGX Thor | 720p | 3.894 / 3.940 / 4.050 | 2.453 / 2.536 / 2.685 |
+| Jetson AGX Thor | 4K | 8.123 / 8.196 / 8.216 | 4.252 / 6.373 / 6.540 |
+| Xeon w7-3565X | 720p | 2.663 / 2.794 / 2.808 | 2.035 / 2.082 / 2.253 |
+| Xeon w7-3565X | 4K | 5.342 / 5.606 / 5.706 | 3.316 / 4.670 / 4.734 |
+| Core i9-12900KS | 720p | 2.273 / 2.302 / 2.367 | 1.847 / 1.872 / 1.889 |
+| Core i9-12900KS | 4K | 4.399 / 4.447 / 4.528 | 2.938 / 4.169 / 4.201 |
+| Core Ultra 7 265 | 720p | 2.159 / 2.183 / 2.235 | 1.772 / 1.793 / 1.833 |
+| Core Ultra 7 265 | 4K | 4.185 / 4.600 / 4.612 | 2.803 / 3.903 / 4.031 |
+
+To repeat this batch, add `--table-baselines` to each command below. Raw
+baseline output is retained locally in `build/aruco-video-aligned/`.
+
 ### Reproduction
 
 Build the standalone project with the pinned OpenCV package. The sequence
