@@ -77,6 +77,29 @@ Host GPU times include upload and download. On 32 changing 4K frames,
 host GPU p50 ranged from 1.31 to 4.23 ms across these machines.
 [ArUco benchmark details](docs/measurements/2026-11-19-performance-refresh/README.md#aruco-changing-frames)
 
+#### CPU video
+
+One-core median detector-call latency (p50, ms) for a moving marker over
+fixed texture. Both routes process the same 24 rendered frames per sequence
+with ArUco3 enabled. The video route uses prior detections and pixel changes
+to select regions and periodically searches the full frame.
+
+| CPU host | 720p full | 720p video | 4K full | 4K video |
+| --- | ---: | ---: | ---: | ---: |
+| DGX Spark | 1.440 | 0.307 | 2.332 | 0.765 |
+| Jetson AGX Orin | 3.459 | 0.839 | 6.051 | 2.475 |
+| Jetson AGX Thor | 2.421 | 0.542 | 4.095 | 1.424 |
+| Xeon w7-3565X | 1.988 | 0.419 | 3.107 | 1.122 |
+| Core i9-12900KS | 1.818 | 0.385 | 2.839 | 1.023 |
+| Core Ultra 7 265 | 1.737 | 0.355 | 2.700 | 0.937 |
+
+Across the three textured sequences, the video detector delivered
+1.89–3.71× full-frame FPS. All four
+sequences had zero missed tags, extra detections, or first-appearance delays.
+Full searches can raise tail latency. Small tags can also change detection
+status when region and full-frame search use different scales.
+[FPS, tail latency, detection quality and conditions](cpu/cpu_video_detector.md#measurement)
+
 ### AprilTag
 
 #### CPU

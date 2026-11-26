@@ -2,6 +2,7 @@
 # Experimental CPU detector. No CUDA objects or runtime libraries are linked.
 add_library(aruco3cuda_cpu STATIC
   cpu_detector.cpp
+  cpu_video_detector.cpp
   cpu_grid_refine.cpp
   cpu_box_sample.cpp
   cpu_edge_regions.cpp
@@ -41,6 +42,10 @@ add_executable(aruco3cuda_cpu_video video_benchmark.cpp)
 target_link_libraries(aruco3cuda_cpu_video
   PRIVATE aruco3cuda::cpu aruco3cuda::util Threads::Threads
           aruco3cuda::warnings aruco3cuda::coverage)
+
+add_executable(aruco3cuda_cpu_video_tracking_trial video_tracking_trial.cpp)
+target_link_libraries(aruco3cuda_cpu_video_tracking_trial
+  PRIVATE aruco3cuda::cpu aruco3cuda::util aruco3cuda::warnings aruco3cuda::coverage)
 
 # Architecture tuning is explicit and never changes floating-point semantics.
 option(ARUCO3CPU_NATIVE "Tune the experimental CPU library for the build host" OFF)
