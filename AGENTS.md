@@ -103,3 +103,11 @@ When a failure that could recur or an environment-specific caveat comes to light
 ### Affinity tests in restricted containers
 
 - A container or job scheduler may exclude CPU 0 from the process affinity mask. A successful-affinity test must select a CPU returned by `sched_getaffinity`, then restore the original mask so later cases are not constrained. Preserve an `affinity-failed` result for unavailable CPUs; do not relax the production error check or widen the container CPU allocation merely to pass the test.
+
+### AprilTag benchmark builds on Jetson AGX Thor
+
+- GCC 13.3 with `-mcpu=native` can reject the `std::vector` allocator in `summarize_sve` in `apriltag/small_cpu/automatic_search.cpp`. The helper's explicit `arch=armv8.2-a+sve` target differs from the native translation-unit target, and GCC reports an `always_inline` target-option mismatch. Configure the standalone benchmark with `-DCMAKE_CXX_FLAGS=-march=armv8.2-a` on this toolchain, keep the failure log, and report the actual build target with the results.
+
+### Native-resolution OpenCV AprilTag timing on the 4K checkerboard
+
+- The `mixed-4k` sequence includes a marker-free checkerboard that can take tens of seconds per call in one-core OpenCV `CORNER_REFINE_APRILTAG` detection at decimation 1. A slow process that is still making progress is not a hang. Retain the timed frame and label any reduction in independent process count. Report aggregate FPS and per-call percentiles separately so the checkerboard's time is not hidden by the median.

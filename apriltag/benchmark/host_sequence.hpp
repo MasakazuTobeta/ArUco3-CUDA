@@ -30,7 +30,8 @@ void write_tag(std::size_t index, int id, const Corners& corners) {
 }
 
 template <class Backend, class PreparePass, class... Options>
-int run_with_prepare(int argc, char** argv, PreparePass prepare_pass, Options... options) {
+int run_with_prepare(int argc, char** argv, PreparePass prepare_pass, bool reset_each_frame,
+                     Options... options) {
     if (argc < 5)
         throw std::invalid_argument("usage: sequence STRIDE WARMUP PASSES image.pgm [...]");
     const int stride = integer(argv[1], 0, 8);
@@ -46,8 +47,11 @@ int run_with_prepare(int argc, char** argv, PreparePass prepare_pass, Options...
     Backend detector(stride, options...);
     std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
     for (int pass = -warmup; pass < passes; ++pass) {
-        prepare_pass(detector);
+        if (!reset_each_frame)
+            prepare_pass(detector);
         for (std::size_t i = 0; i < frames.size(); ++i) {
+            if (reset_each_frame)
+                prepare_pass(detector);
             const auto start = std::chrono::steady_clock::now();
             detector.detect(frames[i]);
             const auto elapsed = std::chrono::duration<double, std::milli>(
@@ -63,7 +67,7 @@ int run_with_prepare(int argc, char** argv, PreparePass prepare_pass, Options...
 
 template <class Backend, class... Options>
 int run(int argc, char** argv, Options... options) {
-    return run_with_prepare<Backend>(argc, argv, [](Backend&) {}, options...);
+    return run_with_prepare<Backend>(argc, argv, [](Backend&) {}, false, options...);
 }
 
 template <class Backend>

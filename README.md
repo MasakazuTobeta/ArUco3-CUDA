@@ -97,6 +97,29 @@ return host detections.
 
 [CPU benchmark details, including one-thread results](docs/measurements/2026-11-19-performance-refresh/README.md#apriltag-cpu-at-4k)
 
+**Single images vs. ordered video, one CPU core per host.** All routes
+process the same predecoded `tag36h11` frames. “Single image” uses the
+project's experimental `Detector`. “No history” resets `VideoDetector` before
+every frame. Ordered mode retains history within each traversal. OpenCV 4.14.0
+uses native-resolution AprilTag detection. Values are median per-frame
+detector-call latencies (p50) in milliseconds. Lower is better.
+
+| CPU host | 720p OpenCV | 720p single image | 720p no history | 720p ordered | 4K OpenCV | 4K single image | 4K no history | 4K ordered |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DGX Spark | 42.185 | 0.842 | 0.165 | 0.123 | 35.511 | 1.197 | 0.769 | 0.781 |
+| Jetson AGX Orin | 107.260 | 2.094 | 0.606 | 0.448 | 67.484 | 4.293 | 2.660 | 2.666 |
+| Jetson AGX Thor | 71.947 | 1.384 | 0.331 | 0.220 | 51.782 | 1.887 | 1.334 | 1.358 |
+| Xeon w7-3565X | 48.807 | 1.018 | 0.225 | 0.153 | 52.589 | 1.995 | 1.101 | 1.091 |
+| Core i9-12900KS | 44.914 | 0.906 | 0.220 | 0.145 | 37.730 | 1.371 | 0.689 | 0.682 |
+| Core Ultra 7 265 | 41.746 | 0.846 | 0.218 | 0.140 | 140.663 | 1.360 | 0.667 | 0.668 |
+
+On all six hosts, the video detector lowered median latency versus the
+single-image detector even without history. Using history lowered p50
+further on the 72-frame 720p motion input, but not consistently on the 32
+independently rendered 4K frames. The p50 does not capture the long
+OpenCV calls on the 4K checkerboard.
+[Throughput, tail latency, detection quality and conditions](Benchmark.md#single-images-vs-ordered-video)
+
 #### CUDA
 
 Median detector-call latency (p50) on 32 changing 3840×2160 `tag36h11`

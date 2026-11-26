@@ -113,11 +113,16 @@ int main(int argc, char** argv) {
         const bool recover =
                 argc > options + 1 && std::string_view(argv[options + 1]) == "--recover";
         options += recover ? 1 : 0;
+        const bool reset_each_frame =
+                argc > options + 1 && std::string_view(argv[options + 1]) == "--reset-each-frame";
+        options += reset_each_frame ? 1 : 0;
+        if (reset_each_frame && search != Search::kVideo)
+            throw std::invalid_argument("--reset-each-frame requires video search");
         if (alternate_threshold && !recover)
             throw std::invalid_argument("alternate contours require --recover");
         return apriltag_benchmark::run_with_prepare<SmallDetector>(
                 argc - options, argv + options, [](SmallDetector& detector) { detector.reset(); },
-                search, radius, threshold, alternate_threshold, border, recover);
+                reset_each_frame, search, radius, threshold, alternate_threshold, border, recover);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
